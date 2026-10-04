@@ -144,14 +144,18 @@ public sealed partial class LibraryPage : Page
     }
 
     // The Why? dialog's "Look up key online": the community's key list (the key itself is never shown). The forum may ask
-    // for a browser check; the page saved from a browser is then read instead.
+    // for a browser check; the page saved from a browser is then read instead (and cached for every game).
     void AddKeyLookup(GameRow row, StackPanel panel, TextBox box, ContentDialog dialog)
     {
         var lookup = new Button { Content = "Look up key online" };
-        var saved = new Button { Content = "Load saved page…", Visibility = Visibility.Collapsed };
+        var open = new Button { Content = "Open list in browser" };
+        var saved = new Button { Content = "Load saved page…" };
         var ring = new ProgressRing { IsActive = false, Width = 20, Height = 20, Visibility = Visibility.Collapsed };
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { lookup, saved, ring } });
+        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { lookup, ring } });
+        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { open, saved } });
+        panel.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Caption"],
+            Text = "Open the list, save the page (Ctrl+S, 'Webpage, HTML only' is enough), then load it here." });
         panel.Children.Add(status);
         async Task LookUp(string? page)
         {
@@ -162,13 +166,22 @@ public sealed partial class LibraryPage : Page
             catch (Exception ex) { r = new(KeyLookupOutcome.FetchFailed, $"The lookup failed: {ex.Message}"); }
             var unlocked = r.Outcome == KeyLookupOutcome.Unlocked;
             (ring.IsActive, ring.Visibility, lookup.IsEnabled, saved.IsEnabled) = (false, Visibility.Collapsed, !unlocked, !unlocked);
-            if (r.Outcome == KeyLookupOutcome.FetchFailed) saved.Visibility = Visibility.Visible;
             status.Text = unlocked ? r.Message + " The game is checked again now." : r.Message;
             if (!unlocked) return;
             (box.IsEnabled, dialog.IsPrimaryButtonEnabled) = (false, false);
             Vm.Rescan();
         }
         lookup.Click += async (_, _) => await LookUp(null);
+        open.Click += (_, _) =>
+        {
+            var url = App.Core.Settings.KeyListUrl is { Length: > 0 } u ? u.Trim() : KeyCollection.DefaultUrl;
+            string? problem = null;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) problem = "The key list's address in Settings isn't an https:// address.";
+            else
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true })?.Dispose(); }
+                catch (System.ComponentModel.Win32Exception e) { problem = $"Couldn't open the browser: {e.Message}"; }   // no browser for https
+            if (problem != null) (status.Text, status.Visibility) = (problem, Visibility.Visible);
+        };
         saved.Click += async (_, _) =>
         {
             string? page = null;
@@ -177,6 +190,7 @@ public sealed partial class LibraryPage : Page
                 var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(App.Main.AppWindow.Id) { CommitButtonText = "Load" };
                 picker.FileTypeFilter.Add(".html");
                 picker.FileTypeFilter.Add(".htm");
+                picker.FileTypeFilter.Add("*");
                 if ((await picker.PickSingleFileAsync())?.Path is { } path)
                     page = await Task.Run(() => new FileInfo(path).Length <= KeyCollection.MaxBytes ? File.ReadAllText(path) : "");
             }

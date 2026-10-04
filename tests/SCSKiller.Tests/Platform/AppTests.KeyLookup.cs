@@ -50,6 +50,28 @@ public partial class AppTests
     }
 
     [Fact]
+    public async Task A_saved_page_loaded_for_one_game_serves_the_other_encrypted_games()
+    {
+        var install = Path.Combine(_root, "Other");
+        Directory.CreateDirectory(install);
+        var other = new Game("test:other", "Other Game", Store.Other, install, Path.Combine(install, "Other.exe"));
+        var page = new KeyPage();
+        var k = Killer(new FakeReader(EncryptedUnreal), games: [_game, other]);
+        var tried = new List<string>();
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k.KeyCheck = g => ([g.Name], key => { lock (tried) tried.Add(g.Name); return false; });
+        await k.ScanAsync(default);
+        k.Settings = k.Settings with { LookUpKeysOnline = true };
+        await k.KeyLookupPass;   // the fetched list has only this game's old key
+        var saved = $"<div class=\"postbody\">Intro<br>Other Game 0x{new string('C', 64)}<br>Fake Game 0x{new string('D', 64)}</div>";
+        var r = await k.LookUpKeyAsync(_game.Id, saved);
+        await k.KeyLookupPass;
+        Assert.Equal(KeyLookupOutcome.NoWorkingKey, r.Outcome);
+        Assert.Equal(["Fake Game", "Fake Game", "Other Game"], tried.Order());   // the other game from the saved copy
+        Assert.Equal(1, page.Requests);   // the saved copy is the fresh list
+    }
+
+    [Fact]
     public async Task A_scan_never_looks_up_keys_of_unencrypted_games()
     {
         var page = new KeyPage();

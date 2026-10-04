@@ -1338,8 +1338,13 @@ public sealed partial class ScsKiller : IScsKiller
     public Task KeyLookupPass { get; private set; } = Task.CompletedTask;
     string KeyListUrl => Settings.KeyListUrl is { Length: > 0 } url ? url.Trim() : KeyCollection.DefaultUrl;
 
-    public Task<KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default) =>
-        LookUpKey(Find(gameId).Game, savedPage, true, ct);
+    public async Task<KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default)
+    {
+        var r = await LookUpKey(Find(gameId).Game, savedPage, true, ct);
+        // a saved page is now the cached list: the other encrypted games get their lookup from it
+        if (savedPage != null && r.Outcome != KeyLookupOutcome.FetchFailed) StartKeyLookups(Games.Where(s => s.Game.Id != gameId));
+        return r;
+    }
 
     async Task<KeyLookup> LookUpKey(Game g, string? savedPage, bool userRequested, CancellationToken ct)
     {

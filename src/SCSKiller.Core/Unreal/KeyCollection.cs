@@ -29,7 +29,7 @@ public sealed class KeyCollection
     public const int MaxBytes = 4 << 20, MaxEntries = 20_000, MaxCandidates = 20, MaxName = 120;
     public static readonly TimeSpan AutoEvery = TimeSpan.FromHours(24), UserEvery = TimeSpan.FromHours(1), UserRetry = TimeSpan.FromMinutes(5),
         Timeout = TimeSpan.FromSeconds(20);
-    public const string SecurityCheck = "the forum answered with a browser security check, which SCSKiller doesn't take: open the list in your browser, save the page (Ctrl+S) and load the saved page";
+    public const string SecurityCheck = "the forum answered with a browser security check, which SCSKiller doesn't take: click Open list in browser, save the page (Ctrl+S), then Load saved page… (on the command line: --page <file>)";
 
     sealed record CacheFile(string Url, DateTimeOffset? FetchedAt, DateTimeOffset? TriedAt, int Failures, KeyEntry[] Entries);
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
