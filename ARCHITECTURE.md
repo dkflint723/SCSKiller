@@ -36,7 +36,8 @@ session), plans which pipelines to create, and replays them in a separate proces
    directly, uploads nothing and fills no middleware pack (the upload key is a public store build alias, which a game
    added on one PC doesn't have). Removing it takes its recorder out and forgets the entry.
 2. **Index.** An `IEngineReader` per engine family detects the engine and lists every shader the build ships (stage,
-   SHA-1, signatures, root signature if embedded), grouped in shader maps that say which shaders can be drawn together.
+   SHA-1, signatures, root signature if embedded), grouped in shader maps that say which shaders can be drawn together
+   (an exact pipeline's map may name its root signature).
 3. **Plan.** The planner (`IPlanner`) turns the index, a recording if there is one, and the GPU vendor's `VendorCaps`
    into a hash-only plan: pipeline templates, root signatures and items naming shaders by SHA-1.
 4. **Materialize.** The plan's shaders are read from the install into a work folder. Nothing of the game is stored
@@ -63,6 +64,7 @@ Everything vendor- or engine-specific sits behind one interface: a new GPU vendo
 | `src/SCSKiller.Core/RedEngine/` | `IEngineReader` for REDengine 3 (The Witcher 3, DX12) |
 | `src/SCSKiller.Core/Northlight/` | `IEngineReader` for Remedy's Northlight (Control, DX12) |
 | `src/SCSKiller.Core/Dagor/` | `IEngineReader` for Gaijin's Dagor Engine (War Thunder) |
+| `src/SCSKiller.Core/SquareEnix/` | `IEngineReader` for FINAL FANTASY XVI's pipeline list (`.pspc`) |
 | `src/SCSKiller.Core/Carved/` | `IEngineReader` for any game that ships raw DXBC/DXIL containers in its files |
 | `src/SCSKiller.Core/Planning/` | The planner, root-signature rules, the plan and recording formats, materialization |
 | `src/SCSKiller.Core/Vendors/` | NVIDIA and AMD backends and their per-application cache (`IAppCache`) |
@@ -332,6 +334,20 @@ open game files read-only and never launch or attach to the game.
   "D3D11 or D3D12"). The dumps compatibility mode selects are the reader's `IndexStamp`: a warm is stale ("game shaders
   changed since the warm") once they change. Gaijin's launcher installs are found from `HKCU\Software\Gaijin\<project>`,
   the exe from `BattlEye\BELauncher.ini` (`GaijinSource`).
+- **Square Enix PSPC** (`SquareEnix/`): FINAL FANTASY XVI's `ffxvi.pspc` beside the exe (`<exe name>.pspc`; the exe
+  holds `%s%s.pspc`), version `0x0300000A` only: a list of every pipeline the game creates, with the raw containers
+  (DXIL SM 6.6, a few DXBC SM 5.0) and the root signatures (version 1.0, a container of one RTS0 part each), nothing
+  compressed. A 0xC0-byte header (offsets from its end) gives six stage sections (VS, PS, GS, HS, DS, CS), the
+  root-signature section and ten tables: VS+PS, VS+GS+PS, VS+HS+DS+PS, an empty one, CS, then five of state (one the
+  input layouts; the blend, render-target and depth-stencil ones aren't decoded). An entry is a hash, its root
+  signature's offset, packed state, and an offset per stage. Every distinct entry (stages and root signature) is an
+  exact shader map naming its root signature (`ShaderMap.RootSignature`, which wins over a shader's own: 1,925 shaders
+  are drawn under several, up to 52), and the engine `ShipsRootSignatures`. Every count, offset and size is bounded by
+  the file; an entry that doesn't read, or puts a shader of another stage in a slot, is left out; a file of another
+  version, damaged or truncated is Unsupported with the reason. FINAL FANTASY XVI: 78,020 entries, 63,645 distinct
+  pipelines, 83,444 shaders, 1,361 root signatures; on NVIDIA 86,074 units in about 57,000 PSOs (15 shaders need 64
+  lanes). Indexed in about 2 s with the file in the OS cache. The game keeps no pipeline cache of its own; its `.pac`
+  archives aren't needed.
 - **Carved** (`Carved/`): any other game that ships raw DXBC/DXIL containers. Files are carved, each container
   validated and reflected; a file of pipeline records becomes one shader map per record.
 
@@ -484,10 +500,10 @@ and count in one line instead (`ScsKiller.PlanCheckLine`: "Checking N games for 
 The planner's `Check` decides a game's status:
 
 - Engine unsupported, or files it can't read → `Unsupported` with the reason.
-- The vendor has `StateIndependentCache` and the engine version has a root-signature rule → `Ready` without a
-  recording.
+- The vendor has `StateIndependentCache` and the engine version has a root-signature rule, its shaders carry theirs, or
+  its files name every pipeline's (`EngineInfo.ShipsRootSignatures`) → `Ready` without a recording.
 - A recording exists → `Ready`. Without `StateIndependentCache` (AMD) it must contain draws.
-- Otherwise → `NeedsRecording`.
+- Otherwise → `NeedsRecording` (with `ShipsRootSignatures`, the reason says the cache keys on state the files don't give).
 - A vendor without `CacheKeyedByExeName` would need an in-game warm, which isn't implemented → `Unsupported`.
 
 After a build:

@@ -23,6 +23,9 @@ All notable changes to the SCSKiller app and command line. The format follows
 - "Hide unsupported games" (off by default), in Settings and beside the Library's search box, leaves the games
   SCSKiller can't compile out of the Library. They're still checked at every scan and show again once they can be
   compiled (an encrypted game unlocked by its key); the Library says how many are hidden, with a way to show them.
+- FINAL FANTASY XVI: SCSKiller reads the game's pipeline list (`ffxvi.pspc`) with every pipeline's shaders and root
+  signature. On NVIDIA it compiles all of them without a recording (about 57,000 pipelines); on AMD it needs a
+  recording, since AMD's cache also depends on pipeline state the list doesn't give.
 
 ### Changed
 

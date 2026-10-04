@@ -21,7 +21,7 @@ sealed class PlanBuilder
 
     readonly IReadOnlyDictionary<string, ShaderInfo> bc;
     /// <summary>Shader maps; Global shaders pair across maps (one fullscreen VS serves pixel shaders from many global maps): pooled.</summary>
-    readonly List<(string Platform, bool Pooled, IReadOnlyList<string> Shas, bool IsPipeline)> maps;
+    readonly List<(string Platform, bool Pooled, IReadOnlyList<string> Shas, bool IsPipeline, string? Rs)> maps;
     readonly Dictionary<string, string> platOfSha = [];
     readonly RootSig.Rule rule;
     readonly uint maxSrvs; // the game's MAX_SRVS when its shaders need more than the rule's (0 = the rule's)
@@ -72,9 +72,9 @@ sealed class PlanBuilder
         (this.game, this.engine, this.index, this.recording, this.caps, this.outDir, this.log, this.ct, this.maximum, this.packs, this.sharedPacks) =
             (game, engine, index, recording, caps, outDir, log, ct, maximum, packs, sharedPacks);
         bc = index.Shaders;
-        maps = index.Maps.Select(m => (m.Platform, Pooled: false, Shas: m.Shaders, m.IsPipeline)).ToList();
+        maps = index.Maps.Select(m => (m.Platform, Pooled: false, Shas: m.Shaders, m.IsPipeline, Rs: m.IsPipeline ? m.RootSignature : null)).ToList();
         maps.AddRange(index.Maps.Where(m => m.Library == "Global").GroupBy(m => m.Platform)
-            .Select(g => (g.Key, true, (IReadOnlyList<string>)g.SelectMany(m => m.Shaders).Distinct().ToList(), false)));
+            .Select(g => (g.Key, true, (IReadOnlyList<string>)g.SelectMany(m => m.Shaders).Distinct().ToList(), false, (string?)null)));
         foreach (var m in index.Maps) foreach (var h in m.Shaders) platOfSha[h] = m.Platform;
         rule = RootSig.RuleFor(engine) ?? RootSig.Rule.Ff7; // no rule: FF7's is what a recording gets checked against
         maxSrvs = RootSig.MaxSrvsFor(rule, bc.Values);
@@ -266,10 +266,12 @@ sealed class PlanBuilder
         embeddedRs = bc.Values.Count(s => s.RootSignature != null);
         rasterNv = RasterNv(caps, rule, recs, nvRecs);
         if (rasterNv is { } nvs) log?.Report($"NVAPI: synthesized PSOs get shader-extension slot {nvs.Slot} space {nvs.Space} (options {nvs.Options})");
-        var ownOnly = embeddedRs > 0 && ownN == builtN; // every recorded PSO the rule was checked on carries its own: the rule plans nothing
+        var shipped = maps.Count(m => m.Rs != null);
+        var ownOnly = (embeddedRs > 0 || shipped > 0) && ownN == builtN; // every recorded PSO the rule was checked on carries its own: the rule plans nothing
         if (dx12) log?.Report($"recorded: {recs.Count} PSOs{(stateObjects.Count > 0 ? $" + {stateObjects.Count} ray tracing state objects (replayed as recorded)" : "")}, platform {plat}; "
             + (ownOnly ? "" : $"root sigs rebuilt from shader counts: {builtOk}/{builtN} exact -> " + (build ? "building" : "learned lookup")) + (maxSrvs > 0 ? $" (SRV tables of {maxSrvs}, not Unreal {engine.Version}'s {RootSig.MaxSrvs(rule)}: {(maxSrvs == 128 ? "the bindless fork's" : "its shaders bind more")})" : "")
-            + (embeddedRs > 0 ? $"{(ownOnly ? "" : "; ")}{embeddedRs} shaders carry their own root signature{(ownN > 0 ? $", {ownOk}/{ownN} recorded PSOs created with it" : "")}" : "") + (synth ? ", synthesized templates allowed" : ""));
+            + (embeddedRs > 0 ? $"{(ownOnly ? "" : "; ")}{embeddedRs} shaders carry their own root signature{(ownN > 0 ? $", {ownOk}/{ownN} recorded PSOs created with it" : "")}" : "")
+            + (shipped > 0 ? $"{(ownOnly && embeddedRs == 0 ? "" : "; ")}{shipped} shipped pipelines name their root signature" : "") + (synth ? ", synthesized templates allowed" : ""));
 
         // D3D11: every shader of the game's SM5 platform once (Unreal PCD3D_SM5; the carver's DXBC containers), no pairing;
         // hull and domain shaders as HS+DS pairs of one map (the warm needs both to draw), every one in at least one pair
@@ -289,6 +291,7 @@ sealed class PlanBuilder
     /// out, not the plan.</summary>
     string? RootSigOf(SortedDictionary<int, string> stages)
     {
+        if (shippedRs != null) return shippedRs;
         // carved shaders carrying their root signature (RTS0): exact, served by the reader at materialize time
         if (stages.Values.Select(h => bc[h].RootSignature).FirstOrDefault(r => r != null) is { } embedded) return embedded;
         if (rule == RootSig.Rule.Red3 && !RootSig.Red3Validated(stages.Keys.Select(k => (Stage)k))) return null; // not a stage set the rule was confirmed on
@@ -313,6 +316,9 @@ sealed class PlanBuilder
     }
 
     string? unserializable;   // the first serializer error
+    /// <summary>The root signature of the shipped pipeline <see cref="StageSets"/> hands its sink (<see cref="ShaderMap.RootSignature"/>);
+    /// null otherwise. Part of the stage set's identity: one shader set may ship under several.</summary>
+    string? shippedRs;
 
     readonly Dictionary<string, RootSig.Ranges?> rsRanges = [];
     readonly Dictionary<(string Rs, string Sha, int Stage), bool> covered = [];
@@ -352,7 +358,7 @@ sealed class PlanBuilder
     /// template of the GS's input topology), else a synthesized one.</summary>
     void Emit(SortedDictionary<int, string> stages, string shape, string psOut)
     {
-        if (!seen.Add(Tuple("", stages))) return; // shaders shared across maps
+        if (!seen.Add(Tuple(shippedRs ?? "", stages))) return; // shaders shared across maps
         var rs = RootSigOf(stages);
         var gs = stages.TryGetValue((int)Stage.Geometry, out var g) ? bc[g] : null;
         var topo = stages.ContainsKey((int)Stage.Hull) ? 4u : gs == null ? 3u : Planner.TopologyType(gs.GsInputPrimitive); // 4 = patch; 0 = GS input unknown
@@ -411,7 +417,7 @@ sealed class PlanBuilder
         Resolved<List<List<LayoutElem>>> none = new([], Provenance.Exact);
         StageSets((stages, _, _) =>
         {
-            if (!seen.Add(Tuple("", stages))) return; // shaders shared across maps
+            if (!seen.Add(Tuple(shippedRs ?? "", stages))) return; // shaders shared across maps
             var rs = RootSigOf(stages);
             if (rs == null) { Count("no_rs"); return; }
             if (!Covers(rs, stages)) { Count("rs_uncovered"); return; }
@@ -520,7 +526,7 @@ sealed class PlanBuilder
         }
         var fed = new HashSet<string>();
         var unfed = new List<ShaderInfo>();
-        foreach (var (mapPlat, pooled, shas, isPipeline) in maps)
+        foreach (var (mapPlat, pooled, shas, isPipeline, mapRs) in maps)
         {
             ct.ThrowIfCancellationRequested();
             if (!OnPlatform(mapPlat)) continue;
@@ -531,9 +537,14 @@ sealed class PlanBuilder
             {
                 var st = new SortedDictionary<int, string>();
                 foreach (var d in ds) st[(int)d.Stage] = d.Sha1;
-                if (st.Count > 0 && Planner.Positioned(st.ToDictionary(x => (Stage)x.Key, x => bc[x.Value]))) sink(st, Planner.Shape(st), PsOut(st));
-                else if (st.Count > 0 && seen.Add(Tuple("", st)))   // a stage set like any other, counted once
-                    Count(RootSigOf(st) is { } rs && have.Contains(Tuple(rs, st)) ? "already_recorded" : "stream_output");
+                shippedRs = mapRs;
+                try
+                {
+                    if (st.Count > 0 && Planner.Positioned(st.ToDictionary(x => (Stage)x.Key, x => bc[x.Value]))) sink(st, Planner.Shape(st), PsOut(st));
+                    else if (st.Count > 0 && seen.Add(Tuple(mapRs ?? "", st)))   // a stage set like any other, counted once
+                        Count(RootSigOf(st) is { } rs && have.Contains(Tuple(rs, st)) ? "already_recorded" : "stream_output");
+                }
+                finally { shippedRs = null; }
                 continue;
             }
             var srcs = new Dictionary<string, List<ShaderInfo>>();
@@ -615,7 +626,7 @@ sealed class PlanBuilder
         // global VS->GS chains also feed material pixel shaders (e.g. rendering into volume textures): pair across libraries
         var gpool = maps.Where(m => m.Pooled && OnPlatform(m.Platform)).SelectMany(m => m.Shas).Where(Usable).Select(h => bc[h]).ToList();
         var psByIn = new Dictionary<string, List<ShaderInfo>>();
-        foreach (var (mapPlat, pooled, shas, _) in maps)
+        foreach (var (mapPlat, pooled, shas, _, _) in maps)
             if (!pooled && OnPlatform(mapPlat))
                 foreach (var h in shas.Where(h => Usable(h) && bc[h].Stage == Stage.Pixel)) Planner.Push(psByIn, Planner.Sig(bc[h].Inputs), bc[h]);
         if (ags.Count > 0) stats["vendor_extension"] = ags.Count;
