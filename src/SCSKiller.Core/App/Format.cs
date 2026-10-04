@@ -50,6 +50,7 @@ public static class Format
             GameStatus.Warmed => $"Driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · partly covered" : ""),
             GameStatus.Stale => StaleNote(r),
             GameStatus.NeedsRecording when s.RecordingPaused => "Recording paused: limit reached",
+            GameStatus.NeedsRecording when s.RecorderInstalled && s.RecorderUnused && !ScsKiller.RecordedEnough(s) => "Played, but nothing was recorded",
             GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => "Recorder on: play 5 minutes",
             GameStatus.NeedsRecording when Starts(ScsKiller.RtNeedsRecording) => "For ray-traced effects" + (s.InCommunityDb == true ? " · in the community database" : ""),
             GameStatus.NeedsRecording when s.InCommunityDb == true => "In the community database",

@@ -174,7 +174,10 @@ public static class GameFiles
         ("EasyAntiCheat_EOS_Setup.exe", AntiCheat.EasyAntiCheat), ("EasyAntiCheat_Setup.exe", AntiCheat.EasyAntiCheat),
         ("BattlEye", AntiCheat.BattlEye), ("BEService.exe", AntiCheat.BattlEye), ("BEService_x64.exe", AntiCheat.BattlEye), ("BELauncher.exe", AntiCheat.BattlEye),
         ("BEClient_x64.dll", AntiCheat.BattlEye), ("BEClient.dll", AntiCheat.BattlEye),
-        ("EAAntiCheat.Installer.exe", AntiCheat.Other), ("GameGuard", AntiCheat.Other), ("XIGNCODE", AntiCheat.Other), ("nProtect", AntiCheat.Other),
+        ("EAAntiCheat.Installer.exe", AntiCheat.Other),
+        ("EAAntiCheat.GameServiceLauncher.exe", AntiCheat.Other), ("EAAntiCheat.GameServiceLauncher.dll", AntiCheat.Other),   // EA Javelin in the game root
+        (".build.info", AntiCheat.Other), (".product.db", AntiCheat.Other),   // a Battle.net install (Warden is server-side) whatever store lists it
+        ("GameGuard", AntiCheat.Other), ("XIGNCODE", AntiCheat.Other), ("nProtect", AntiCheat.Other),
         ("randgrid.sys", AntiCheat.Other),   // Ricochet (Call of Duty)
         ("NCGuardSDK", AntiCheat.Other), ("NCGuard", AntiCheat.Other),
         ("AntiCheatExpert", AntiCheat.Other), ("AceAntibotClient", AntiCheat.Other), ("TP3Helper.exe", AntiCheat.Other),

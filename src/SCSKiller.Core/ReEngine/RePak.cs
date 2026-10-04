@@ -130,6 +130,7 @@ public sealed class RePak : IDisposable
         if (e.Encryption != 0) throw new InvalidDataException($"resource-encrypted entry (type {e.Encryption})");
         var total = e.Chunked && e.Size == 0 ? e.Packed : e.Size;
         if (total > Array.MaxLength) throw new InvalidDataException("entry too large");
+        if (e.Size < 0 || e.Packed < 0 || e.Offset < 0) throw new InvalidDataException("entry with a negative size or offset");
         var b = new byte[(int)Math.Min(total, max)];
         if (e.Chunked) { ReadChunks(e, b); return b; }
         using Stream s = e.Compression switch

@@ -276,6 +276,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest" : ""),
         GameStatus.NeedsRecording when s.AntiCheat != AntiCheat.None => $"{Fmt.AntiCheatName(s.AntiCheat)} blocks recording",
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(App.Core.Settings),
+        GameStatus.NeedsRecording when s.RecorderInstalled && s.RecorderUnused && !ScsKiller.RecordedEnough(s) => ScsKiller.RecorderUnusedNote,
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => "recorder on: play for about 5 minutes",
         _ => s.StatusReason,
     } + ModNote(s);
@@ -538,10 +539,15 @@ public sealed class LibraryVm : Bindable
     }
 }
 
+public sealed class GameGoneException(string id) : Exception($"{id} is no longer in the library");
+
 public sealed class DetailVm(string id) : Bindable
 {
-    GameState s = App.Core.Games.First(g => g.Game.Id == id);
-    public GameRow Row { get; private set; } = new(App.Core.Games.First(g => g.Game.Id == id));
+    GameState s = Find(id);
+    public GameRow Row { get; private set; } = new(Find(id));
+
+    /// <summary>The game's state; a game a scan dropped meanwhile throws <see cref="GameGoneException"/>, which the page handles.</summary>
+    static GameState Find(string id) => App.Core.Games.FirstOrDefault(g => g.Game.Id == id) ?? throw new GameGoneException(id);
     public string? Error { get; set; }
     public bool HasError => Error != null;
 

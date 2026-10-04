@@ -44,7 +44,15 @@ const string Usage = """
 Console.OutputEncoding = System.Text.Encoding.UTF8;  // game names carry ™ and ®
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help") { Console.WriteLine(Usage); return 0; }
 // The app is handing over to Update.exe, which replaces this folder: start nothing (the scheduled task runs again later).
-if (Busy.Applying(AppStore.DefaultDir, DateTimeOffset.UtcNow)) { Console.Error.WriteLine("an update is being installed; try again in a minute"); return 0; }
+if (Busy.Applying(AppStore.DefaultDir, DateTimeOffset.UtcNow))
+{
+    const string busy = "an update is being installed; try again in a minute";
+    Console.Error.WriteLine(busy);
+    // exit 0 keeps a scheduled run quiet; an elevated run from the app reads the result file, which must not say done
+    try { if (Opt(Elevated.ResultArg) is { } busyResult) Elevated.WriteResult(busyResult, false, busy); }
+    catch (ArgumentException) { }
+    return 0;
+}
 int code;
 try
 {

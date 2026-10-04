@@ -30,7 +30,12 @@ public sealed partial class DetailPage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
-        Vm = new DetailVm((string)e.Parameter);
+        try { Vm = new DetailVm((string)e.Parameter); }
+        catch (GameGoneException)   // a scan dropped it between the click and here: back to the library, not a crash
+        {
+            DispatcherQueue.TryEnqueue(() => OnCrumbToLibrary());
+            return;
+        }
         Vm.ReadCaches();
         Crumbs.ItemsSource = new[] { "Library", Vm.Name };
         Vm.PropertyChanged += (_, _) => DrawFrames();
@@ -128,6 +133,11 @@ public sealed partial class DetailPage : Page
     void OnCrumb(BreadcrumbBar _, BreadcrumbBarItemClickedEventArgs e)
     {
         if (e.Index != 0) return;
+        OnCrumbToLibrary();
+    }
+
+    void OnCrumbToLibrary()
+    {
         if (Frame.CanGoBack && Frame.BackStack[^1].SourcePageType == typeof(LibraryPage)) Frame.GoBack();
         else App.Main.Navigate(typeof(LibraryPage));
     }

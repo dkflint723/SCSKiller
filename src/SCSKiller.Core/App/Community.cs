@@ -142,7 +142,9 @@ public sealed class Community
                 if (next == null)
                 {
                     Problem = Refused(r);
-                    if (r.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable) ManifestBackoff(RetryAt(r) - clock.GetUtcNow());
+                    // any refusal waits: a sync pass asks once per game, which a failing server would otherwise see per game
+                    ManifestBackoff(r.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable
+                        ? RetryAt(r) - clock.GetUtcNow() : TimeSpan.FromMinutes(5));
                 }
                 else
                 {
@@ -155,7 +157,7 @@ public sealed class Community
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 Problem = Plain(e);
-                if (e is HttpRequestException or OperationCanceledException) ManifestBackoff(TimeSpan.FromMinutes(5));   // offline: not at every scan
+                ManifestBackoff(TimeSpan.FromMinutes(5));   // offline or an unreadable body: not at every scan
             }
             return manifest;
         }
@@ -176,9 +178,10 @@ public sealed class Community
         {
             if (e.Size > MaxRaw || await dbToken(false, ct) is not { } token) return null;
             var r = await GetObject(e, token, ct);
-            if (r.StatusCode == HttpStatusCode.Unauthorized && await dbToken(true, ct) is { } fresh)   // expired or revoked: once with a new one
+            if (r.StatusCode == HttpStatusCode.Unauthorized)   // expired or revoked: once with a new one
             {
-                r.Dispose();
+                r.Dispose();   // before the refresh, which can throw
+                if (await dbToken(true, ct) is not { } fresh) { Problem = Refused(r); return null; }
                 r = await GetObject(e, fresh, ct);
             }
             using (r)

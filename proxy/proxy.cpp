@@ -178,7 +178,8 @@ void logf(const char* fmt, ...) {  // also used by warm11.cpp
 static const wchar_t* const kAntiCheatMarkers[] = {  // GameFiles.Markers; "*x": a name ending in x
     L"EasyAntiCheat", L"EasyAntiCheat_EOS", L"start_protected_game.exe", L"EasyAntiCheat_EOS_Setup.exe", L"EasyAntiCheat_Setup.exe",
     L"BattlEye", L"BEService.exe", L"BEService_x64.exe", L"BELauncher.exe", L"BEClient_x64.dll", L"BEClient.dll",
-    L"EAAntiCheat.Installer.exe", L"GameGuard", L"XIGNCODE", L"nProtect", L"randgrid.sys", L"NCGuardSDK", L"NCGuard", L"AntiCheatExpert",
+    L"EAAntiCheat.Installer.exe", L"EAAntiCheat.GameServiceLauncher.exe", L"EAAntiCheat.GameServiceLauncher.dll",
+    L".build.info", L".product.db", L"GameGuard", L"XIGNCODE", L"nProtect", L"randgrid.sys", L"NCGuardSDK", L"NCGuard", L"AntiCheatExpert",
     L"AceAntibotClient", L"TP3Helper.exe", L"HoYoKProtect.sys", L"mhypbase.dll", L"mhyprot2.sys", L"mhyprot3.sys",
     L"ACE-BASE.sys", L"NeacClient.exe", L"NeacSafe64.sys", L"NeacSafe64_ex.sys",
     L"BlackCall.aes", L"BlackCall64.aes", L"BlackCat64.sys", L"HShield", L"PunkBuster", L"PnkBstrA.exe", L"pbsvc.exe", L"pbsv.dll",
@@ -673,7 +674,12 @@ static void write_stream(Writer& w, const D3D12_PIPELINE_STATE_STREAM_DESC& d) {
         uint32_t t;
         memcpy(&t, base + pos, 4);
         Sub s;
-        if (!sub_info(t, s)) { w.ok = false, w.why = "unknown stream subobject type"; logf("unknown stream subobject type %u", t); return; }
+        if (!sub_info(t, s)) {
+            static std::atomic<int> logged;  // once per create would flush a line on the game's PSO thread each time
+            w.ok = false, w.why = "unknown stream subobject type";
+            if (logged.fetch_add(1) < 5) logf("unknown stream subobject type %u", t);
+            return;
+        }
         size_t in = align(pos + 4, s.align);
         bool decl = t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT && ((D3D12_STREAM_OUTPUT_DESC*)(base + in))->NumEntries;
         if (t != D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO) w.u32(decl ? kSoDecl : t), io_sub(w, t, base + in), ++count;
@@ -1041,7 +1047,7 @@ static void load_file(const std::wstring& path, bool main, bool with_bytes) {
     for (;;) {
         int tag = fgetc(f);
         uint32_t len;
-        if (tag == EOF || fread(&len, 4, 1, f) != 1) break;
+        if (tag == EOF || tag == 0 || fread(&len, 4, 1, f) != 1) break;  // 0: a zero-filled tail a power loss left, torn too
         if (tag == 'B') {
             Hash h;
             if (len < 20 || fread(h.data(), 1, 20, f) != 20) break;
@@ -1986,7 +1992,11 @@ static HRESULT STDMETHODCALLTYPE hk_stream(ID3D12Device2* dev, const D3D12_PIPEL
 
 // A created state object's identity -> its record key, so records that build on it (links, additions) can name it.
 static void remember_so(const Writer& w, HRESULT hr, void** pp) {
-    if (FAILED(hr) || !pp || !*pp || !w.ok || w.s.empty()) return;
+    if (FAILED(hr) || !pp || !*pp) return;
+    if (!w.ok || w.s.empty()) {  // not recorded: a released one's key at this address must not become its base
+        if (auto* so = so_id((IUnknown*)*pp)) { std::lock_guard l(g_mx); g_so_key.erase(so); }
+        return;
+    }
     if (auto* so = so_id((IUnknown*)*pp)) {
         std::lock_guard l(g_mx);
         g_so_key[so] = key_of(w.tag, w.s);
@@ -2772,7 +2782,7 @@ extern "C" void WINAPI SCSKiller_Stats(uint64_t out[7]) {
 
 static std::wstring cfg(const wchar_t* env, const wchar_t* key, const wchar_t* def) {
     wchar_t v[64];
-    if (GetEnvironmentVariableW(env, v, 64)) return v;
+    if (DWORD n = GetEnvironmentVariableW(env, v, 64); n > 0 && n < 64) return v;  // 64+: v untouched (the size needed)
     GetPrivateProfileStringW(L"scskiller", key, def, v, 64, (g_dir + L"scskiller.ini").c_str());
     return v;
 }

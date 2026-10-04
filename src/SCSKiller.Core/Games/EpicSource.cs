@@ -28,7 +28,7 @@ public sealed class EpicSource(string? manifestsDir = null) : IGameSource
                 if (GameFiles.FindExe(install, string.IsNullOrEmpty(S("LaunchExecutable")) ? null : S("LaunchExecutable")) is not { } exe) continue;
                 games.Add(new Game($"epic:{app}", S("DisplayName") ?? app, Store.Epic, install, exe, S("AppVersionString")));
             }
-            catch (JsonException) { }   // half-written manifest while the launcher installs
+            catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { }   // half-written or locked while the launcher installs
         }
         return games;
     }

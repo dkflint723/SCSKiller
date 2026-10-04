@@ -205,7 +205,8 @@ public sealed class ManualSource(AppStore store) : IGameSource
         var name = Path.GetFileName(full);
         return Libraries.Contains(name, StringComparer.OrdinalIgnoreCase)
             || name.Equals("common", StringComparison.OrdinalIgnoreCase) && Path.GetFileName(Path.GetDirectoryName(full)).Equals("steamapps", StringComparison.OrdinalIgnoreCase)
-            || SpecialFolders.Select(Environment.GetFolderPath).Any(f => f.Length > 0 && GameFiles.DirKey(f).Equals(full, StringComparison.OrdinalIgnoreCase));
+            || SpecialFolders.Select(Environment.GetFolderPath).Append(Path.GetTempPath())   // %TEMP%: thousands of other programs' leftovers, whose random names can look like markers (*.xem)
+                .Any(f => f.Length > 0 && GameFiles.DirKey(f).Equals(full, StringComparison.OrdinalIgnoreCase));
     }
 
     // a game's own subfolders that hold programs of their own

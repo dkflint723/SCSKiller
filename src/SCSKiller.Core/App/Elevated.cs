@@ -29,9 +29,10 @@ public static class Elevated
             { Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
         try
         {
-            Process p;
-            try { p = Process.Start(psi)!; }
+            Process? p;
+            try { p = Process.Start(psi); }
             catch (Win32Exception e) when (e.NativeErrorCode == ErrorCancelled) { return null; }
+            if (p == null) return new(false, "Windows didn't start the command-line tool as administrator.");
             using (p) { p.WaitForExit(); return ReadResult(file, p.ExitCode); }
         }
         finally { File.Delete(file); }

@@ -144,7 +144,8 @@ public sealed class Account
         if (deviceToken == null) return null;
         if (!NeedsRefresh) return accessToken;
         try { await NewAccessTokenAsync(ct); }
-        catch (Exception e) when (e is HttpRequestException or AccountException && accessToken != null && AccessAge < accessLife) { }
+        catch (Exception e) when (e is HttpRequestException or AccountException or System.Text.Json.JsonException
+            or OperationCanceledException && !ct.IsCancellationRequested && accessToken != null && AccessAge < accessLife) { }
         return accessToken;
     }
 

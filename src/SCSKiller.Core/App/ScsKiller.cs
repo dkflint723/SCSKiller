@@ -547,6 +547,7 @@ public sealed partial class ScsKiller : IScsKiller
         bool ours;
         try { ours = IsOurProxy(dll); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { ours = rec.RecorderFiles.ContainsKey("d3d12.dll"); }   // held by the game
+        var recorderUnused = ours && RecorderUnused(rec.LastPlay, session, dll);
         // the recorder is never installed next to anti-cheat, nor in a game the user added before they confirm its folder
         var unconfirmed = Unconfirmed(g);
         var noRecording = antiCheat != AntiCheat.None ? $"which {(antiCheat == AntiCheat.Other ? "its anti-cheat" : antiCheat)} blocks"
@@ -583,7 +584,7 @@ public sealed partial class ScsKiller : IScsKiller
                 Careful = cap != null ? new CarefulCompile(rec.Careful, rec.FirstLaunch?.Compiled, careful, recorded) : null,
                 RecordedSinceWarm = pending.Recorded, CommunityDbPsos = entry?.Psos ?? 0, PsoPerSecond = rec.PsoPerSecond,
                 LastFrames = frames, ShaderMod = shaderMod?.Mod, ShaderModBlocks = reshade?.Blocks == true, ShaderModLayer = reshade?.Layered == true,
-                ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RootUnconfirmed = unconfirmed },
+                ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RecorderUnused = recorderUnused, RootUnconfirmed = unconfirmed },
             rec, ours, exeDir);
     }
 
@@ -670,6 +671,18 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>A recorded launch this long shows what the player's setup uses (the "about 5 minutes" the app asks for).</summary>
     public static readonly TimeSpan EnoughRecording = TimeSpan.FromMinutes(5);
+
+    public const string RecorderUnusedNote = "the game was played, but the recorder saw no DirectX 12 device: the game didn't load it from its folder. Please report it with the game's name";
+
+    /// <summary>A watched run of <see cref="EnoughRecording"/> or longer, started after the recorder's d3d12.dll was put in,
+    /// and no recorder session in the game's csv at all: the game loaded DirectX 12 some other way (RE Requiem, upstream issue #2), and asking
+    /// for "5 minutes" again would never end.</summary>
+    internal static bool RecorderUnused(PlayWindow? played, SessionStats? last, string dll)
+    {
+        if (played is not { } p || p.To - p.From < EnoughRecording || last != null) return false;   // any session: it loads
+        try { return File.Exists(dll) && p.From.UtcDateTime >= File.GetCreationTimeUtc(dll); }   // a copy's creation time is its install
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
 
     /// <summary>A recorded launch was <see cref="EnoughRecording"/> or longer since the recording was last cleared: asking for "5 minutes" again says nothing.</summary>
     public static bool RecordedEnough(GameState s) => s.RecordedEnough;
@@ -4194,7 +4207,10 @@ public sealed partial class ScsKiller : IScsKiller
             if (state != null)
                 try { FollowRunningExe(state); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{state.Game.Name}: couldn't record the exe it runs: {e.Message}"); }
-            if (AppCache != null && state is { AntiCheat: AntiCheat.None }) _ = Task.Run(() => LearnWhilePlaying(state.Game));
+            if (AppCache != null && state is { AntiCheat: AntiCheat.None })
+                _ = Task.Run(() => LearnWhilePlaying(state.Game)).ContinueWith(
+                    t => Log?.Report($"{state.Game.Name}: couldn't learn its cache keys while playing: {t.Exception!.GetBaseException().Message}"),
+                    TaskContinuationOptions.OnlyOnFaulted);
         }
         foreach (var s in games.Where(s => ended.Contains(s.Game.Id)))
         {

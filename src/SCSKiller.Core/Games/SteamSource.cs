@@ -26,9 +26,14 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
         {
             var apps = Path.Combine(lib, "steamapps");
             if (!Directory.Exists(apps)) continue;
-            foreach (var acf in Directory.EnumerateFiles(apps, "appmanifest_*.acf"))
+            List<string> manifests;
+            try { manifests = Directory.EnumerateFiles(apps, "appmanifest_*.acf").ToList(); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }   // one unreadable library, not all of Steam
+            foreach (var acf in manifests)
             {
-                var text = File.ReadAllText(acf);
+                string text;
+                try { text = File.ReadAllText(acf); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }   // locked while Steam writes it
                 string? V(string key) => Values(text, key).FirstOrDefault();
                 if (!uint.TryParse(V("appid"), out var id) || V("installdir") is not { } dir) continue;
                 if (!int.TryParse(V("StateFlags"), out var flags) || (flags & 4) == 0) continue;   // 4 = fully installed

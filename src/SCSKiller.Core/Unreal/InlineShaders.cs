@@ -48,7 +48,7 @@ public static class InlineShaders
                 undecoded += entries.Count - (found.Count - before);
                 var end = Layout(d, entries[^1].Off, entries[^1].Fmt).Len + entries[^1].Off;
                 blocks.Add((p, end));
-                p = end - 1;
+                if (end > p) p = end - 1;   // never backwards: a bad layout would rescan the same anchor forever
                 break;
             }
         }
@@ -115,7 +115,7 @@ public static class InlineShaders
                 if (e + len + 32 <= end && BinaryPrimitives.ReadUInt32BigEndian(d.AsSpan(e + len)) == 0xb7756362)
                 {
                     var symbols = BinaryPrimitives.ReadUInt64BigEndian(d.AsSpan(e + len + 24));
-                    if (symbols < 64 || (ulong)(e + len) + symbols > (ulong)end) break;
+                    if (symbols < 64 || symbols > (ulong)(end - e - len)) break;   // no sum: a garbage count would wrap
                     len += (int)symbols;
                 }
                 return (len, e + 28, (int)n, size);

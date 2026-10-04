@@ -67,7 +67,8 @@ public sealed class AboutVm : Bindable
         var url = UpdateFeeds.Source(v)!;
         if (v.Channel == UpdateChannels.Stable)
         {
-            Process.Start(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true })?.Dispose();
+            try { Process.Start(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true })?.Dispose(); }
+            catch (System.ComponentModel.Win32Exception e) { (SourceIdle, SourceStatus) = (true, e.Message); Changed(); }   // no browser for https
             return;
         }
         (SourceIdle, SourceStatus) = (false, "Downloading…");

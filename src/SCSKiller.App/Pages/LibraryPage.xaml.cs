@@ -128,11 +128,12 @@ public sealed partial class LibraryPage : Page
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         bool ok;
+        string why = "It doesn't open this game's files.";
         var key = box.Text.Trim();
         try { ok = await Task.Run(() => App.Core.SetEncryptionKey(row.Id, key)); }   // opens the game's files
-        catch (Exception ex) { ok = false; text.Text = ex.Message; }
+        catch (Exception ex) { ok = false; why = $"Checking it failed: {ex.Message}"; }   // the first dialog is closed: say it in this one
         if (ok) Vm.Rescan();
-        else await new ContentDialog { XamlRoot = XamlRoot, Title = "That key didn't work", Content = "It doesn't open this game's files.", CloseButtonText = "OK" }.ShowAsync();
+        else await new ContentDialog { XamlRoot = XamlRoot, Title = "That key didn't work", Content = why, CloseButtonText = "OK" }.ShowAsync();
     }
 
     async void OnRecord(object sender, RoutedEventArgs _)

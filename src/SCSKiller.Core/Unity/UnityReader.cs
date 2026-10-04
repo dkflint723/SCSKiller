@@ -221,17 +221,20 @@ public sealed class UnityReader : IEngineReader
     /// <summary>A loose serialized file, or one node of a bundle; null when it isn't one (or is gone).</summary>
     static Source? Open(string path, string? node)
     {
+        IDisposable? held = null;   // what's open and not yet handed to a Source: disposed when a read throws
         try
         {
             if (node != null)
             {
                 var bundle = Bundle.Open(path);
+                held = bundle;
                 if (bundle?.Nodes.FirstOrDefault(n => n.Path == node) is { } nd && ReadSerialized(bundle.Reader(nd), nd.Size) is { } f)
                     return new Source(path, node, f, bundle.Reader(nd), bundle, bundle);
                 bundle?.Dispose();
                 return null;
             }
             var h = System.IO.File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            held = h;
             var len = RandomAccess.GetLength(h);
             byte[] Read(long off, int count)
             {
@@ -242,6 +245,6 @@ public sealed class UnityReader : IEngineReader
             h.Dispose();
             return null;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { return null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { held?.Dispose(); return null; }
     }
 }

@@ -322,4 +322,24 @@ public class UnrealReaderTests(ITestOutputHelper output)
         var e = Assert.Throws<InvalidDataException>(() => arc.Codes[0]().ToList());
         Assert.EndsWith("(starts DEADBEEF01020304)", e.Message);
     }
+
+    /// <summary>A culture mapping without a target (Scarlet Nexus, upstream issue #12) fails CUE4Parse's PostMount with
+    /// "Index was outside the bounds of the array"; the reader's mount goes on.</summary>
+    [Fact]
+    public void A_config_CUE4Parse_cant_read_doesnt_fail_the_mount()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-cfg-").FullName;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "Config"));
+            File.WriteAllText(Path.Combine(root, "Config", "DefaultGame.ini"), "[Internationalization]\n+CultureMappings=zh-Hans\n");
+            using var p = new CUE4Parse.FileProvider.DefaultFileProvider(root, SearchOption.AllDirectories,
+                new CUE4Parse.UE4.Versions.VersionContainer(CUE4Parse.UE4.Versions.EGame.GAME_UE4_25), StringComparer.OrdinalIgnoreCase);
+            p.Initialize();
+            p.Mount();
+            Assert.Throws<IndexOutOfRangeException>(() => p.PostMount());   // the CUE4Parse trap itself
+            UnrealReader.PostMount(p);                                       // must not throw
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }

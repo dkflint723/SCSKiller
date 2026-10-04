@@ -387,14 +387,34 @@ int wmain(int argc, wchar_t** argv) {
         for (auto& n : reshade) SetEnvironmentVariableW(n.c_str(), nullptr);
     }
     std::wstring args = L"--child " + std::to_wstring(me);
-    for (int i = 3; i < argc; ++i) args += L" \"" + std::wstring(argv[i]) + L"\"";
+    for (int i = 3; i < argc; ++i) {  // CommandLineToArgvW's rules: backslashes before a quote or the end are doubled
+        args += L" \"";
+        size_t slashes = 0;
+        for (const wchar_t* c = argv[i]; *c; ++c) {
+            if (*c == L'\\') { ++slashes; continue; }
+            args.append(*c == L'"' ? 2 * slashes + 1 : slashes, L'\\'), slashes = 0;
+            args += *c;
+        }
+        args.append(2 * slashes, L'\\') += L"\"";
+    }
     fflush(stdout);
     std::vector<std::thread> relays;
+    auto end_relays = [&] {  // a child that never connected leaves its relay in ConnectNamedPipe; joinable threads must not outlive a return
+        for (auto& t : relays) {
+            if (WaitForSingleObject(t.native_handle(), 1000) == WAIT_TIMEOUT) CancelSynchronousIo(t.native_handle());
+            t.join();
+        }
+        relays.clear();
+    };
     PROCESS_INFORMATION pi = {};
     if (!o.package.empty()) {
         for (int fd : {1, 2}) {
             HANDLE p = CreateNamedPipeW(pipe_name(me, fd).c_str(), PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE | PIPE_WAIT, 1, 0, 1 << 16, 0, nullptr);
-            if (p == INVALID_HANDLE_VALUE) return fail(L"output pipe setup failed (error " + std::to_wstring(GetLastError()) + L")");
+            if (p == INVALID_HANDLE_VALUE) {
+                DWORD e = GetLastError();
+                end_relays();
+                return fail(L"output pipe setup failed (error " + std::to_wstring(e) + L")");
+            }
             relays.emplace_back([p, out = GetStdHandle(fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE)] {
                 char buf[4096];
                 DWORD n, w;
@@ -430,8 +450,11 @@ int wmain(int argc, wchar_t** argv) {
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE), si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
         for (HANDLE h : {si.hStdOutput, si.hStdError}) SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-        if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, o.idle ? IDLE_PRIORITY_CLASS : 0, nullptr, stage.c_str(), &si, &pi))
-            return fail(L"launching the staged exe failed (error " + std::to_wstring(GetLastError()) + L")");
+        if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, o.idle ? IDLE_PRIORITY_CLASS : 0, nullptr, stage.c_str(), &si, &pi)) {
+            DWORD e = GetLastError();
+            end_relays();
+            return fail(L"launching the staged exe failed (error " + std::to_wstring(e) + L")");
+        }
     }
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);  // a starved heartbeat would read as a pause
     wchar_t lim[16] = {};
@@ -454,10 +477,7 @@ int wmain(int argc, wchar_t** argv) {
             break;
         }
     }
-    for (auto& t : relays) {  // a child that never connected leaves its relay in ConnectNamedPipe
-        if (WaitForSingleObject(t.native_handle(), 1000) == WAIT_TIMEOUT) CancelSynchronousIo(t.native_handle());
-        t.join();
-    }
+    end_relays();
     if (stuck)
         return fail(L"the warm process didn't start replaying within " + std::to_wstring(start_turns / 10) + L" s" +
                     (o.layer.empty() ? L"" : L" (an add-on of the game's layer may hang outside the game)") + L"; ended it");
@@ -466,6 +486,8 @@ int wmain(int argc, wchar_t** argv) {
     if (killed) return 3;  // its last line (done / retry) was printed; the caller goes by it
     wchar_t hex[16];
     swprintf_s(hex, L"0x%08X", code);
-    if (code > 1 && code != 3) return fail(L"the warm process died (exit code " + std::wstring(hex) + L")");  // it printed no error line
+    // 3 is also what abort() exits with: a retry only when the child signalled its last line (it does before returning 3)
+    bool printed_final = !final_event || WaitForSingleObject(final_event, 0) == WAIT_OBJECT_0;
+    if (code > 1 && (code != 3 || !printed_final)) return fail(L"the warm process died (exit code " + std::wstring(hex) + L")");  // it printed no error line
     return (int)code;
 }

@@ -195,6 +195,7 @@ sealed class WarmRun : IWarmRun
                 try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }   // exited meanwhile
                 throw;
             }
+            finally { _stop.Dispose(); }   // Run disposes it on its way out too; this covers a throw (Dispose is idempotent)
         });
 
         async Task<WarmResult> Run()
@@ -239,7 +240,9 @@ sealed class WarmRun : IWarmRun
                         (pass, n, note, removals) = (pass + 1, 0, null, 0);   // each pass gets its own recoveries
                         skip.Clear();
                         skipKeys.UnionWith(crashed);
+                        var ended = _p;
                         _p = Launch(0, 0, skip, []);
+                        ended.Dispose();   // exited: its handles go once the next one runs (_p is never a disposed one)
                     }
                     continue;
                 }
@@ -261,7 +264,9 @@ sealed class WarmRun : IWarmRun
                     removals += removed ? 1 : 0;
                     note = removed ? "recovering from a GPU driver crash" : $"retrying ray tracing with fewer threads ({r.RtThreads})";
                     progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note));
+                    var ended = _p;
                     _p = Launch(r.From, r.RtThreads, skip, removed ? r.Isolate ?? [] : []);
+                    ended.Dispose();   // exited: its handles go once the next one runs (_p is never a disposed one)
                 }
             }
             _stop.Dispose();

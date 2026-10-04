@@ -27,7 +27,7 @@ public sealed class GogSource : IGameSource
             if (File.Exists(infoPath))
             {
                 try { (name, exe, version) = ParseInfo(File.ReadAllText(infoPath), install, name); }
-                catch (JsonException) { }
+                catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException) { }
                 if (exe == null) continue;   // info file exists but has no "game" playTask: DLC/component entry
             }
             else
