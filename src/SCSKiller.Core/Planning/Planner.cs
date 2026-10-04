@@ -72,6 +72,9 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary><see cref="Untested"/> without the recording hint: what an anti-cheat game, which can't be recorded, is told.</summary>
     public const string UntestedNote = "not tested on this engine version yet";
     public const string Record = "turn on recording and play for about 5 minutes";
+    /// <summary>Why a game whose files give every pipeline's shaders and root signature still needs one: this GPU's cache keys on
+    /// state they don't give (AMD: input layouts, render-target formats, blend).</summary>
+    public const string StateFromRecording = ": this GPU's driver also keys its cache on pipeline state the game files don't give";
 
     public PlanCheck Check(Game game, EngineInfo engine, Recording? recording, VendorCaps caps)
     {
@@ -94,13 +97,13 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     {
         if (!caps.CacheKeyedByExeName) return new(Readiness.Unsupported, "not supported on this GPU yet");
         // EmbeddedRootSignatures: any reader of shaders that carry them (carved, FromSoftware)
-        if (caps.StateIndependentCache && (RootSig.Verified(engine) || engine.Version.EndsWith(CarvedReader.EmbeddedRootSignatures)))
+        if (caps.StateIndependentCache && (RootSig.Verified(engine) || engine.Version.EndsWith(CarvedReader.EmbeddedRootSignatures) || engine.ShipsRootSignatures))
             return new(Readiness.Ready, NoRecording + maybe);
         if (recording != null && File.Exists(recording.DbPath) && new FileInfo(recording.DbPath).Length > 0)
             return caps.StateIndependentCache || HasDraws(recording) ? new(Readiness.Ready, "planned from a recording" + maybe)
                 : new(Readiness.NeedsRecording, "the recording has no draws: play into the game world" + maybe); // no vertex layouts to learn
         if (caps.StateIndependentCache && RootSig.RuleFor(engine) != null) return new(Readiness.Ready, Untested + maybe);
-        return new(Readiness.NeedsRecording, Record + maybe);
+        return new(Readiness.NeedsRecording, Record + (engine.ShipsRootSignatures ? StateFromRecording : "") + maybe);
     }
 
     /// <summary>The recording has a graphics PSO with a vertex shader (a menu-only session may have none): a state-dependent

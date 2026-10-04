@@ -24,7 +24,8 @@ public sealed record EngineInfo(
     string GraphicsApi,     // "D3D12", "D3D11", "Vulkan…" or "D3D11 or D3D12" (see Planner.Check)
     bool Encrypted,         // shader content unreadable without a key
     string? Unsupported,    // why it can't be indexed (e.g. "shaders stored inside materials"); null = indexable
-    bool NoRtPipelines = false);   // the game never builds a ray tracing state object (Unreal: r.RayTracing.AllowPipeline=0): its DXIL libraries go unused
+    bool NoRtPipelines = false,   // the game never builds a ray tracing state object (Unreal: r.RayTracing.AllowPipeline=0): its DXIL libraries go unused
+    bool ShipsRootSignatures = false);   // its files name every pipeline's root signature (ShaderMap.RootSignature): no rule or recording needed where the cache is state-independent
 
 /// <summary>Shader stage, numbered like D3D12_PIPELINE_STATE_SUBOBJECT_TYPE (the proxy's db uses the same numbers).</summary>
 public enum Stage { Vertex = 1, Pixel = 2, Domain = 3, Hull = 4, Geometry = 5, Compute = 6, Amplification = 24, Mesh = 25, Library = 100 }
@@ -52,8 +53,11 @@ public sealed record ShaderInfo(string Sha1, Stage Stage, string ShaderModel, in
     byte[]? EngineHeader = null);   // the engine's own header stored beside the shader, read by its root-signature rule (Dagor: dxil::ShaderHeader)
 
 /// <summary>A group of shaders that can combine. <see cref="IsPipeline"/>: the game shipped this exact stage set as one
-/// pipeline (e.g. a PSO cache record), so no pairing is needed.</summary>
-public sealed record ShaderMap(string Hash, string Library, string Platform, IReadOnlyList<string> Shaders, bool IsPipeline = false);
+/// pipeline (e.g. a PSO cache record), so no pairing is needed. <see cref="RootSignature"/>: the SHA-1 of the root
+/// signature the game creates that pipeline with, servable through ReadShaders; it wins over the shaders' own (one shader
+/// may be drawn under several); null = the shaders' own or the planner's rule.</summary>
+public sealed record ShaderMap(string Hash, string Library, string Platform, IReadOnlyList<string> Shaders, bool IsPipeline = false,
+    string? RootSignature = null);
 
 public sealed record ShaderIndex(
     string ContentHash,     // changes when the game's shader libraries change (game patch) -> plans built on it are stale

@@ -91,12 +91,13 @@ public sealed partial class ScsKiller : IScsKiller
     public static string? SharedPackDir(string dataDir, GpuVendor v) => PackGpu(v) is { } gpu ? Path.Combine(dataDir, "community", "packs", gpu) : null;
 
     /// <summary>Unreal first, then the engines whose archives the carver can't see into (FromSoftware, Unity, RE Engine,
-    /// REDengine 3, Dagor) or whose pipelines and root signatures it doesn't know (Northlight), then the generic raw DXBC/DXIL carver.</summary>
+    /// REDengine 3, Dagor) or whose pipelines and root signatures it doesn't know (Northlight, FINAL FANTASY XVI's pipeline list),
+    /// then the generic raw DXBC/DXIL carver.</summary>
     public static IEngineReader DefaultReaders() =>
         new EngineReaders(("Unreal", new UnrealReader(AppStore.DefaultDir)), (FromSoftReader.Family, new FromSoftReader(AppStore.DefaultDir)),
             (UnityReader.Family, new UnityReader()), (ReEngine.ReEngineReader.Family, new ReEngine.ReEngineReader(AppStore.DefaultDir)),
             (RedEngine.RedEngineReader.Family, new RedEngine.RedEngineReader()), (Dagor.DagorReader.Family, new Dagor.DagorReader()), (Northlight.NorthlightReader.Family, new Northlight.NorthlightReader()),
-            (CarvedReader.Family, new CarvedReader()));
+            (SquareEnix.PspcReader.Family, new SquareEnix.PspcReader()), (CarvedReader.Family, new CarvedReader()));
 
     public IGpuVendorBackend Vendor { get; }
     public AppStore Store { get; }
@@ -1034,7 +1035,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// cache's, an inline shader's bytes) because the community database finds a build by it; a plan reads them all.</summary>
     static string MapsFingerprint(ShaderIndex index) =>
         PlanFingerprint(index.Maps.Select(m => Convert.ToHexStringLower(SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(
-            $"{m.Hash}|{m.Library}|{m.Platform}|{m.IsPipeline}|{string.Join(',', m.Shaders)}")))));
+            $"{m.Hash}|{m.Library}|{m.Platform}|{m.IsPipeline}|{string.Join(',', m.Shaders)}{(m.RootSignature != null ? "|" + m.RootSignature : "")}")))));
 
     static string? IndexChanged(GameRecord r) => r.IndexContentHash != r.WarmedIndexHash ? IndexChangedReason : null;
 
