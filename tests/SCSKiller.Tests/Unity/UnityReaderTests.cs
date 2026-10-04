@@ -175,16 +175,16 @@ public class UnityReaderTests
     }
 
     /// <summary>A UnityFS (format 8) bundle holding one node: blocks info LZ4HC, the data split into an LZ4 and an LZMA block.</summary>
-    static byte[] Bundle(byte[] content, string node)
+    static byte[] Bundle(byte[] content, string node) => Bundle(node, (content[..(content.Length / 2)], 2), (content[(content.Length / 2)..], 1));
+
+    /// <summary>The same with the node's data in the given blocks (compression 0 none, 1 LZMA, 2 LZ4).</summary>
+    static byte[] Bundle(string node, params (byte[] Data, int Comp)[] blocks)
     {
-        var half = content.Length / 2;
-        byte[] a = content[..half], b = content[half..];
-        var lzA = new byte[LZ4Codec.MaximumOutputSize(a.Length)];
-        lzA = lzA[..LZ4Codec.Encode(a, lzA, LZ4Level.L09_HC)];
-        var lzmaB = Lzma(b);
+        var packed = blocks.Select(b => b.Comp switch { 0 => b.Data, 1 => Lzma(b.Data), _ => Lz4(b.Data) }).ToArray();
         var info = new List<byte>(new byte[16]);
-        info.AddRange([.. Be(2), .. Be(a.Length), .. Be(lzA.Length), 0, 2, .. Be(b.Length), .. Be(lzmaB.Length), 0, 1]);
-        info.AddRange([.. Be(1), .. Be64(0), .. Be64(content.Length), .. Be(4), .. Encoding.ASCII.GetBytes(node), 0]);
+        info.AddRange(Be(blocks.Length));
+        for (var i = 0; i < blocks.Length; i++) info.AddRange([.. Be(blocks[i].Data.Length), .. Be(packed[i].Length), 0, (byte)blocks[i].Comp]);
+        info.AddRange([.. Be(1), .. Be64(0), .. Be64(blocks.Sum(b => (long)b.Data.Length)), .. Be(4), .. Encoding.ASCII.GetBytes(node), 0]);
         var infoBytes = info.ToArray();
         var infoLz = new byte[LZ4Codec.MaximumOutputSize(infoBytes.Length)];
         infoLz = infoLz[..LZ4Codec.Encode(infoBytes, infoLz, LZ4Level.L09_HC)];
@@ -196,11 +196,16 @@ public class UnityReaderTests
         while (w.Count % 16 != 0) w.Add(0);
         w.AddRange(infoLz);
         while (w.Count % 16 != 0) w.Add(0);
-        w.AddRange(lzA);
-        w.AddRange(lzmaB);
+        foreach (var p in packed) w.AddRange(p);
         var bytes = w.ToArray();
         BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(sizeAt), bytes.Length);
         return bytes;
+    }
+
+    static byte[] Lz4(byte[] src)
+    {
+        var dst = new byte[LZ4Codec.MaximumOutputSize(src.Length)];
+        return dst[..LZ4Codec.Encode(src, dst, LZ4Level.L09_HC)];
     }
 
     static byte[] Lzma(byte[] src)
@@ -234,6 +239,48 @@ public class UnityReaderTests
         Assert.Equal(content, b.Read(0, content.Length));
         b.Dispose();
         Assert.Throws<ObjectDisposedException>(() => b.Read(0, content.Length));
+        Directory.Delete(dir, true);
+    }
+
+    /// <summary>With two blocks cached, reads anywhere (across blocks of any size and compression, past the end: zeros), in
+    /// any order and from several threads, give the bundle's bytes; a block evicted and decompressed again counts once.</summary>
+    [Fact]
+    public void BundleReadsAcrossBlocksWithASmallCache()
+    {
+        var dir = Temp();
+        var path = Path.Combine(dir, "x.bundle");
+        var rnd = new Random(7);
+        int[] sizes = [1000, 1, 4096, 700, 2500, 3, 1000, 1999, 64, 3000, 1];
+        var blocks = sizes.Select((n, i) => (Enumerable.Range(0, n).Select(_ => (byte)rnd.Next(4)).ToArray(), i % 4 == 3 ? 0 : i == 6 ? 1 : 2)).ToArray();
+        var content = blocks.SelectMany(b => b.Item1).ToArray();
+        File.WriteAllBytes(path, Bundle("CAB-0123", blocks));
+        byte[] Want(long off, int count)
+        {
+            var w = new byte[count];
+            if (off < content.Length) content.AsSpan((int)off, (int)Math.Min(count, content.Length - off)).CopyTo(w);
+            return w;
+        }
+
+        using var b = UnityFiles.Bundle.Open(path, cacheBlocks: 2)!;
+        Assert.Equal(content, b.Read(0, content.Length));
+        Assert.Equal(sizes.Length, b.BlocksDecompressed);
+        var at = 0;
+        foreach (var n in Enumerable.Reverse(sizes)) Assert.Equal(Want(content.Length - (at += n), n), b.Read(content.Length - at, n)); // each block, backwards
+        for (var i = 0; i < 2000; i++)
+        {
+            long off = rnd.Next(content.Length + 100);
+            var count = rnd.Next(6000);
+            Assert.Equal(Want(off, count), b.Read(off, count));
+        }
+        Parallel.For(0, 2000, i =>
+        {
+            var r = new Random(i);
+            long off = r.Next(content.Length + 100);
+            var count = r.Next(6000);
+            Assert.Equal(Want(off, count), b.Read(off, count));
+        });
+        Assert.Equal(sizes.Length, b.BlocksDecompressed);
+        b.Dispose();
         Directory.Delete(dir, true);
     }
 }

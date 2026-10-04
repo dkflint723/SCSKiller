@@ -95,6 +95,7 @@ public sealed class ExactLayouts
 
     readonly Dictionary<string, string> rsKeys = [];
     readonly Dictionary<(string, int, int), Dictionary<LayoutElem, int>> elemCounts = []; // (SEMANTIC, index, type) -> recorded elements
+    readonly Dictionary<List<List<LayoutElem>>, HashSet<List<LayoutElem>>> distinct = new(ReferenceEqualityComparer.Instance); // per recorded layout list: its layouts (AddRecorded)
 
     ExactLayouts(UnitPolicy policy, IReadOnlyDictionary<string, ShaderInfo> shaders)
     {
@@ -154,7 +155,7 @@ public sealed class ExactLayouts
             if (!TopoOf.TryGetValue(vs, out var topos)) TopoOf[vs] = topos = [];
             topos.Add(s.Topology);
             var full = Explicit(s.Layout);
-            AddDistinct(FullLayouts, full);
+            AddRecorded(FullLayouts, full);
             foreach (var e in full.Where(e => e.Offset != AppendAligned))
             {
                 var k = (e.Semantic.ToUpperInvariant(), e.Index, CompClass(e.Format));
@@ -165,8 +166,8 @@ public sealed class ExactLayouts
             if (Shaders.TryGetValue(vs, out var vi))
             {
                 var read = ReadLayout(full, vi);
-                AddDistinct(Get(ReadLayouts, vs), read);
-                AddDistinct(Get(LayoutsBySig, SigKey(vi)), read);
+                AddRecorded(Get(ReadLayouts, vs), read);
+                AddRecorded(Get(LayoutsBySig, SigKey(vi)), read);
             }
         }
         if (s.Stages.TryGetValue((int)Stage.Pixel, out var ps))
@@ -205,6 +206,26 @@ public sealed class ExactLayouts
     static void AddDistinct(List<List<LayoutElem>> list, List<LayoutElem> layout)
     {
         if (!list.Any(l => l.SequenceEqual(layout))) list.Add(layout);
+    }
+
+    /// <summary><see cref="AddDistinct"/> for the recorded layout lists (one per recorded PSO: hashed, not scanned).</summary>
+    void AddRecorded(List<List<LayoutElem>> list, List<LayoutElem> layout)
+    {
+        if (!distinct.TryGetValue(list, out var set)) distinct[list] = set = new(list, LayoutComparer.Instance);
+        if (set.Add(layout)) list.Add(layout);
+    }
+
+    /// <summary>Layouts equal element by element (what SequenceEqual compares).</summary>
+    sealed class LayoutComparer : IEqualityComparer<List<LayoutElem>>
+    {
+        public static readonly LayoutComparer Instance = new();
+        public bool Equals(List<LayoutElem>? a, List<LayoutElem>? b) => ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
+        public int GetHashCode(List<LayoutElem> l)
+        {
+            var h = new HashCode();
+            foreach (var e in l) h.Add(e);
+            return h.ToHashCode();
+        }
     }
 
     /// <summary>The layout elements the VS reads: those whose (semantic, index) is in its non-system input signature,
