@@ -4356,6 +4356,28 @@ public partial class AppTests : IDisposable
         Assert.DoesNotContain(ue4.Queue, q => q.PlanCheck);
     }
 
+    /// <summary>RE Requiem (upstream issue #2): a watched run of 5 minutes or more that started after the recorder's d3d12.dll
+    /// went in, with no recorder session at all, means the game loaded DirectX 12 some other way. Any session, a shorter run,
+    /// a run from before the recorder went in, or no recorder: not that.</summary>
+    [Fact]
+    public void A_long_run_after_the_recorder_went_in_without_a_session_means_it_went_unused()
+    {
+        var dll = Path.Combine(_exeDir, "d3d12.dll");
+        File.WriteAllBytes(dll, [.. "MZ"u8, .. new byte[64]]);
+        var installed = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        File.SetCreationTimeUtc(dll, installed.UtcDateTime);   // a copy's creation time is its install
+        PlayWindow Run(TimeSpan after, TimeSpan length) => new(installed + after, installed + after + length);
+        var session = new SessionStats(TimeSpan.FromMinutes(6), 100, 0, 0, 10, 5.0);
+
+        Assert.True(ScsKiller.RecorderUnused(Run(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(6)), null, dll));
+        Assert.True(ScsKiller.RecorderUnused(Run(TimeSpan.Zero, ScsKiller.EnoughRecording), null, dll));   // 5 minutes from the install on
+        Assert.False(ScsKiller.RecorderUnused(Run(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(6)), session, dll));   // it loads
+        Assert.False(ScsKiller.RecorderUnused(Run(TimeSpan.FromMinutes(1), ScsKiller.EnoughRecording - TimeSpan.FromSeconds(1)), null, dll));
+        Assert.False(ScsKiller.RecorderUnused(Run(TimeSpan.FromMinutes(-30), TimeSpan.FromMinutes(20)), null, dll));   // played before it went in
+        Assert.False(ScsKiller.RecorderUnused(null, null, dll));
+        Assert.False(ScsKiller.RecorderUnused(Run(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(6)), null, Path.Combine(_exeDir, "gone", "d3d12.dll")));
+    }
+
     /// <summary>Unreal 5's Lumen: hardware ray tracing traces rays inline (RayQuery PSOs, no state object), software Lumen
     /// none at all. A recorded launch's import plans the recording without a compile (the app's plan check): inline ray
     /// tracing then covers it; a launch of 5 minutes without any makes the game Ready with a note. Until then the status

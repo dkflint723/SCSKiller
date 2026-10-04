@@ -65,3 +65,34 @@ public class UnrealKeysTests(ITestOutputHelper output)
         Assert.True(File.Exists(Path.Combine(data, "games", "steam_1941540", "aes.scan")));
     }
 }
+
+/// <summary>A key the user pastes (no game needed): 64 hex digits, "0x" optional, any case, whitespace around it.</summary>
+public class UnrealKeyParseTests
+{
+    const string Hex = "0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF";
+
+    [Theory]
+    [InlineData("0x" + Hex)]
+    [InlineData("0X" + Hex)]
+    [InlineData(Hex)]
+    [InlineData("  0x" + Hex + "  ")]
+    [InlineData("0x" + Hex + "\r\n")]
+    [InlineData("\t" + Hex + "\n")]
+    public void PastedKeysParseToTheSameKey(string text)
+    {
+        var expected = UnrealKeys.Parse("0x" + Hex.ToLowerInvariant());
+        Assert.NotNull(expected);
+        Assert.Equal(expected.KeyString, UnrealKeys.Parse(text)?.KeyString, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(expected.KeyString, UnrealKeys.Parse(text.ToLowerInvariant())?.KeyString, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0x")]
+    [InlineData("0x" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde")]     // 63 digits
+    [InlineData("0x" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0")]   // 65 digits
+    [InlineData("0x" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg")]    // not hex
+    [InlineData("0x0123456789abcdef0123456789abcdef 0123456789abcdef0123456789abcdef")]         // a space inside
+    [InlineData("not a key")]
+    public void AnythingElseIsNoKey(string text) => Assert.Null(UnrealKeys.Parse(text));
+}

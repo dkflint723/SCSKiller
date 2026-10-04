@@ -60,7 +60,7 @@ public sealed class UnrealKeys(string dataDir)
         return true;
     }
 
-    static FAesKey? Parse(string text)
+    internal static FAesKey? Parse(string text)
     {
         var hex = text.Trim().Replace("0x", "", StringComparison.OrdinalIgnoreCase);
         return hex.Length == 64 && hex.All(Uri.IsHexDigit) ? new FAesKey("0x" + hex) : null;

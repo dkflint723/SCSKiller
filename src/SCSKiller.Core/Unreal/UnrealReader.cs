@@ -93,7 +93,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     /// <summary>Whether <paramref name="key"/> opens any of the encrypted containers: the first in path order may be one of a
     /// chunk under its own key (a non-zero key GUID), and one that can't be read at all is not a wrong key either.</summary>
-    static bool OpensAny(IEnumerable<string> paths, EGame game, FAesKey key) =>
+    internal static bool OpensAny(IEnumerable<string> paths, EGame game, FAesKey key) =>
         paths.Any(p => { try { return Opens(p, game, key); } catch (Exception) { return false; } });
 
     /// <summary>Paks dir, engine version, fork, project folder; null = not a cooked Unreal game.</summary>
