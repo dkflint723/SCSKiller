@@ -108,6 +108,8 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
 - `packs\<vendor>\<dll name>-<dll sha1>.pack`: middleware packs (see [Middleware packs](#middleware-packs)).
 - `keys\collection.json`: the community's Unreal key list as last fetched (names and keys, when it was fetched and the
   last try; see [Engine readers](#engine-readers)).
+- `keys\imported.json`: the named keys the user imported from files ("Import keys…", `key --import`), the latest import
+  first; apart from the fetched list so a refetch keeps them, and matched by lookups before it.
 - `community\`: the community database's manifest and downloaded recordings; `community\packs\<gpu vendor>\<vendor>\`
   the shared middleware packs downloaded for this PC's GPU vendor.
 - `recorders.log`: what recorder installs and removals did.
@@ -272,8 +274,10 @@ open game files read-only and never launch or attach to the game.
   game's AES key (`aes.key`): found in the exe by a static scan (`UnrealKeys`; never an anti-cheat game's exe), given by
   the user, or looked up in the community's key list (`KeyCollection`: the first post of a forum topic, a plain HTTPS GET
   at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
-  matched to the game's names locally, and at most 20 candidates are tried). Every key is stored only if it opens one of
-  the game's encrypted containers. A shipped pipeline cache (`*.stable.upipelinecache`, file versions
+  matched to the game's names locally, and at most 20 candidates are tried), or imported from a file of keys the user
+  collected (`KeyCollection.ImportFile`: text lines, CSV, JSON or a saved page, at most 16 MB; per encrypted game the
+  entries matched to its names as a lookup matches them, then at most 50 unnamed keys). Every key is stored only if it
+  opens one of the game's encrypted containers. A shipped pipeline cache (`*.stable.upipelinecache`, file versions
   22-28, `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact
   shader map, so the planner pairs those shaders as the game does (global and post-process passes that no signature
   match pairs). They are left out of the index's content hash.

@@ -150,6 +150,12 @@ public sealed class FakeScsKiller : IScsKiller
         return new(Core.Unreal.KeyLookupOutcome.NoWorkingKey, "None of the 2 keys listed for this game (Sample Game, Sample Game (demo)) opens its files.", Tried: 2);
     }
     public string? KeyProblem(string gameId) => Core.Unreal.UnrealKeys.Advice(Core.Unreal.KeyMiss.Protected);
+    public async Task<Core.Unreal.KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        progress?.Report("Trying the keys on Sample Game (1 of 1)…");
+        await Task.Delay(1500, ct);
+        return new(12, 1, [new("steam:1", "Sample Game", Core.Unreal.KeyImportOutcome.NoWorkingKey, "No working key (3 tried).", Tried: 3)]);
+    }
     public bool ShouldNotifyStale() => Settings.OnDriverUpdate == DriverUpdateMode.Ask && DriverStaleGames().Count > 0;
     public void ApplyDriverUpdateMode() { }
     public Task<IReadOnlyList<GameState>> RescanAsync(CancellationToken ct, bool userRequested = false) => ScanAsync(ct);

@@ -1356,6 +1356,38 @@ public sealed partial class ScsKiller : IScsKiller
 
     public string? KeyProblem(string gameId) => Unreal is { } u ? UnrealKeys.Advice(u.KeyMiss(Find(gameId).Game)) : null;
 
+    public async Task<KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        var (keys, problem) = await Task.Run(() => KeyList.ImportFile(file), ct);
+        if (keys is not { } k) return new(0, 0, [], problem);
+        var unreal = Games.Where(s => s.Engine?.Family == "Unreal").OrderBy(s => s.Game.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        var locked = unreal.Count(s => s.Engine!.Encrypted);
+        var results = new List<KeyImportGame>();
+        foreach (var s in unreal)
+        {
+            var g = s.Game;
+            if (!s.Engine!.Encrypted)
+            {
+                results.Add(new(g.Id, g.Name, KeyImportOutcome.Skipped, File.Exists(Path.Combine(Store.GameDir(g.Id), "aes.key"))
+                    ? "Skipped: it already has a working key." : "Skipped: its files aren't encrypted."));
+                continue;
+            }
+            progress?.Report($"Trying the keys on {g.Name} ({results.Count(r => r.Outcome != KeyImportOutcome.Skipped) + 1} of {locked})…");
+            KeyLookup? r;
+            // the checks open the game's containers: off the caller's thread
+            try { r = await Task.Run(() => KeyCheck(g) is { } check ? KeyCollection.TryImported(k.Named, k.Unnamed, check.Names, check.TrySet, Log, ct) : null, ct); }
+            catch (Exception e) when (e is not OperationCanceledException) { r = new(KeyLookupOutcome.NoWorkingKey, $"Trying the keys failed: {e.Message}"); }
+            if (r == null)
+            {
+                results.Add(new(g.Id, g.Name, KeyImportOutcome.Skipped, "Skipped: SCSKiller can't read this game's files."));
+                continue;
+            }
+            Log?.Report($"{g.Name}: AES key import: {r.Message}");
+            results.Add(new(g.Id, g.Name, r.Outcome == KeyLookupOutcome.Unlocked ? KeyImportOutcome.Unlocked : KeyImportOutcome.NoWorkingKey, r.Message, r.Entry, r.Tried));
+        }
+        return new(k.Named.Count, k.Unnamed.Count, [.. results.OrderBy(r => r.Outcome)]);
+    }
+
     /// <summary>With Settings.LookUpKeysOnline, a background pass after a scan over its encrypted Unreal games: each is looked
     /// up once per exe build and listed candidates (aes.lookup), the list fetched at most daily; a key found re-evaluates the
     /// game. Only the game's files are read (anti-cheat games too: no exe scan, no process). Never blocks the scan.</summary>

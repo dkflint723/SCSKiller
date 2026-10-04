@@ -396,6 +396,11 @@ public interface IScsKiller
     /// <summary>Why the automatic search found no key for the encrypted game, in plain words with what to do; null = no reason
     /// recorded. Reads files: not on the UI thread.</summary>
     string? KeyProblem(string gameId);
+    /// <summary>Reads a file of keys the user collected (Unreal.KeyCollection.ImportFile; nothing is sent) and tries them on every
+    /// encrypted Unreal game without a working key: the entries named for it, then the file's unnamed keys, each stored only
+    /// if it opens the game's files, as <see cref="SetEncryptionKey"/> does; never says a key. The named entries are kept
+    /// for later lookups. Call RescanAsync after an unlock.</summary>
+    Task<Unreal.KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>What <see cref="ClearGameCache"/> deletes, by kind, empty kinds left out; an anti-cheat game's driver cache
     /// only. Reads dbs: not on the UI thread.</summary>
