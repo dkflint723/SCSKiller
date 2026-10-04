@@ -1235,4 +1235,114 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         }
         finally { Directory.Delete(dir, true); }
     }
+
+    /// <summary>EA Javelin's launcher in the game root, and a Battle.net install's own files, are anti-cheat whatever store
+    /// lists the game: a Blizzard game sold on Steam has a steam: id and a Battle.net layout.</summary>
+    [Theory]
+    [InlineData(".build.info")]
+    [InlineData(".product.db")]
+    [InlineData("EAAntiCheat.GameServiceLauncher.exe")]
+    [InlineData("EAAntiCheat.GameServiceLauncher.dll")]
+    public void Ea_javelin_and_battle_net_install_files_are_anti_cheat(string marker)
+    {
+        var dir = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        try
+        {
+            File.WriteAllBytes(Path.Combine(dir, "Game.exe"), new byte[100]);
+            var game = new Game("test:marker", "Marker", Store.Other, dir, Path.Combine(dir, "Game.exe"));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
+            File.WriteAllBytes(Path.Combine(dir, marker), [0]);
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game, quick: true));   // in the root: the quick recheck sees it too
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void A_steam_game_with_a_battle_net_layout_is_anti_cheat()
+    {
+        var dir = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        try
+        {
+            // Battle.net's layout: .build.info and Data\ in the root, the game in _retail_\
+            foreach (var f in new[] { ".build.info", @"Data\data\data.000", @"_retail_\Game.exe" })
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(dir, f))!);
+                File.WriteAllBytes(Path.Combine(dir, f), [0]);
+            }
+            var game = new Game("steam:2357570", "Blizzard Game", Store.Steam, dir, Path.Combine(dir, "_retail_", "Game.exe"));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game));
+            File.Delete(Path.Combine(dir, ".build.info"));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>Steam writes a manifest while it updates a game, and a library may be on a drive the user can't list: the
+    /// other games are still listed.</summary>
+    [Fact]
+    public void Steam_lists_the_other_games_while_a_manifest_is_locked_or_a_library_cant_be_listed()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-steam-test-").FullName;
+        var other = Directory.CreateDirectory(Path.Combine(root, "OtherLibrary", "steamapps")).FullName;
+        var me = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var deny = new System.Security.AccessControl.FileSystemAccessRule(me, System.Security.AccessControl.FileSystemRights.ListDirectory,
+            System.Security.AccessControl.AccessControlType.Deny);
+        void Acl(bool add)
+        {
+            var acl = new DirectoryInfo(other).GetAccessControl();
+            if (add) acl.AddAccessRule(deny); else acl.RemoveAccessRule(deny);
+            new DirectoryInfo(other).SetAccessControl(acl);
+        }
+        try
+        {
+            var apps = Directory.CreateDirectory(Path.Combine(root, "steamapps")).FullName;
+            void Install(string steamapps, uint id, string dir)
+            {
+                Directory.CreateDirectory(Path.Combine(steamapps, "common", dir));
+                File.WriteAllBytes(Path.Combine(steamapps, "common", dir, dir + ".exe"), new byte[1024]);
+                File.WriteAllText(Path.Combine(steamapps, $"appmanifest_{id}.acf"),
+                    $"\"AppState\"\n{{\n\t\"appid\"\t\t\"{id}\"\n\t\"name\"\t\t\"{dir}\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"{dir}\"\n}}\n");
+            }
+            Install(apps, 7, "Updating");
+            Install(apps, 8, "Idle");
+            Install(other, 9, "Elsewhere");
+            string Esc(string p) => p.Replace(@"\", @"\\");
+            File.WriteAllText(Path.Combine(apps, "libraryfolders.vdf"),
+                $"\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{Esc(root)}\"\n\t}}\n\t\"1\"\n\t{{\n\t\t\"path\"\t\t\"{Esc(Path.GetDirectoryName(other)!)}\"\n\t}}\n}}\n");
+            string[] Found() => new SteamSource(root).Discover().Select(g => g.Id).Order().ToArray();
+            Assert.Equal(["steam:7", "steam:8", "steam:9"], Found());
+
+            using (new FileStream(Path.Combine(apps, "appmanifest_7.acf"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Assert.Equal(["steam:8", "steam:9"], Found());
+            Acl(true);
+            Assert.Equal(["steam:7", "steam:8"], Found());
+        }
+        finally
+        {
+            Acl(false);
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Epic_lists_the_other_games_while_a_manifest_is_locked()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-epic-test-").FullName;
+        try
+        {
+            var manifests = Directory.CreateDirectory(Path.Combine(root, "Manifests")).FullName;
+            foreach (var app in new[] { "Installing", "Idle" })
+            {
+                var install = Directory.CreateDirectory(Path.Combine(root, app)).FullName;
+                File.WriteAllBytes(Path.Combine(install, app + ".exe"), new byte[100]);
+                File.WriteAllText(Path.Combine(manifests, app + ".item"), System.Text.Json.JsonSerializer.Serialize(new { AppName = app, InstallLocation = install }));
+            }
+            string[] Found() => new EpicSource(manifests).Discover().Select(g => g.Id).Order().ToArray();
+            Assert.Equal(["epic:Idle", "epic:Installing"], Found());
+            using (new FileStream(Path.Combine(manifests, "Installing.item"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Assert.Equal(["epic:Idle"], Found());
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }

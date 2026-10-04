@@ -88,6 +88,20 @@ public class FormatTests
         Assert.All(cases, c => Assert.Equal(c.Note, Format.ShortNote(c.State)));
     }
 
+    /// <summary>RE Requiem (upstream issue #2): played long enough with the recorder in and nothing recorded says so, not
+    /// "play 5 minutes" forever.</summary>
+    [Fact]
+    public void A_recorder_the_game_never_loaded_says_nothing_was_recorded()
+    {
+        var waiting = S(GameStatus.NeedsRecording, Core.Planning.Planner.Record) with { RecorderInstalled = true };
+        Assert.Equal("Recorder on: play 5 minutes", Format.ShortNote(waiting));
+        Assert.Equal("Played, but nothing was recorded", Format.ShortNote(waiting with { RecorderUnused = true }));
+        Assert.Equal("Recording paused: limit reached", Format.ShortNote(waiting with { RecorderUnused = true, RecordingPaused = true }));
+        Assert.NotEqual("Played, but nothing was recorded", Format.ShortNote(waiting with { RecorderUnused = true, RecordedEnough = true }));
+        Assert.NotEqual("Played, but nothing was recorded", Format.ShortNote(waiting with { RecorderUnused = true, RecorderInstalled = false }));
+        Assert.Equal("Driver 610.88", Format.ShortNote(S(GameStatus.Warmed, "warmed for driver 610.88") with { RecorderInstalled = true, RecorderUnused = true }));
+    }
+
     static GpuInfo Gpu(GpuVendor v, string name, ulong vram) => new(v, name, "1.0", 0, vram);
 
     [Fact]

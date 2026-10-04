@@ -342,4 +342,53 @@ public class UnrealReaderTests(ITestOutputHelper output)
         }
         finally { Directory.Delete(root, true); }
     }
+
+    /// <summary>Neverness to Everness (upstream issue #14): its 5.5 beta's enum matches the folder first, and its release has a
+    /// 5.6 enum of its own, so a 5.5 detection that the packages say is 5.6 moves to it. A fork with no 5.6 build (Stalker 2)
+    /// has no counterpart there, and Detect keeps its version.</summary>
+    [Fact]
+    public void ForksMoveToTheirOwn56BuildOnly()
+    {
+        const string nte = "Neverness To Everness";
+        Assert.Equal(CUE4Parse.UE4.Versions.EGame.GAME_NevernessToEverness_CBT2, UnrealReader.DetectFork(CUE4Parse.UE4.Versions.EGame.GAME_UE5_5, nte, "HTGame"));
+        Assert.Equal(CUE4Parse.UE4.Versions.EGame.GAME_NevernessToEverness, UnrealReader.DetectFork(CUE4Parse.UE4.Versions.EGame.GAME_UE5_6, nte, "HTGame"));
+        Assert.Equal(CUE4Parse.UE4.Versions.EGame.GAME_NevernessToEverness, UnrealReader.DetectFork(CUE4Parse.UE4.Versions.EGame.GAME_UE5_6, "NTE",
+            "NevernessToEverness-Win64-Shipping"));   // by the exe name too, its Shipping suffix dropped
+
+        const string stalker = "S.T.A.L.K.E.R. 2 Heart of Chornobyl";
+        Assert.Equal(CUE4Parse.UE4.Versions.EGame.GAME_Stalker2, UnrealReader.DetectFork(CUE4Parse.UE4.Versions.EGame.GAME_UE5_5, stalker, "Stalker2-Win64-Shipping"));
+        Assert.Null(UnrealReader.DetectFork(CUE4Parse.UE4.Versions.EGame.GAME_UE5_6, stalker, "Stalker2-Win64-Shipping"));
+    }
+
+    /// <summary>A user's key is tried on every encrypted container: one that can't be read at all (junk, empty, gone) is not
+    /// a wrong key and throws nothing; none opening is false.</summary>
+    [Fact]
+    public void OpensAnyIsFalseForContainersItCantRead()
+    {
+        var dir = Directory.CreateTempSubdirectory("scskiller-opens-").FullName;
+        try
+        {
+            var junk = Enumerable.Range(0, 4096).Select(i => (byte)(i * 31)).ToArray();
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk0-Windows.utoc"), junk);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk0-Windows.ucas"), junk);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk1-Windows.pak"), junk);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk2-Windows.pak"), []);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk3-Windows.utoc"), new byte[64]);
+            string[] paths = [.. new[] { "pakchunk0-Windows.utoc", "pakchunk1-Windows.pak", "pakchunk2-Windows.pak", "pakchunk3-Windows.utoc", "gone.pak", "gone.utoc" }
+                .Select(f => Path.Combine(dir, f))];
+            var key = new CUE4Parse.Encryption.Aes.FAesKey("0x" + new string('7', 64));
+            foreach (var game in new[] { CUE4Parse.UE4.Versions.EGame.GAME_UE4_27, CUE4Parse.UE4.Versions.EGame.GAME_UE5_5, CUE4Parse.UE4.Versions.EGame.GAME_NevernessToEverness })
+            {
+                Assert.False(UnrealReader.OpensAny(paths, game, key));
+                Assert.False(UnrealReader.OpensAny([], game, key));
+            }
+        }
+        finally
+        {
+            // CUE4Parse's PakFileReader keeps the file it opened when its constructor throws: its finalizer closes it
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            Directory.Delete(dir, true);
+        }
+    }
 }
