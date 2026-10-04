@@ -83,30 +83,43 @@ public static class UnityFiles
     public sealed record Node(long Offset, long Size, uint Flags, string Path);
 
     /// <summary>A UnityFS bundle: its node table and random access to the uncompressed data (blocks decompressed on
-    /// demand and kept while the bundle is open).</summary>
+    /// demand, the last <see cref="CacheBlocks"/> used kept while the bundle is open). Reads may come from several threads.</summary>
     public sealed class Bundle : IDisposable
     {
+        /// <summary>Decompressed blocks kept (most recently used): reads go through objects in file order, so a few cover
+        /// an object straddling blocks and the next one starting where it ended (LZ4 blocks are 128 KB).</summary>
+        public const int CacheBlocks = 16;
+
         readonly Microsoft.Win32.SafeHandles.SafeFileHandle file;
-        readonly (long UOff, int USize, long COff, int CSize, int Comp)[] blocks;
-        readonly Dictionary<int, byte[]> cache = [];
+        readonly (long UOff, int USize, long COff, int CSize, int Comp)[] blocks; // UOff ascending: each block starts where the last ended
+        readonly List<(int I, byte[] B)> cache = []; // most recently used last
+        readonly System.Collections.BitArray seen;    // blocks decompressed at least once
+        readonly int cacheBlocks;
+        readonly Lock gate = new();
         public string UnityVersion { get; }
         public IReadOnlyList<Node> Nodes { get; }
+        /// <summary>Distinct blocks decompressed so far (one evicted and decompressed again counts once).</summary>
         public long BlocksDecompressed { get; private set; }
 
-        Bundle(Microsoft.Win32.SafeHandles.SafeFileHandle file, string unity, (long, int, long, int, int)[] blocks, Node[] nodes) =>
-            (this.file, UnityVersion, this.blocks, Nodes) = (file, unity, blocks, nodes);
+        Bundle(Microsoft.Win32.SafeHandles.SafeFileHandle file, string unity, (long, int, long, int, int)[] blocks, Node[] nodes, int cacheBlocks)
+        {
+            (this.file, UnityVersion, this.blocks, Nodes, this.cacheBlocks) = (file, unity, blocks, nodes, Math.Max(1, cacheBlocks));
+            seen = new(blocks.Length);
+        }
 
         public static bool IsBundle(ReadOnlySpan<byte> head) => head.StartsWith("UnityFS\0"u8);
 
-        public static Bundle? Open(string path)
+        public static Bundle? Open(string path) => Open(path, CacheBlocks);
+
+        internal static Bundle? Open(string path, int cacheBlocks)
         {
             var f = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            try { return Open(f, RandomAccess.GetLength(f)) is { } b ? b : Close(f); }
+            try { return Open(f, RandomAccess.GetLength(f), cacheBlocks) is { } b ? b : Close(f); }
             catch { f.Dispose(); throw; }
             static Bundle? Close(Microsoft.Win32.SafeHandles.SafeFileHandle f) { f.Dispose(); return null; }
         }
 
-        static Bundle? Open(Microsoft.Win32.SafeHandles.SafeFileHandle f, long length)
+        static Bundle? Open(Microsoft.Win32.SafeHandles.SafeFileHandle f, long length, int cacheBlocks)
         {
             var head = new byte[Math.Min(512, length)];
             RandomAccess.Read(f, head, 0);
@@ -141,14 +154,14 @@ public static class UnityFiles
             }
             var nodes = new Node[bi.Count(1 << 20)];
             for (var i = 0; i < nodes.Length; i++) nodes[i] = new Node(bi.I64(), bi.I64(), bi.U32(), bi.CString());
-            return new Bundle(f, unity, blocks, nodes);
+            return new Bundle(f, unity, blocks, nodes, cacheBlocks);
         }
 
         /// <summary>Uncompressed bytes [offset, offset + count) of the bundle's data.</summary>
         public byte[] Read(long offset, int count)
         {
             var dst = new byte[count];
-            var i = Array.FindLastIndex(blocks, b => b.UOff <= offset);
+            var i = LastAtOrBefore(offset);
             for (var done = 0; done < count && i >= 0 && i < blocks.Length; i++)
             {
                 var b = Block(i);
@@ -164,20 +177,45 @@ public static class UnityFiles
         /// <summary>Reads within one node (a serialized file or resource) of the bundle.</summary>
         public ReadAt Reader(Node node) => (off, count) => Read(node.Offset + off, (int)Math.Max(0, Math.Min(count, node.Size - off)));
 
+        /// <summary>The last block whose UOff is at or before <paramref name="offset"/> (the last of equal ones: an empty
+        /// block shares its successor's UOff); -1 when none is.</summary>
+        int LastAtOrBefore(long offset)
+        {
+            int lo = 0, hi = blocks.Length; // first block past offset in [lo, hi]
+            while (lo < hi)
+            {
+                var mid = (lo + hi) >>> 1;
+                if (blocks[mid].UOff <= offset) lo = mid + 1; else hi = mid;
+            }
+            return lo - 1;
+        }
+
         byte[] Block(int i)
         {
-            if (cache.TryGetValue(i, out var b)) return b;
-            var (_, us, co, cs, comp) = blocks[i];
-            var src = new byte[cs];
-            RandomAccess.Read(file, src, co);
-            BlocksDecompressed++;
-            return cache[i] = Decompress(src, us, comp);
+            lock (gate)
+            {
+                for (var k = cache.Count - 1; k >= 0; k--)
+                    if (cache[k].I == i)
+                    {
+                        var hit = cache[k];
+                        if (k != cache.Count - 1) { cache.RemoveAt(k); cache.Add(hit); }
+                        return hit.B;
+                    }
+                var (_, us, co, cs, comp) = blocks[i];
+                var src = new byte[cs];
+                RandomAccess.Read(file, src, co);
+                var b = Decompress(src, us, comp);
+                if (!seen[i]) { seen[i] = true; BlocksDecompressed++; }
+                if (cache.Count == cacheBlocks) cache.RemoveAt(0);
+                cache.Add((i, b));
+                return b;
+            }
         }
 
         public void Dispose()
         {
             file.Dispose();
-            cache.Clear();
+            lock (gate) cache.Clear();
         }
     }
 

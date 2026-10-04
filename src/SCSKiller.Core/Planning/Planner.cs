@@ -159,20 +159,32 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         var mainDb = Path.Combine(workDir, "scskiller.db");
         if (recording != null) CopyRaw(recording.DbPath, mainDb);
         else File.WriteAllBytes(mainDb, []);
-        var inMain = new HashSet<string>(); // blob hashes and PSO keys already in scskiller.db
-        foreach (var r in Read(mainDb)) inMain.Add(r.Tag == 'B' ? Hex(r.Payload.AsSpan(0, 20)) : r.Key);
-
         var body = PlanFile.Read(plan.FilePath).Records.ToList();
-        var templates = body.Where(r => r.Tag is 'G' or 'C' or 'S' && !inMain.Contains(r.Key)).ToList();
         var rt = body.Where(r => r.Tag == 'Y').Select(r => RtCollections.ParseItem(r.Payload)).ToList(); // ray tracing collections: need their library's exports
         var hitGroups = body.Where(r => r.Tag == 'H').Select(r => RedEngine.RedRayTracing.ParseItem(r.Payload)).ToList(); // REDengine 3's and FromSoftware's: need both libraries' exports
         var rtLibs = rt.Select(y => y.Library).Concat(hitGroups.SelectMany(h => new[] { h.ClosestHit, h.AnyHit }).OfType<string>()).ToHashSet();
+        // one streamed pass over scskiller.db (it can be hundreds of MB: only what's needed is kept, not its records)
+        var inMain = new HashSet<string>(); // blob hashes and PSO keys already in scskiller.db
         var rtBytes = new Dictionary<string, byte[]>();
-        if (rtLibs.Count > 0) foreach (var r in Read(mainDb)) if (r.Tag == 'B' && rtLibs.Contains(Hex(r.Payload.AsSpan(0, 20)))) rtBytes[Hex(r.Payload.AsSpan(0, 20))] = r.Payload[20..];
+        var soRefs = new HashSet<string>(); // the recorded state objects' libraries: a recording may leave out the install's
+        foreach (var r in Read(mainDb))
+            if (r.Tag == 'B')
+            {
+                var h = Hex(r.Payload.AsSpan(0, 20));
+                inMain.Add(h);
+                if (rtLibs.Contains(h)) rtBytes[h] = r.Payload[20..];
+            }
+            else
+            {
+                inMain.Add(r.Key);
+                if (IsStateObject(r.Tag)) soRefs.UnionWith(Rehydrate.References([r]));
+            }
+
+        var templates = body.Where(r => r.Tag is 'G' or 'C' or 'S' && !inMain.Contains(r.Key)).ToList();
         var shaders = templates.Select(Parse).SelectMany(t => t.Stages.Values.Append(t.Rs))
             .Concat(body.Where(r => r.Tag == 'P').Select(r => ParseItem(r.Payload)).SelectMany(i => i.Stages.Values.Append(i.Rs)))
             .Concat(rtLibs)
-            .Concat(Rehydrate.References(Read(mainDb).Where(r => IsStateObject(r.Tag)))).ToHashSet();   // the recorded state objects' libraries: a recording may leave out the install's
+            .Concat(soRefs).ToHashSet();
         shaders.ExceptWith(inMain);
         shaders.ExceptWith(body.Where(r => r.Tag == 'B').Select(r => Hex(r.Payload.AsSpan(0, 20)))); // root signatures the plan doesn't carry are the game's own (RTS0): pulled like shaders
         shaders.UnionWith(Rehydrate.References(body.Where(r => r.Tag is '1' or '2'))); // a D3D11 item's blobs are in gen.db itself

@@ -84,6 +84,25 @@ public class ExactLayoutsTests(ITestOutputHelper output)
         Assert.Equal((Provenance.Guessed, L(Planner.VsLayout(vsUint))), (synth.Provenance, L(Assert.Single(synth.Value))));
     }
 
+    /// <summary>The recorded layout lists keep each distinct layout once (equal element by element, in order: another order
+    /// or a prefix is another layout), in first-seen order.</summary>
+    [Fact]
+    public void RecordedLayoutsAreDistinctInFirstSeenOrder()
+    {
+        var rs = Hash("rs");
+        LayoutElem pos = new("POSITION", 0, 6, 0), uv = new("TEXCOORD", 0, 34, 12), color = new("COLOR", 0, 28, 16);
+        List<List<LayoutElem>> layouts = [[pos, uv, color], [pos, uv], [pos], [pos, uv], [uv, pos], [pos, uv with { Offset = 16 }], [pos, uv, color], [pos], [uv, pos]];
+        var x = ExactLayouts.Build(layouts.Select(l => Gfx(rs, VsA, null, [.. l], [])), new Dictionary<string, byte[]>(), UnitPolicy.Amd,
+            new[] { VsA }.ToDictionary(s => s.Sha1));
+        List<string> Distinct(IEnumerable<List<LayoutElem>> ls) => ls.Select(L).Distinct().ToList();
+        Assert.Equal(Distinct(layouts), x.FullLayouts.Select(L));
+        Assert.Equal(5, x.FullLayouts.Count);
+        var read = Distinct(layouts.Select(l => ExactLayouts.ReadLayout(l, VsA)));
+        Assert.Equal([L([pos, uv]), L([pos]), L([pos, uv with { Offset = 16 }])], read);
+        Assert.Equal(read, x.ReadLayouts[VsA.Sha1].Select(L));
+        Assert.Equal(read, x.LayoutsBySig[ExactLayouts.SigKey(VsA)].Select(L));
+    }
+
     [Fact]
     public void GuessesPerElementWhenNoLayoutCoversAll()
     {
