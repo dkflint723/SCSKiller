@@ -271,6 +271,13 @@
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.KeyListUrlProblem, Mode=OneWay}" Visibility="{x:Bind Vm.HasKeyListUrlProblem, Mode=OneWay}" Style="{StaticResource Caption}"
                                    TextWrapping="Wrap" Margin="28,0,0,0" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="ImportKeysButton" Content="Import keys…" Click="OnImportKeys" AutomationProperties.Name="Import encryption keys from a file" />
+                            <ProgressRing x:Name="ImportKeysRing" IsActive="False" Width="20" Height="20" Visibility="Collapsed" />
+                        </StackPanel>
+                        <TextBlock Text="Tries a file of keys you collected (lines of a game's name and its key, CSV, JSON or a saved page) on every encrypted Unreal game without a working key, now and after each scan, before the online list. The keys stay on this PC, and a key is kept only if it opens the game's files."
+                                   Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="ImportKeysStatus" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>
                 </Border>
 

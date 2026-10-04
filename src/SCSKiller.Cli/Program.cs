@@ -34,6 +34,9 @@ const string Usage = """
       key <game> --lookup [--page <file>]         look the key up in the community's key list (Settings.KeyListUrl; nothing
                                                   about the game is sent) and store the first listed key that opens its files;
                                                   --page: the list page saved from a browser instead of fetching it
+      key --import <file>                         try the keys of a file (lines of "name 0x<64 hex>" or a key alone, CSV, JSON,
+                                                  a saved page) on every encrypted game without a working key; keeps only keys
+                                                  that open its files, and the named entries for later lookups
       index <game> --out <dir>                    debug: dump the engine reader's shader index
       rehydrate <game> <hash-only.db> --out <db> [--expect <content hash>]
                                                   add the shader bytes a hash-only recording references, from the install
@@ -435,7 +438,8 @@ async Task<int> Record()
 
 async Task<int> Key()
 {
-    if (args.Length < 3) return Fail("key <game> <hex> | key <game> --lookup [--page <file>]");
+    if (args.Length < 3) return Fail("key <game> <hex> | key <game> --lookup [--page <file>] | key --import <file>");
+    if (args[1] == "--import") return await ImportKeys();
     var k = await Open();
     var g = Match(k.Games, args[1]);
     if (args.Contains("--lookup"))
@@ -461,6 +465,19 @@ static async Task<(ScsKiller K, GameState G, IEngineReader Reader, EngineInfo En
     var reader = ScsKiller.DefaultReaders();
     var engine = g.Engine ?? reader.Detect(g.Game) ?? throw new InvalidOperationException($"{g.Game.Name}: engine not supported");
     return (k, g, reader, engine, reader.Index(g.Game, engine, log, CancellationToken.None));
+}
+
+async Task<int> ImportKeys()
+{
+    var k = await Open();
+    var r = await k.ImportKeysAsync(args[2]);
+    if (r.Problem != null) return Fail(r.Problem);
+    foreach (var g in r.Games) Console.WriteLine($"{g.Name}: {g.Message}");
+    Console.WriteLine($"{r.Named} named and {r.Unnamed} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != KeyImportOutcome.Skipped)} encrypted games unlocked");
+    if (r.Unlocked == 0) return 0;
+    await k.RescanAsync(CancellationToken.None);
+    foreach (var g in r.Games.Where(g => g.Outcome == KeyImportOutcome.Unlocked)) Console.WriteLine($"{g.Name}: {k.Games.First(s => s.Game.Id == g.GameId).StatusReason}");
+    return 0;
 }
 
 async Task<int> Index()

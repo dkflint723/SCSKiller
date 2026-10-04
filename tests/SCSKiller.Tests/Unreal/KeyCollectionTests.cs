@@ -233,6 +233,137 @@ public class KeyCollectionTests : IDisposable
         Assert.Equal(1, server.Requests);   // the saved copy is used for a day
     }
 
+    [Fact]
+    public void A_key_file_of_lines_takes_every_separator_bare_keys_and_skips_junk()
+    {
+        var (named, unnamed) = KeyCollection.ParseFile(string.Join("\r\n",
+            "# my keys", "", $"Alpha Game 0x{K(1)}", $"Bravo: {K(2)}", $"Charlie = 0x{K(3).ToLowerInvariant()}", $"Delta,0x{K(4)}", $"Echo;{K(5)}",
+            $"Foxtrot - 0x{K(6)}", $"Golf | {K(7)}", $"Hotel\t{K(8)}", $"0x{K(9)}", $"  {K(10)}  ", $"Alpha Game 0x{K(1)}", $"0x{K(1)}",
+            $"Two keys 0x{K(11)} 0x{K(12)}", "Short 0x1234ABCD", $"Long 0x{K(13)}AB", $"{new string('n', 130)} 0x{K(15)}", $"Hash 0x{K(16)[..40]} 0x{K(17)}",
+            $"0x{K(18)} India", $"Juliett\u0007 0x{K(19)}"));
+        Assert.Equal([
+            new("Alpha Game", K(1)), new("Bravo", K(2)), new("Charlie", K(3)), new("Delta", K(4)), new("Echo", K(5)), new("Foxtrot", K(6)),
+            new("Golf", K(7)), new("Hotel", K(8)), new("India", K(18)), new("Juliett", K(19)),
+        ], named);   // one per name and key; two keys, a short or long one, a 130-char name, a hex name: skipped; control characters go
+        Assert.Equal([K(9), K(10)], unnamed);   // a key alone that a named entry has isn't unnamed too
+    }
+
+    [Fact]
+    public void A_key_file_as_csv_json_or_a_saved_page()
+    {
+        var csv = KeyCollection.ParseFile($"appid,Game,AES Key,notes\n2288340,\"Bravo \"\"Charlie\"\", II\",0x{K(20)},ok\n1,Delta,{K(21)},\n2,,{K(22)},no name");
+        Assert.Equal([new("Bravo \"Charlie\", II", K(20)), new("Delta", K(21))], csv.Named);   // by the header's columns: not the app id, quotes kept as text
+        Assert.Equal([K(22)], csv.Unnamed);
+
+        var array = KeyCollection.ParseFile($$"""
+            [ {"name": "Alpha", "key": "0x{{K(30)}}"}, {"Game": "Bravo", "aes": "{{K(31)}}"}, {"key": "{{K(32)}}"}, "Charlie 0x{{K(33)}}", "{{K(34)}}",
+              {"name": "Bad", "key": "0x1234"}, {"name": "<b>Odd</b>", "key": "{{K(35)}}", "extra": [1, 2]}, 7, null, ]
+            """);
+        Assert.Equal([new("Alpha", K(30)), new("Bravo", K(31)), new("Charlie", K(33)), new("<b>Odd</b>", K(35))], array.Named);   // names stay text
+        Assert.Equal([K(32), K(34)], array.Unnamed);
+
+        var map = KeyCollection.ParseFile($$"""{ "Delta": "0x{{K(36)}}", "Echo": {"key": "{{K(37)}}"}, "more": [{"name": "Foxtrot", "key": "{{K(38)}}"}], "n": 5, "Golf": "x" }""");
+        Assert.Equal([new("Delta", K(36)), new("Echo", K(37)), new("Foxtrot", K(38))], map.Named);
+
+        var page = KeyCollection.ParseFile(Page);
+        Assert.Equal(KeyCollection.Parse(Page), page.Named);   // as Load saved page reads it: the first post's lines
+        Assert.Empty(page.Unnamed);
+    }
+
+    static string Many(int i) => Convert.ToHexString(SHA256.HashData(BitConverter.GetBytes(i)));
+
+    [Fact]
+    public void A_key_file_import_is_capped_and_refuses_oversized_or_keyless_files()
+    {
+        var (named, _) = KeyCollection.ParseFile(string.Join("\n", Enumerable.Range(0, KeyCollection.MaxEntries + 5).Select(i => $"Game {i} 0x{Many(i)}")));
+        Assert.Equal(KeyCollection.MaxEntries, named.Count);
+
+        Directory.CreateDirectory(_dir);
+        var keys = new KeyCollection(_dir, new Server(() => Html(Page)), _clock);
+        var big = Path.Combine(_dir, "big.txt");
+        File.WriteAllText(big, $"Alpha 0x{K(1)}\n" + new string(' ', KeyCollection.MaxImportBytes));
+        Assert.Equal((false, "the file is larger than 16 MB"), (keys.ImportFile(big).Keys != null, keys.ImportFile(big).Problem));
+        var empty = Path.Combine(_dir, "empty.txt");
+        File.WriteAllText(empty, "nothing 0x1234\n<p>here</p>");
+        Assert.Null(keys.ImportFile(empty).Keys);
+        Assert.NotNull(keys.ImportFile(Path.Combine(_dir, "missing.txt")).Problem);
+        Assert.Empty(keys.Imported());
+    }
+
+    [Fact]
+    public void An_import_tries_named_entries_before_unnamed_keys_and_stores_only_one_that_opens_the_files()
+    {
+        var game = FakeGame(_dir, "WARDOGS");
+        var stored = new UnrealKeys(Path.Combine(_dir, "data"));
+        var tried = new List<string>();
+        var log = new List<string>();
+        List<KeyEntry> named = [new("Wardogs", K(3)), new("Alpha Game", K(1)), new("Wardogs (playtest)", K(4))];
+        List<string> unnamed = [K(9), K(10), K(11)];
+        bool TrySet(string key) { tried.Add(key); return stored.Set(game, key, k => k.KeyString.EndsWith(K(10), StringComparison.OrdinalIgnoreCase)); }
+        var r = KeyCollection.TryImported(named, unnamed, [game.Name], TrySet, new SyncLog(log));
+        Assert.Equal((KeyLookupOutcome.Unlocked, "unnamed key #2", 4), (r.Outcome, r.Entry, r.Tried));
+        Assert.Equal([K(3), K(4), K(9), K(10)], tried);   // the game's named entries, then the unnamed keys in file order
+        Assert.Equal("0x" + K(10), stored.Stored(game)!.KeyString, ignoreCase: true);
+        Assert.Contains("checking the key imported for \"Wardogs\"", log);
+        Assert.Contains("checking unnamed key #1", log);
+        foreach (var text in log.Append(r.Message))
+            foreach (var k in Enumerable.Range(0, 30).Select(K))
+                Assert.DoesNotContain(k, text, StringComparison.OrdinalIgnoreCase);
+
+        tried.Clear();
+        var first = KeyCollection.TryImported(named, unnamed, [game.Name], k => { tried.Add(k); return k == K(4); });
+        Assert.Equal((KeyLookupOutcome.Unlocked, "Wardogs (playtest)"), (first.Outcome, first.Entry));
+        Assert.Equal([K(3), K(4)], tried);   // a named entry worked: no unnamed key tried
+
+        var other = FakeGame(_dir, "Hotel") with { Id = "test:other" };
+        var calls = 0;
+        var none = KeyCollection.TryImported(named, [.. Enumerable.Range(0, 60).Select(Many)], [other.Name], k => { calls++; return stored.Set(other, k, _ => false); });
+        Assert.Equal((KeyLookupOutcome.NoWorkingKey, KeyCollection.MaxUnnamed, KeyCollection.MaxUnnamed), (none.Outcome, none.Tried, calls));
+        Assert.Equal($"No working key ({KeyCollection.MaxUnnamed} tried).", none.Message);
+        Assert.Null(stored.Stored(other));
+    }
+
+    [Fact]
+    public async Task Imported_entries_survive_a_refresh_of_the_list_and_serve_later_lookups()
+    {
+        var down = false;
+        var server = new Server(() => down ? Html("oops", HttpStatusCode.InternalServerError) : Html(Page));
+        var keys = new KeyCollection(_dir, server, _clock);
+        await keys.ListAsync(Url, false);
+        Directory.CreateDirectory(_dir);
+        var file = Path.Combine(_dir, "mine.txt");
+        File.WriteAllText(file, $"Zulu Game 0x{K(50)}\nWardogs 0x{K(51)}\n0x{K(52)}");
+        var (got, problem) = keys.ImportFile(file);
+        Assert.Equal((1 + 1, 1, (string?)null), (got!.Value.Named.Count, got.Value.Unnamed.Count, problem));
+        File.WriteAllText(file, $"Zulu Game 0x{K(53)}");
+        keys.ImportFile(file);
+        Assert.Equal([new("Zulu Game", K(53)), new("Zulu Game", K(50)), new("Wardogs", K(51))], keys.Imported());   // the latest import first; unnamed keys aren't kept
+
+        _clock.Now += TimeSpan.FromHours(25);
+        Assert.Equal(9, (await keys.ListAsync(Url, false)).List!.Count);   // refetched: the list as the page has it
+        Assert.Equal(2, server.Requests);
+        Assert.DoesNotContain(K(50), File.ReadAllText(Path.Combine(_dir, "keys", "collection.json")));
+        Assert.Equal(3, keys.Imported().Count);
+
+        var tried = new List<string>();
+        var r = await keys.LookUpAsync(Url, ["Wardogs"], k => { tried.Add(k); return k == K(3); }, true);
+        Assert.Equal((KeyLookupOutcome.Unlocked, "Wardogs"), (r.Outcome, r.Entry));
+        Assert.Equal([K(51), K(3)], tried);   // the imported entry first
+        Assert.Contains("listed for", r.Message);
+        var zulu = await new KeyCollection(_dir, server, _clock).LookUpAsync(Url, ["Zulu Game"], k => k == K(50), true);
+        Assert.Equal(KeyLookupOutcome.Unlocked, zulu.Outcome);
+        Assert.Contains("imported for \"Zulu Game\"", zulu.Message);
+
+        down = true;
+        var fresh = new KeyCollection(Path.Combine(_dir, "empty"), server, _clock);
+        Directory.CreateDirectory(Path.Combine(_dir, "empty", "keys"));
+        File.Copy(Path.Combine(_dir, "keys", "imported.json"), Path.Combine(_dir, "empty", "keys", "imported.json"));
+        var offline = await fresh.LookUpAsync(Url, ["Zulu Game"], k => k == K(50), true);
+        Assert.Equal(KeyLookupOutcome.Unlocked, offline.Outcome);   // no list at all: the imported entries still
+        Assert.Contains("from your imported keys", offline.Message);
+        Assert.Equal(KeyLookupOutcome.FetchFailed, (await fresh.LookUpAsync(Url, ["Hotel"], _ => true, true)).Outcome);
+    }
+
     sealed class SyncLog(List<string> lines) : IProgress<string>
     {
         public void Report(string value) { lock (lines) lines.Add(value); }

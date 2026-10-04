@@ -388,14 +388,20 @@ public interface IScsKiller
     /// <summary>A user-supplied AES key for an encrypted game (hex). True if it opens the game's files; it's then stored
     /// locally only (never in plans, logs or anything shared). Call RescanAsync afterwards.</summary>
     bool SetEncryptionKey(string gameId, string key);
-    /// <summary>Looks the encrypted game's key up in the community's key list (Unreal.KeyCollection; nothing about the game is
-    /// sent) and stores the first listed key that opens its files, as <see cref="SetEncryptionKey"/> does; never says the key.
+    /// <summary>Looks the encrypted game's key up in the user's imported keys, then in the community's key list
+    /// (Unreal.KeyCollection; nothing about the game is sent), and stores the first key that opens its files, as
+    /// <see cref="SetEncryptionKey"/> does; the message says which source it came from, never the key.
     /// <paramref name="savedPage"/>: the list page as the user saved it from a browser, instead of fetching it. Call
     /// RescanAsync after Unlocked.</summary>
     Task<Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default);
     /// <summary>Why the automatic search found no key for the encrypted game, in plain words with what to do; null = no reason
     /// recorded. Reads files: not on the UI thread.</summary>
     string? KeyProblem(string gameId);
+    /// <summary>Reads a file of keys the user collected (Unreal.KeyCollection.ImportFile; nothing is sent) and tries them on every
+    /// encrypted Unreal game without a working key: the entries named for it, then the file's unnamed keys, each stored only
+    /// if it opens the game's files, as <see cref="SetEncryptionKey"/> does; never says a key. The named entries are kept
+    /// for later lookups. Call RescanAsync after an unlock.</summary>
+    Task<Unreal.KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>What <see cref="ClearGameCache"/> deletes, by kind, empty kinds left out; an anti-cheat game's driver cache
     /// only. Reads dbs: not on the UI thread.</summary>

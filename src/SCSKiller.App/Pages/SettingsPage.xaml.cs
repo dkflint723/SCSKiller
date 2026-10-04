@@ -47,6 +47,43 @@ public sealed partial class SettingsPage : Page
 
     void OnResetKeyList(object _, RoutedEventArgs __) => Vm.KeyListUrl = KeyCollection.DefaultUrl;
 
+    // A file of keys the user collected, tried on every encrypted Unreal game; the outcomes in a dialog (never a key). After
+    // an unlock the games are checked again, as after a pasted key.
+    async void OnImportKeys(object _, RoutedEventArgs __)
+    {
+        string? path;
+        try
+        {
+            var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(App.Main.AppWindow.Id) { CommitButtonText = "Import" };
+            foreach (var type in new[] { ".txt", ".csv", ".json", ".htm", ".html", "*" }) picker.FileTypeFilter.Add(type);
+            path = (await picker.PickSingleFileAsync())?.Path;
+        }
+        catch (Exception ex) { (ImportKeysStatus.Text, ImportKeysStatus.Visibility) = ($"Couldn't pick a file: {ex.Message}", Visibility.Visible); return; }
+        if (path == null) return;
+        (ImportKeysButton.IsEnabled, ImportKeysRing.IsActive, ImportKeysRing.Visibility, ImportKeysStatus.Visibility) = (false, true, Visibility.Visible, Visibility.Visible);
+        ImportKeysStatus.Text = "Reading the file…";
+        var done = false;
+        KeyImport r;
+        try { r = await App.Core.ImportKeysAsync(path, new Progress<string>(m => { if (!done) ImportKeysStatus.Text = m; })); }
+        catch (Exception ex) { r = new(0, 0, [], ex.Message.TrimEnd('.')); }
+        done = true;
+        (ImportKeysButton.IsEnabled, ImportKeysRing.IsActive, ImportKeysRing.Visibility) = (true, false, Visibility.Collapsed);
+        if (r.Problem != null) { ImportKeysStatus.Text = $"Nothing imported: {r.Problem}."; return; }
+        var summary = $"{r.Named:N0} named and {r.Unnamed:N0} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != KeyImportOutcome.Skipped)} encrypted games unlocked.";
+        ImportKeysStatus.Text = summary;
+        var rescan = r.Unlocked > 0 ? App.Core.RescanAsync(CancellationToken.None) : null;
+        var list = new StackPanel { Spacing = 8, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap,
+            Text = summary + (rescan != null ? " The unlocked games are checked again now." : r.Games.Count == 0 ? " There are no Unreal games in your library." : "") } } };
+        foreach (var g in r.Games) list.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Text = $"{g.Name}: {g.Message}" });
+        await new ContentDialog
+        {
+            XamlRoot = XamlRoot, Title = r.Unlocked > 0 ? "Keys imported" : "No game unlocked", CloseButtonText = "OK",
+            Content = new ScrollViewer { Content = list, MaxHeight = 420 },
+        }.ShowAsync();
+        try { if (rescan != null) await rescan; }
+        catch (Exception ex) { ImportKeysStatus.Text = $"{summary} Checking the games again failed: {ex.Message}"; }
+    }
+
     public void ScrollToEnd() => Scroller.ChangeView(null, Scroller.ScrollableHeight, null, true);
     /// <summary>--screenshots: the Patreon card at the top.</summary>
     public void ScrollToPatreon() => PatreonCard.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = -16, AnimationDesired = false });
