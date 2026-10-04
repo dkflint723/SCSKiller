@@ -253,6 +253,24 @@
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <CheckBox IsChecked="{x:Bind Vm.LookUpKeysOnline, Mode=TwoWay}" AutomationProperties.Name="Look up keys for encrypted games online">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Look up keys for encrypted games online" TextWrapping="Wrap" />
+                                <TextBlock Text="When a scan finds an Unreal game whose files are encrypted and no key that opens them, SCSKiller checks the community's key list, the page below, fetched at most once a day. Nothing about you or your games is sent, and a listed key is kept only if it opens the game's files."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
+                        <Grid ColumnSpacing="8" Margin="28,0,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Header="Key list page (also for Look up key online)" Text="{x:Bind Vm.KeyListUrl, Mode=TwoWay}" AutomationProperties.Name="Key list page" />
+                            <Button Grid.Column="1" Content="Reset" VerticalAlignment="Bottom" Click="OnResetKeyList" IsEnabled="{x:Bind Vm.KeyListUrlCustom, Mode=OneWay}"
+                                    AutomationProperties.Name="Reset the key list page to the default" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind Vm.KeyListUrlProblem, Mode=OneWay}" Visibility="{x:Bind Vm.HasKeyListUrlProblem, Mode=OneWay}" Style="{StaticResource Caption}"
+                                   TextWrapping="Wrap" Margin="28,0,0,0" />
                     </StackPanel>
                 </Border>
 

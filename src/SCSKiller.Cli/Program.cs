@@ -31,6 +31,9 @@ const string Usage = """
       record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy; asks first)
       record alongside <game> on|off              let the recorder chain to a mod's d3d12.dll (renamed, put back on removal)
       key <game> <hex>                            give an encrypted game's AES key (verified, stored locally only)
+      key <game> --lookup [--page <file>]         look the key up in the community's key list (Settings.KeyListUrl; nothing
+                                                  about the game is sent) and store the first listed key that opens its files;
+                                                  --page: the list page saved from a browser instead of fetching it
       index <game> --out <dir>                    debug: dump the engine reader's shader index
       rehydrate <game> <hash-only.db> --out <db> [--expect <content hash>]
                                                   add the shader bytes a hash-only recording references, from the install
@@ -432,9 +435,19 @@ async Task<int> Record()
 
 async Task<int> Key()
 {
-    if (args.Length < 3) return Fail("key <game> <hex>");
+    if (args.Length < 3) return Fail("key <game> <hex> | key <game> --lookup [--page <file>]");
     var k = await Open();
     var g = Match(k.Games, args[1]);
+    if (args.Contains("--lookup"))
+    {
+        if (k.KeyProblem(g.Game.Id) is { } why && g.Engine?.Encrypted == true) Console.WriteLine(why);
+        var page = Opt("--page") is { } file ? File.ReadAllText(file) : null;
+        var r = await k.LookUpKeyAsync(g.Game.Id, page);
+        if (r.Outcome != KeyLookupOutcome.Unlocked) return Fail(r.Message);
+        await k.RescanAsync(CancellationToken.None);
+        Console.WriteLine($"{r.Message} {g.Game.Name}: {k.Games.First(s => s.Game.Id == g.Game.Id).StatusReason}");
+        return 0;
+    }
     if (!k.SetEncryptionKey(g.Game.Id, args[2])) return Fail($"that key doesn't open {g.Game.Name}'s files");
     await k.RescanAsync(CancellationToken.None);
     Console.WriteLine($"key accepted for {g.Game.Name}: {k.Games.First(s => s.Game.Id == g.Game.Id).StatusReason}");

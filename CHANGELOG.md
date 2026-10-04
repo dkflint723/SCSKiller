@@ -5,6 +5,13 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Encrypted Unreal games: "Look up key online" in the Why? dialog checks the community's list of encryption keys and
+  keeps the first listed key that opens the game's files. Turn on "Look up keys for encrypted games online" in Settings
+  to do it after scans (off by default). Only the list page is downloaded; nothing about your games is sent. The dialog
+  also says why SCSKiller couldn't find the key itself. On the command line: `scskiller key <game> --lookup`.
+
 ## [1.2.1] - 2026-10-04
 
 ### Added

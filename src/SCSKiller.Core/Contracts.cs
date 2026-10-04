@@ -328,7 +328,9 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     int RecordingLimitMB = 256,     // per game: the recorder's db plus SCSKiller's copy of it; 0 = unlimited
     bool NotifyNewShaders = true,   // a notification when compiled games have new pipelines to compile (NewShaders)
     bool ActiveCheck = true,        // the anonymous daily check that counts active installs (ScsKiller.ActiveCheck); off = nothing is sent
-    string? GpuNoticeDismissed = null);   // the GPU name whose "doesn't compile on this GPU" notice was closed (Format.GpuNotice)
+    string? GpuNoticeDismissed = null,   // the GPU name whose "doesn't compile on this GPU" notice was closed (Format.GpuNotice)
+    bool LookUpKeysOnline = false,   // a scan that finds an encrypted Unreal game without a key looks it up in the key list (Unreal.KeyCollection)
+    string? KeyListUrl = null);      // the key list's page; null = KeyCollection.DefaultUrl
 
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Paused, Done, Failed, Stopped }
 public sealed record QueueItem(string GameId, QueueStage Stage, WarmProgress? Progress, string? Error,
@@ -386,6 +388,14 @@ public interface IScsKiller
     /// <summary>A user-supplied AES key for an encrypted game (hex). True if it opens the game's files; it's then stored
     /// locally only (never in plans, logs or anything shared). Call RescanAsync afterwards.</summary>
     bool SetEncryptionKey(string gameId, string key);
+    /// <summary>Looks the encrypted game's key up in the community's key list (Unreal.KeyCollection; nothing about the game is
+    /// sent) and stores the first listed key that opens its files, as <see cref="SetEncryptionKey"/> does; never says the key.
+    /// <paramref name="savedPage"/>: the list page as the user saved it from a browser, instead of fetching it. Call
+    /// RescanAsync after Unlocked.</summary>
+    Task<Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default);
+    /// <summary>Why the automatic search found no key for the encrypted game, in plain words with what to do; null = no reason
+    /// recorded. Reads files: not on the UI thread.</summary>
+    string? KeyProblem(string gameId);
 
     /// <summary>What <see cref="ClearGameCache"/> deletes, by kind, empty kinds left out; an anti-cheat game's driver cache
     /// only. Reads dbs: not on the UI thread.</summary>

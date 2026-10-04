@@ -90,6 +90,22 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         return s.Encrypted.Count > 0 && keys.Set(game, key, k => OpensAny(s.Encrypted, fork ?? baseGame, k));
     }
 
+    /// <summary>For a key list lookup (<see cref="KeyCollection"/>): the names the game may be listed under (store name,
+    /// install folder, project, exe) and a check that stores a key as <see cref="SetKey"/> does, only if it opens the game's
+    /// encrypted containers. The containers are surveyed at the first check, once. Null: not a cooked Unreal game.</summary>
+    public (string[] Names, Func<string, bool> TrySet)? KeyCheck(Game game)
+    {
+        if (Locate(game) is not { } where) return null;
+        var (paks, baseGame, fork, project) = where;
+        var eg = fork ?? baseGame;
+        List<string>? encrypted = null;
+        return ([game.Name, Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
+            key => (encrypted ??= Survey(paks, eg, project, null).Encrypted).Count > 0 && keys.Set(game, key, k => OpensAny(encrypted, eg, k)));
+    }
+
+    /// <summary>Why the automatic key search has no key for an encrypted game (<see cref="UnrealKeys.Miss"/>).</summary>
+    public KeyMiss KeyMiss(Game game) => keys.Miss(game);
+
     /// <summary>Whether <paramref name="key"/> opens any of the encrypted containers: the first in path order may be one of a
     /// chunk under its own key (a non-zero key GUID), and one that can't be read at all is not a wrong key either.</summary>
     static bool OpensAny(IEnumerable<string> paths, EGame game, FAesKey key) =>
@@ -838,12 +854,16 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     /// and shares the base engine version.</summary>
     internal static EGame? DetectFork(EGame baseGame, string folder, string exeName)
     {
-        string Norm(string s) => Regex.Replace(Regex.Replace(s, @"\b(XX|XIX|XVIII|XVII|XVI|XV|XIV|XIII|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II)\b",
-            m => Array.IndexOf(["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"], m.Value.ToUpperInvariant()).ToString(),
-            RegexOptions.IgnoreCase), "[^A-Za-z0-9]", "").ToLowerInvariant();
-        var names = new[] { Norm(folder), Norm(Regex.Replace(exeName, "-Win(64|GDK)-Shipping$", "", RegexOptions.IgnoreCase)) }.Where(n => n.Length >= 4).ToList();
+        var names = new[] { Norm(folder), Norm(ExeBase(exeName)) }.Where(n => n.Length >= 4).ToList();
         return Enum.GetValues<EGame>().Where(g => ((uint)g & 0xFFFF) != 0 && ((uint)g & 0xFFFF0000) == ((uint)baseGame & 0xFFFF0000))
             .Select(g => (g, n: Norm(g.ToString()[5..]))).Where(x => x.n.Length >= 4 && names.Any(n => n.StartsWith(x.n) || x.n.StartsWith(n)))
             .OrderByDescending(x => x.n.Length).Select(x => (EGame?)x.g).FirstOrDefault();
     }
+
+    /// <summary>A game name compared loosely: roman numerals as digits, letters and digits only, lower case.</summary>
+    internal static string Norm(string s) => Regex.Replace(Regex.Replace(s, @"\b(XX|XIX|XVIII|XVII|XVI|XV|XIV|XIII|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II)\b",
+        m => Array.IndexOf(["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"], m.Value.ToUpperInvariant()).ToString(),
+        RegexOptions.IgnoreCase), "[^A-Za-z0-9]", "").ToLowerInvariant();
+
+    static string ExeBase(string exeName) => Regex.Replace(exeName, "-Win(64|GDK)-Shipping$", "", RegexOptions.IgnoreCase);
 }

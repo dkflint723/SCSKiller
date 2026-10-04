@@ -144,6 +144,12 @@ public sealed class FakeScsKiller : IScsKiller
     public bool QueueRunning => running;
     public bool Compiling => Queue.Any(Format.Running);
     public bool SetEncryptionKey(string gameId, string key) => false;
+    public async Task<Core.Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default)
+    {
+        await Task.Delay(1500, ct);
+        return new(Core.Unreal.KeyLookupOutcome.NoWorkingKey, "None of the 2 keys listed for this game (Sample Game, Sample Game (demo)) opens its files.", Tried: 2);
+    }
+    public string? KeyProblem(string gameId) => Core.Unreal.UnrealKeys.Advice(Core.Unreal.KeyMiss.Protected);
     public bool ShouldNotifyStale() => Settings.OnDriverUpdate == DriverUpdateMode.Ask && DriverStaleGames().Count > 0;
     public void ApplyDriverUpdateMode() { }
     public Task<IReadOnlyList<GameState>> RescanAsync(CancellationToken ct, bool userRequested = false) => ScanAsync(ct);
