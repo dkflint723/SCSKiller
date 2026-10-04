@@ -587,7 +587,8 @@ public sealed partial class ScsKiller : IScsKiller
                 Careful = cap != null ? new CarefulCompile(rec.Careful, rec.FirstLaunch?.Compiled, careful, recorded) : null,
                 RecordedSinceWarm = pending.Recorded, CommunityDbPsos = entry?.Psos ?? 0, PsoPerSecond = rec.PsoPerSecond,
                 LastFrames = frames, ShaderMod = shaderMod?.Mod, ShaderModBlocks = reshade?.Blocks == true, ShaderModLayer = reshade?.Layered == true,
-                ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RecorderUnused = recorderUnused, RootUnconfirmed = unconfirmed },
+                ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RecorderUnused = recorderUnused, RootUnconfirmed = unconfirmed,
+                ReFramework = antiCheat == AntiCheat.None && ReFramework.Detect(exeDir) },
             rec, ours, exeDir);
     }
 
@@ -676,6 +677,16 @@ public sealed partial class ScsKiller : IScsKiller
     public static readonly TimeSpan EnoughRecording = TimeSpan.FromMinutes(5);
 
     public const string RecorderUnusedNote = "the game was played, but the recorder saw no DirectX 12 device: the game didn't load it from its folder. Please report it with the game's name";
+
+    /// <summary><see cref="RecorderUnusedNote"/> where REFramework runs (<see cref="GameState.ReFramework"/>): it reports the
+    /// game's DLLs from its _storage_ folder, where earlier versions' recorder looked for its files and stayed a pass-through.</summary>
+    public const string RecorderUnusedReFrameworkNote = "the game was played, but nothing was recorded: REFramework reports the game's DLLs from its _storage_ folder, which the recorder before this version didn't follow. Play again; if nothing is recorded still, please report it with the game's name";
+
+    /// <summary>The status text of <see cref="GameState.RecorderUnused"/>.</summary>
+    public static string RecorderUnusedText(GameState s) => s.ReFramework ? RecorderUnusedReFrameworkNote : RecorderUnusedNote;
+
+    /// <summary>An informational note for a game with REFramework (<see cref="GameState.ReFramework"/>): never a block.</summary>
+    public const string ReFrameworkNote = "REFramework is installed: the recorder records alongside it";
 
     /// <summary>A watched run of <see cref="EnoughRecording"/> or longer, started after the recorder's d3d12.dll was put in,
     /// and no recorder session in the game's csv at all: the game loaded DirectX 12 some other way (RE Requiem, upstream issue #2), and asking
@@ -2591,6 +2602,10 @@ public sealed partial class ScsKiller : IScsKiller
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { }   // the next scan tries again
+        // REFramework's copy of a recorder taken out before SCSKiller deleted those: the same
+        if (!want && !ours && rec.RecorderExe == null && Path.Combine(dir, ReFramework.Storage, "d3d12.dll") is var stored && File.Exists(stored))
+            try { if (IsOurProxy(stored) && !GameRunning(g)) RemoveStoredCopies(dir, null, g.Name, RecorderLog); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // the next scan tries again
         if (note != _recorderNotes.GetValueOrDefault(id))
         {
             if (note == null) _recorderNotes.TryRemove(id, out _); else _recorderNotes[id] = note;
@@ -2989,6 +3004,7 @@ public sealed partial class ScsKiller : IScsKiller
         // a recorder installed before SCSKiller tracked its files (or by hand) is still ours: the proxy carries our export
         var dll = Path.Combine(dir, "d3d12.dll");
         if (IsOurProxy(dll)) File.Delete(dll);
+        RemoveStoredCopies(dir, rec.RecorderChained, name, log);
         if (rec.RecorderChained is { } c)
         {
             var from = Path.Combine(dir, c.Name);
@@ -3002,6 +3018,23 @@ public sealed partial class ScsKiller : IScsKiller
             rec.RecorderChained = null;
         }
         (rec.RecorderExe, rec.RecorderInstallDir) = (null, rec.RecorderMoveFrom != null ? rec.RecorderInstallDir : null);   // a pending move's root: the hook's running check
+    }
+
+    /// <summary>REFramework's copies of the recorder's dlls in <see cref="ReFramework.Storage"/>: never run, refreshed at each
+    /// launch and never deleted by it once their file is gone. Only ours go: a proxy of ours, and a chained mod's copy only
+    /// with the bytes SCSKiller renamed; one that can't be deleted is logged.</summary>
+    static void RemoveStoredCopies(string dir, ChainedDll? chained, string name, Action<string> log)
+    {
+        var stored = Path.Combine(dir, ReFramework.Storage);
+        var copies = new[] { Path.Combine(stored, "d3d12.dll"), chained == null ? null : Path.Combine(stored, chained.Name) };
+        foreach (var copy in copies.OfType<string>())
+            try
+            {
+                if (!(copy == copies[0] ? IsOurProxy(copy) : File.Exists(copy) && Sha256(copy) == chained!.Sha256)) continue;
+                File.Delete(copy);
+                log($"{name}: deleted REFramework's copy {copy}");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"{name}: couldn't delete REFramework's copy {copy}: {e.Message}"); }
     }
 
     static readonly TimeSpan UninstallBudget = TimeSpan.FromSeconds(20);   // Velopack 1.2.158 kills its uninstall hook at 60 s
@@ -4023,16 +4056,22 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>The files the app and the proxy write next to the exe: none is an anti-cheat marker.</summary>
     static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, Recordings.KeysFile, Recordings.KeysFile + ".tmp", "d3d12.dll", "scskiller.ini", ChainName, ArmedFile],
         StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> StoredOwnFiles = new(["d3d12.dll", ChainName], StringComparer.OrdinalIgnoreCase);
 
     List<FileSystemWatcher>? WatchInstall(string key, Game g)
     {
         _installChanged[key] = true;   // checked at once: it may have changed unwatched
         var exeDir = Path.GetDirectoryName(Path.GetFullPath(g.ExePath))!;
+        var stored = Path.Combine(exeDir, ReFramework.Storage);
         // one of those names next to the exe, and a regular file now: a folder so named (one moved in carries its contents,
-        // which raise no events of their own), a link or a path that can't be read is not ignored
+        // which raise no events of their own), a link or a path that can't be read is not ignored. Also REFramework's copy of
+        // the recorder's dlls in its _storage_, made at the first launch after an install (later ones overwrite it: no event),
+        // before the recorder decides: never a marker either
         bool OwnFile(string path)
         {
-            if (!Path.GetDirectoryName(path)!.Equals(exeDir, StringComparison.OrdinalIgnoreCase) || !RecorderOwnFiles.Contains(Path.GetFileName(path))) return false;
+            var (at, file) = (Path.GetDirectoryName(path)!, Path.GetFileName(path));
+            if (!(at.Equals(exeDir, StringComparison.OrdinalIgnoreCase) && RecorderOwnFiles.Contains(file)
+                  || at.Equals(stored, StringComparison.OrdinalIgnoreCase) && StoredOwnFiles.Contains(file))) return false;
             try { return (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0; }
             catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return true; }   // gone (a temp file renamed): what it became raises its own event
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return false; }

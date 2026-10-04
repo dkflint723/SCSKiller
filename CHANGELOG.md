@@ -31,6 +31,11 @@ All notable changes to the SCSKiller app and command line. The format follows
 - An Unreal game with one shader library SCSKiller can't read compiles the shaders of its other libraries instead of
   failing; the index's log names the library it skipped.
 - `scskiller index --out` writes a big game's index without running out of memory.
+- The recorder records in RE Engine games with REFramework installed (RE Requiem, Onimusha: Way of the Sword, PRAGMATA
+  and others): REFramework reports the game's DLLs from its `_storage_` folder, where the recorder looked for its files
+  and so stayed a pass-through. The first launch after the recorder went in no longer disarms it either. Removing the
+  recorder also deletes REFramework's copy of it, and nothing else there. Only one copy of the recorder ever records in
+  a game. The game page notes REFramework.
 
 ## [1.2.1] - 2026-10-04
 

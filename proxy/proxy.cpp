@@ -89,6 +89,9 @@ static size_t shader_len(const D3D12_SHADER_BYTECODE& b) {
 static HMODULE g_real;
 static bool g_next;  // scskiller.ini next= loaded a mod's d3d12.dll: the device comes from it
 static std::wstring g_dir;
+static std::wstring g_storage;  // REFramework's _storage_ this dll's path names (see DllMain); "" = none
+static bool g_passive;          // another copy of this dll in the process is the recorder: this one only forwards
+static HANDLE g_one;            // the recorder copy's claim on this process (DllMain)
 static bool g_warm;
 static int g_threads;
 static FILE *g_db, *g_log, *g_csv;
@@ -162,7 +165,8 @@ void logf(const char* fmt, ...) {  // also used by warm11.cpp
 //  - scskiller.armed has [scskiller] armed=1 and this process's exe as it was then: the app wrote it after a clean full
 //    anti-cheat check of the install and deletes it on any change there (GameFiles.DetectAntiCheat walks the install;
 //    this dll doesn't);
-//  - no anti-cheat marker in this folder: the built-in list, plus scskiller.ini markers= (it only adds; malformed: no);
+//  - no anti-cheat marker in this folder (and in REFramework's _storage_ when loaded through it): the built-in list, plus
+//    scskiller.ini markers= (it only adds; malformed: no);
 //    an attestation bound to this process (pid= and pid_time=, below) drops EasyAntiCheat's names from that list;
 //  - no anti-cheat client module loaded.
 // pid= and pid_time= (its creation FILETIME, UTC) bind the attestation to the one process the app started suspended
@@ -215,10 +219,10 @@ static bool anti_cheat_markers(std::vector<std::wstring>& out) {
         at = bar + 1;
     }
 }
-// Any marker among this folder's entries (at most 100,000 read; more, or a listing that fails, counts as one).
-static bool anti_cheat_beside(const std::vector<std::wstring>& markers) {
+// Any marker among a folder's entries (at most 100,000 read; more, or a listing that fails, counts as one).
+static bool anti_cheat_in(const std::wstring& dir, const std::vector<std::wstring>& markers) {
     WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileExW((g_dir + L"*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    HANDLE h = FindFirstFileExW((dir + L"*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
     if (h == INVALID_HANDLE_VALUE) return true;
     bool found = false;
     size_t seen = 0;
@@ -227,6 +231,9 @@ static bool anti_cheat_beside(const std::vector<std::wstring>& markers) {
     bool listed = found || GetLastError() == ERROR_NO_MORE_FILES;
     FindClose(h);
     return found || !listed;
+}
+static bool anti_cheat_beside(const std::vector<std::wstring>& markers) {
+    return anti_cheat_in(g_dir, markers) || (!g_storage.empty() && anti_cheat_in(g_storage, markers));
 }
 // scskiller.armed as it is now (at most 4 KB; "" when missing or unreadable).
 static std::string small_file(const std::wstring& path) {
@@ -311,8 +318,19 @@ static bool armed(bool& bound) {
         return false;
     return bound = true;
 }
+// The other copies of this dll loaded in the process (they export SCSKiller_Progress too): pass-throughs (g_passive).
+static void log_other_copies() {
+    HMODULE mods[1024], self = nullptr;
+    DWORD n = 0;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&log_other_copies, &self);
+    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &n)) return;
+    for (DWORD i = 0; i < std::min<DWORD>(n / sizeof(HMODULE), 1024); ++i)
+        if (wchar_t path[MAX_PATH]; mods[i] != self && GetProcAddress(mods[i], "SCSKiller_Progress") && GetModuleFileNameW(mods[i], path, MAX_PATH))
+            logf("another copy of the recorder is loaded (%ls): it only forwards", path);
+}
 static bool admitted() {
     if (g_warm) return true;  // scskiller_warm's staged child replays; it is never a game
+    if (g_passive) return false;
     static std::once_flag once;
     std::call_once(once, [] {
         std::vector<std::wstring> markers;
@@ -328,6 +346,8 @@ static bool admitted() {
         g_early.clear(), g_log_deferred = false;
         g_admission = why ? -1 : 1;
     });
+    static std::once_flag others;
+    if (g_admission > 0) std::call_once(others, log_other_copies);
     return g_admission > 0;
 }
 
@@ -2787,6 +2807,32 @@ static std::wstring cfg(const wchar_t* env, const wchar_t* key, const wchar_t* d
     return v;
 }
 
+// dir (with its trailing separator) is a folder named _storage_.
+static bool in_storage(const std::wstring& dir) {
+    size_t at = dir.size() < 2 ? std::wstring::npos : dir.find_last_of(L"\\/", dir.size() - 2);
+    return at != std::wstring::npos && CompareStringOrdinal(dir.c_str() + at + 1, int(dir.size() - at - 2), L"_storage_", -1, TRUE) == CSTR_EQUAL;
+}
+
+// The folder of the file mapped at m, with its trailing separator, as a drive or UNC path; "" when it can't be had.
+static std::wstring mapped_dir(HMODULE m) {
+    std::wstring nt(32768, L'\0');
+    DWORD n = K32GetMappedFileNameW(GetCurrentProcess(), m, nt.data(), (DWORD)nt.size());
+    if (!n || n >= nt.size()) return L"";
+    nt.resize(n);
+    std::wstring dos;
+    if (_wcsnicmp(nt.c_str(), L"\\Device\\Mup\\", 12) == 0) dos = L"\\\\" + nt.substr(12);
+    wchar_t drives[512], device[1024];
+    DWORD len = GetLogicalDriveStringsW(512, drives);
+    for (wchar_t* d = drives; dos.empty() && len && len < 512 && *d; d += wcslen(d) + 1) {
+        wchar_t letter[3] = {d[0], L':', 0};
+        if (!QueryDosDeviceW(letter, device, 1024)) continue;
+        size_t dl = wcslen(device);
+        if (nt.size() > dl && nt[dl] == L'\\' && _wcsnicmp(nt.c_str(), device, dl) == 0) dos = letter + nt.substr(dl);
+    }
+    size_t slash = dos.find_last_of(L'\\');
+    return slash == std::wstring::npos ? L"" : dos.substr(0, slash + 1);
+}
+
 // Not through the CRT: at exit the other threads are gone, and one may have died holding the csv stream's lock.
 static void write_end_marker() {
     char b[64] = "#end,";
@@ -2805,6 +2851,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
         // reserved != nullptr: the process is terminating (not a plain FreeLibrary). Best effort, no lock: the loader lock
         // is held here and must never wait on anything.
         if (reserved && g_wrote_session) write_end_marker();
+        if (!reserved && g_one) CloseHandle(g_one);  // unloaded (never once hooked: pin_self): a copy loaded later may record
         return TRUE;
     }
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
@@ -2813,6 +2860,31 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     GetModuleFileNameW(self, p, MAX_PATH);
     g_dir = p;
     g_dir.resize(g_dir.find_last_of(L"\\/") + 1);
+    // REFramework (RE Engine games) rewrites the loader's path of each dll loaded from the exe's folder to a copy it keeps in
+    // <exe folder>\_storage_ (kananlib's spoof_module_paths_in_exe_dir, from its dll-load notification: before this runs),
+    // so the path read above is that copy's; the dll still runs from the game folder, where scskiller.armed, the ini and the
+    // outputs are. The file actually mapped says where (the loader's list doesn't; a copy really loaded from _storage_
+    // stays there); without it, a _storage_ beside the exe (the exe's own path isn't rewritten) stands for its parent.
+    if (in_storage(g_dir)) {
+        std::wstring real = mapped_dir(self);
+        if (real.empty()) {
+            wchar_t exe[MAX_PATH];
+            DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            real.assign(exe, n && n < MAX_PATH ? n : 0);
+            real.resize(real.find_last_of(L"\\/") + 1);
+            if (real.empty() || g_dir.size() != real.size() + 10 || CompareStringOrdinal(real.c_str(), -1, g_dir.c_str(), int(real.size()), TRUE) != CSTR_EQUAL)
+                real = g_dir;
+        }
+        if (CompareStringOrdinal(real.c_str(), -1, g_dir.c_str(), -1, TRUE) != CSTR_EQUAL) g_storage = g_dir, g_dir = real;
+    }
+    // One recorder per process: the first copy of this dll to load claims it (a dll can load twice, from the game folder
+    // and as REFramework's _storage_ copy through the path the loader reports); any other only forwards, hooking nothing.
+    swprintf(p, MAX_PATH, L"Local\\SCSKiller.recorder.%lu", GetCurrentProcessId());
+    g_one = CreateMutexW(nullptr, FALSE, p);
+    if (!g_one || GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (g_one) CloseHandle(g_one), g_one = nullptr;
+        g_passive = true, g_admission = -1;
+    }
     GetSystemDirectoryW(p, MAX_PATH);
     g_real = LoadLibraryW((std::wstring(p) + L"\\d3d12.dll").c_str());
     if (!g_real) return FALSE;
@@ -2839,14 +2911,15 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     // Only scskiller_warm (and selftest) export SCSKiller_WarmHost; its staged child runs under the game's exe name, so the
     // name can't tell. A game given mode=warm records instead.
     const bool warm_asked = cfg(L"SCSKILLER_MODE", L"mode", L"record") == L"warm";
-    g_warm = warm_asked && GetProcAddress(GetModuleHandleW(nullptr), "SCSKiller_WarmHost");
+    g_warm = !g_passive && warm_asked && GetProcAddress(GetModuleHandleW(nullptr), "SCSKiller_WarmHost");
     g_threads = _wtoi(cfg(L"SCSKILLER_THREADS", L"threads", L"0").c_str());
     if (g_threads <= 0) g_threads = std::max(1, (int)std::thread::hardware_concurrency() - 2);
     if (!g_warm) SetEvent(g_warm_done);
     if (g_warm) g_log = _wfopen((g_dir + L"scskiller.log").c_str(), L"a");
-    else g_log_deferred = true;  // opened by admitted(), at the first device
+    else g_log_deferred = !g_passive;  // opened by admitted(), at the first device; a passive copy writes nothing
     GetModuleFileNameW(nullptr, p, MAX_PATH);
     logf("loaded into %ls", p);
+    if (!g_storage.empty()) logf("through REFramework's %ls: the game folder is %ls", g_storage.c_str(), g_dir.c_str());
     if (warm_asked && !g_warm) logf("mode warm ignored: this process isn't scskiller_warm, it records");
     g_next = mod;
     if (mod) logf("next: %ls (the device and every export it has come from it)", next);

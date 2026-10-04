@@ -267,6 +267,7 @@ public sealed record GameState(
     bool RtToPlan = false,             // its plan asks for a ray tracing recording and a newer recording waits for the plan check (ScsKiller.RtPlanCheck)
     bool RecordedEnough = false,       // GameRecord.RecordedLong: asking for "5 minutes" again says nothing
     bool RecorderUnused = false,       // played long enough since the recorder went in, and it saw no device in that run (ScsKiller.RecorderUnusedNote)
+    bool ReFramework = false,          // REFramework next to the exe, reporting its dlls from _storage_ (Games.ReFramework); not read in an anti-cheat install
     bool OfflineEligible = false,      // an EasyAntiCheat game of Games.OfflineEac on D3D12: an offline session may be offered
     bool OfflineRecord = false,        // the user allowed offline sessions for it (IScsKiller.SetOfflineRecording)
     bool OfflineRunning = false);      // a session SCSKiller started runs, or its files aren't out of the game folder yet

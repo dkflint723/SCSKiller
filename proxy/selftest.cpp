@@ -28,6 +28,7 @@
 #include <d3d12shader.h>
 #include <dxgi1_4.h>
 #include <tlhelp32.h>
+#include <winternl.h>
 #include <bcrypt.h>
 #include <dxcapi.h>
 #define VK_NO_PROTOTYPES
@@ -3321,6 +3322,66 @@ static int unload_rows(const std::wstring& dir) {
     return SUCCEEDED(hr) ? 0 : 1;
 }
 
+// REFramework's path rewrite (kananlib's spoof_module_paths_in_exe_dir, run from its dll-load notification, before the dll's
+// DllMain): each dll loaded from the exe's folder is copied to <exe folder>\_storage_ and its loader entry's FullDllName
+// pointed at the copy. Only the path changes: the dll runs from where it was loaded.
+static std::wstring g_spoof_dir;
+static void spoof_exe_dir() {
+    LIST_ENTRY* head = &NtCurrentTeb()->ProcessEnvironmentBlock->Ldr->InMemoryOrderModuleList;
+    for (LIST_ENTRY* e = head->Flink; e != head; e = e->Flink) {
+        auto m = CONTAINING_RECORD(e, LDR_DATA_TABLE_ENTRY, InMemoryOrderLinks);
+        if (!m->FullDllName.Buffer || m->DllBase == GetModuleHandleW(nullptr)) continue;
+        std::wstring path(m->FullDllName.Buffer, m->FullDllName.Length / sizeof(wchar_t));
+        size_t slash = path.find_last_of(L'\\');
+        if (slash == std::wstring::npos || _wcsicmp(path.substr(0, slash + 1).c_str(), g_spoof_dir.c_str())) continue;
+        std::wstring copy = g_spoof_dir + L"_storage_\\" + path.substr(slash + 1);
+        CreateDirectoryW((g_spoof_dir + L"_storage_").c_str(), nullptr);
+        CopyFileW(path.c_str(), copy.c_str(), FALSE);
+        auto buf = new wchar_t[copy.size() + 1];
+        wcscpy_s(buf, copy.size() + 1, copy.c_str());
+        m->FullDllName.Buffer = buf, m->FullDllName.Length = USHORT(copy.size() * sizeof(wchar_t)), m->FullDllName.MaximumLength = USHORT((copy.size() + 1) * sizeof(wchar_t));
+    }
+}
+
+// `selftest refw <once|twice>`: with REFramework's path rewrite on (spoof_exe_dir from LdrRegisterDllNotification), the proxy
+// d3d12.dll next to the exe is loaded, and a compute PSO made on a WARP device through it. Twice: then second\d3d12.dll (a
+// second copy of the proxy) and a PSO through it too. Prints "path <the proxy's path as the loader reports it>",
+// "copies <distinct modules>" and "created 0x<hr>..." per device.
+static int refw_rows(const std::wstring& dir, bool twice) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    using Notify = VOID(CALLBACK*)(ULONG, const void*, PVOID);
+    auto reg = (LONG(NTAPI*)(ULONG, Notify, PVOID, PVOID*))GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrRegisterDllNotification");
+    CHECK(reg);
+    g_spoof_dir = dir;
+    CreateDirectoryW((dir + L"_storage_").c_str(), nullptr);  // its startup copy of every dll there (REFramework.cpp, "Pre-emptively copy")
+    CHECK(CopyFileW((dir + L"d3d12.dll").c_str(), (dir + L"_storage_\\d3d12.dll").c_str(), FALSE));
+    PVOID cookie = nullptr;
+    CHECK(reg(0, [](ULONG reason, const void*, PVOID) { if (reason == 1) spoof_exe_dir(); }, nullptr, &cookie) >= 0);
+    std::vector<HMODULE> mods = {LoadLibraryW((dir + L"d3d12.dll").c_str())};
+    if (twice) mods.push_back(LoadLibraryW((dir + L"second\\d3d12.dll").c_str()));
+    CHECK(std::all_of(mods.begin(), mods.end(), [](HMODULE m) { return m != nullptr; }));
+    wchar_t path[MAX_PATH];
+    GetModuleFileNameW(mods[0], path, MAX_PATH);
+    printf("path %ls\ncopies %zu\n", path, std::set<HMODULE>(mods.begin(), mods.end()).size());
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    int k = 0;
+    for (HMODULE m : mods) {
+        auto create = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
+        auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+        ID3D12Device* dev = nullptr;
+        CHECK(create && ser && SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+        D3D12_ROOT_PARAMETER up = {D3D12_ROOT_PARAMETER_TYPE_UAV};
+        D3D12_ROOT_SIGNATURE_DESC rd = {1, &up};
+        ID3DBlob *rb = nullptr, *err = nullptr;
+        ID3D12RootSignature* rs = nullptr;
+        CHECK(SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))));
+        printf("created 0x%08x\n", (unsigned)compute_pso(dev, rs, GetTickCount() + ++k));
+    }
+    return 0;
+}
+
 // The app's attestation for this exe, as ScsKiller.WriteAttestation writes it: scskiller.armed here (its nonce kept when it
 // has one, so copies of this exe running from the same folder share it) and the ledger entry
 // %LOCALAPPDATA%\SCSKiller\armed\<SHA-1 of the exe's path, UTF-16LE, A-Z lowered>, removed when this process exits.
@@ -3371,6 +3432,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && !wcscmp(argv[1], L"framesheld")) return frames_held(dir);
     if (argc > 1 && !wcscmp(argv[1], L"factory")) return factory_rows(dir, argc > 2 ? argv[2] : nullptr);
     if (argc > 2 && !wcscmp(argv[1], L"anticheat")) return anticheat_rows(dir, argv[2]);
+    if (argc > 2 && !wcscmp(argv[1], L"refw")) return refw_rows(dir, !wcscmp(argv[2], L"twice"));
     if (argc > 1 && !wcscmp(argv[1], L"factoryrejected")) return factory_rejected_rows(dir);
     if (argc > 2 && !wcscmp(argv[1], L"chain")) return chain_rows(dir, (unsigned)_wtoi(argv[2]), argc > 3 && !wcscmp(argv[3], L"swap"));
     if (argc > 2 && !wcscmp(argv[1], L"layer")) return layer_rows(dir, (unsigned)_wtoi(argv[2]), argc > 3 && !wcscmp(argv[3], L"old"));

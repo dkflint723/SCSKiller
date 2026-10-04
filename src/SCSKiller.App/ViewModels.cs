@@ -276,12 +276,13 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest" : ""),
         GameStatus.NeedsRecording when s.AntiCheat != AntiCheat.None => $"{Fmt.AntiCheatName(s.AntiCheat)} blocks recording",
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(App.Core.Settings),
-        GameStatus.NeedsRecording when s.RecorderInstalled && s.RecorderUnused && !ScsKiller.RecordedEnough(s) => ScsKiller.RecorderUnusedNote,
+        GameStatus.NeedsRecording when s.RecorderInstalled && s.RecorderUnused && !ScsKiller.RecordedEnough(s) => ScsKiller.RecorderUnusedText(s),
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => "recorder on: play for about 5 minutes",
         _ => s.StatusReason,
     } + ModNote(s);
-    /// <summary>A shader mod that doesn't block the game: "; RenoDX changes this game's pipelines: ...".</summary>
-    internal static string ModNote(GameState s) => s is { ShaderMod: not null, ShaderModBlocks: false } ? "; " + ScsKiller.ShaderModNote(s) : "";
+    /// <summary>A shader mod that doesn't block the game: "; RenoDX changes this game's pipelines: ..."; REFramework beside the recorder.</summary>
+    internal static string ModNote(GameState s) => (s is { ShaderMod: not null, ShaderModBlocks: false } ? "; " + ScsKiller.ShaderModNote(s) : "")
+        + (s.ReFramework && s.RecorderEffective ? "; " + ScsKiller.ReFrameworkNote : "");
     /// <summary>The row's note under the status: a few words (<see cref="Format.ShortNote"/>); null when the status says it all.</summary>
     public string? Note => Format.ShortNote(s);
     public string RowNote => Playing ? "Playing now" + (Note is { } n ? " · " + n : "") : Note ?? "";

@@ -608,6 +608,25 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   uploaded (`HashOnly.Canonical`) nor put in a middleware pack. `Recordings.Layered` counts a recording's `'W'`
   records: the game's creates a layer changed and the layer's own. OptiScaler, Special K
   (they pick their role from their file name) and vkd3d-proton (it runs the game on Vulkan) are refused.
+- **REFramework** (`Games.ReFramework`, known by the `dinput8.dll` next to the exe naming itself and `_storage_`): in DD2,
+  MHRise and RE Engine games of TDB 74 and later it copies every `*.dll` next to the exe into `<exe folder>\_storage_\`
+  at each launch, overwriting (never deleting a copy whose file is gone), and rewrites each loaded dll's path in the
+  loader's list to its copy there, from a dll-load notification that runs before the dll's `DllMain` (REFramework.cpp,
+  kananlib's `spoof_module_paths_in_exe_dir`). The copies are never run: the recorder runs from the exe's folder and
+  reads its own path as `_storage_\d3d12.dll`. So the proxy takes its game folder from the file actually mapped
+  (`GetMappedFileNameW`), else a `_storage_` right beside the exe stands for its parent: `scskiller.armed` (with the
+  ledger entry, unchanged), the ini, the outputs and `next=` are the game folder's; one in `_storage_` alone counts for
+  nothing, and the anti-cheat markers are looked for in both folders. A copy really loaded from `_storage_` stays
+  there, unarmed. The app writes nothing into `_storage_`: REFramework refreshes the copy each launch. Removal (every
+  path, the uninstall hook's too) deletes its copy of the recorder when it is a proxy of ours, and of a chained mod only
+  with the hash SCSKiller renamed, never another file there; a scan deletes a stale copy of ours where no recorder is.
+  The install watcher ignores the copy's creation (REFramework's first launch after an install, before the recorder
+  decides), as it ignores the recorder's own files; later launches overwrite it, which raises no event. Any other file
+  created there disarms, as anywhere in the install. ReShade and its add-ons are the game folder's (their copies in
+  `_storage_` are never loaded). The game shows REFramework as a note, never a skip.
+- **One recorder per process**: the first copy of the proxy to load claims the process (a named mutex with its pid, in
+  `DllMain`, before any hook); any other copy forwards every export as the first does (the system dll, or `next=`'s)
+  and hooks nothing, writes nothing. The recorder logs the other copies at its first device.
 - **Offline session** (`ScsKiller.StartOfflineSession`, app only): the one case where the recorder goes into an
   anti-cheat game. Offered (`GameState.OfflineEligible`) only for a game of `Games/offline-eac.json` (Steam ids, the exe
   each is discovered with, sources; embedded, never served): EasyAntiCheat games that run offline without it when their
