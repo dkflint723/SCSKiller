@@ -1248,6 +1248,17 @@ public sealed class SettingsVm : Bindable
     public bool? MaximumPlans { get => S.MaximumPlans; set { if (value is { } v && v != S.MaximumPlans) S = S with { MaximumPlans = v }; } }
     public bool? ShareRecordings { get => S.ShareRecordings; set { if (value is { } v && v != S.ShareRecordings) S = S with { ShareRecordings = v }; } }
     public bool? ActiveCheck { get => S.ActiveCheck; set { if (value is { } v && v != S.ActiveCheck) S = S with { ActiveCheck = v }; } }
+    public bool? LookUpKeysOnline { get => S.LookUpKeysOnline; set { if (value is { } v && v != S.LookUpKeysOnline) S = S with { LookUpKeysOnline = v }; } }
+    /// <summary>The default address is saved as null, so a later default change reaches it.</summary>
+    public string KeyListUrl
+    {
+        get => S.KeyListUrl ?? Core.Unreal.KeyCollection.DefaultUrl;
+        set { var v = value.Trim() is { Length: > 0 } t && t != Core.Unreal.KeyCollection.DefaultUrl ? t : null; if (v != S.KeyListUrl) S = S with { KeyListUrl = v }; }
+    }
+    public bool KeyListUrlCustom => S.KeyListUrl != null;
+    public string? KeyListUrlProblem => Uri.TryCreate(KeyListUrl, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? null
+        : "Only an https:// address is used: lookups fail until the address is fixed or reset.";
+    public bool HasKeyListUrlProblem => KeyListUrlProblem != null;
     public void GamesChanged() => Changed();   // no driver-cache re-read (Refresh)
     public bool RecordAllGames { get => S.RecordAllGames; set { if (value != S.RecordAllGames) S = S with { RecordAllGames = value }; } }   // the core reconciles off this thread
     /// <summary>"Recording in 23 games · 5 skipped: anti-cheat"; not-DX12 and unsupported games aren't counted.</summary>

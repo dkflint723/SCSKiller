@@ -101,9 +101,13 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
     compile that failed with an error (in the index, plan, materialize or warm stage), its whole exception with the
     time, stage, SCSKiller build and game id, kept after a later success;
   - keys found for the game, kept locally only: `aes.key` (an Unreal pak key), `archive.keys` (FromSoftware archive
-    keys, with the SHA-256 of the exe they came from), `pak.modulus` (RE Engine table key);
+    keys, with the SHA-256 of the exe they came from), `pak.modulus` (RE Engine table key); `aes.scan`: why the exe's
+    static key search found nothing, for that exe build; `aes.lookup`: the exe build and a hash of the key list's
+    candidates last tried for the game, so a scan's lookup doesn't try them again;
   - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package.
 - `packs\<vendor>\<dll name>-<dll sha1>.pack`: middleware packs (see [Middleware packs](#middleware-packs)).
+- `keys\collection.json`: the community's Unreal key list as last fetched (names and keys, when it was fetched and the
+  last try; see [Engine readers](#engine-readers)).
 - `community\`: the community database's manifest and downloaded recordings; `community\packs\<gpu vendor>\<vendor>\`
   the shared middleware packs downloaded for this PC's GPU vendor.
 - `recorders.log`: what recorder installs and removals did.
@@ -265,7 +269,11 @@ open game files read-only and never launch or attach to the game.
 
 - **Unreal Engine** (`Unreal/`): shader libraries and shader maps through CUE4Parse, including the version-1 archives of
   UE 4.20/4.21 (`UnrealReader.OpenV1`) and games that keep shaders inline in their packages. Encrypted paks need the
-  game's AES key (`aes.key`, given by the user). A shipped pipeline cache (`*.stable.upipelinecache`, file versions
+  game's AES key (`aes.key`): found in the exe by a static scan (`UnrealKeys`; never an anti-cheat game's exe), given by
+  the user, or looked up in the community's key list (`KeyCollection`: the first post of a forum topic, a plain HTTPS GET
+  at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
+  matched to the game's names locally, and at most 20 candidates are tried). Every key is stored only if it opens one of
+  the game's encrypted containers. A shipped pipeline cache (`*.stable.upipelinecache`, file versions
   22-28, `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact
   shader map, so the planner pairs those shaders as the game does (global and post-process passes that no signature
   match pairs). They are left out of the index's content hash.

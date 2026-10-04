@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using SCSKiller.Core;
 using System.Globalization;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.App.Pages;
 
@@ -43,6 +44,8 @@ public sealed partial class SettingsPage : Page
         App.Core.Settings = App.Core.Settings with { SharePromptDismissed = true, ShareRecordings = share || App.Core.Settings.ShareRecordings };
         Vm.Refresh();   // the share checkbox; its PropertyChanged refreshes the prompt too
     }
+
+    void OnResetKeyList(object _, RoutedEventArgs __) => Vm.KeyListUrl = KeyCollection.DefaultUrl;
 
     public void ScrollToEnd() => Scroller.ChangeView(null, Scroller.ScrollableHeight, null, true);
     /// <summary>--screenshots: the Patreon card at the top.</summary>

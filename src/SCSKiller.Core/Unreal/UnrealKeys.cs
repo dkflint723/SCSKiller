@@ -5,10 +5,14 @@ using SCSKiller.Core.App;
 
 namespace SCSKiller.Core.Unreal;
 
+/// <summary>Why an encrypted game has no working key (<see cref="UnrealKeys.Miss"/>). None: not searched yet.</summary>
+public enum KeyMiss { None, StoredFails, AntiCheat, ExeUnreadable, Protected, NotFound }
+
 /// <summary>The pak AES key of an encrypted Unreal game. Kept only locally, in %LOCALAPPDATA%\SCSKiller\games\&lt;id&gt;\aes.key
 /// (hex; the user may also put a key there by hand), never in plans, logs or anything meant to be shared. Found statically
 /// in the game's own exe (<see cref="Scan"/>), once per exe build: a failed scan is remembered in aes.scan with the exe's
-/// size and write time. Every key is checked against an encrypted container before it is used or stored.</summary>
+/// size and write time. Else the user gives it, or it comes from the community's key list (<see cref="KeyCollection"/>).
+/// Every key is checked against an encrypted container before it is used or stored.</summary>
 public sealed class UnrealKeys(string dataDir)
 {
     string KeyFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.key");
@@ -59,6 +63,34 @@ public sealed class UnrealKeys(string dataDir)
         File.Delete(ScanFile(game));
         return true;
     }
+
+    /// <summary>Why <see cref="Get"/> has no key for a game whose files stay encrypted, from what it recorded; the exe is only
+    /// opened to see whether it can be (never an anti-cheat game's).</summary>
+    public KeyMiss Miss(Game game)
+    {
+        if (Stored(game) != null) return KeyMiss.StoredFails;
+        if (Games.GameFiles.DetectAntiCheat(game) != AntiCheat.None) return KeyMiss.AntiCheat;
+        if (File.Exists(ScanFile(game)) && File.ReadAllLines(ScanFile(game)) is [var s, var reason, ..] && s == Stamp(game.ExePath))
+            return reason.Contains("looks protected") ? KeyMiss.Protected : KeyMiss.NotFound;
+        try
+        {
+            using var f = new FileStream(game.ExePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            f.ReadByte();
+            return KeyMiss.None;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return KeyMiss.ExeUnreadable; }
+    }
+
+    /// <summary>The <see cref="KeyMiss"/> in plain words, with what to do next; null for None.</summary>
+    public static string? Advice(KeyMiss miss) => miss switch
+    {
+        KeyMiss.AntiCheat => "This game has anti-cheat, so SCSKiller doesn't read its exe to find the key. Look the key up online, or paste it if you have it.",
+        KeyMiss.ExeUnreadable => "The game's exe can't be read (Xbox app games are encrypted on disk), so SCSKiller couldn't search it for the key. Look the key up online, or paste it if you have it.",
+        KeyMiss.Protected => "SCSKiller searched the game's exe, but it's protected, which hides the key. Look the key up online, or paste it if you have it.",
+        KeyMiss.NotFound => "SCSKiller searched the game's exe and found no key there; the exe is probably protected. Look the key up online, or paste it if you have it.",
+        KeyMiss.StoredFails => "The key saved for this game no longer opens its files, most likely because the game was updated. Look up a newer key online, or paste one.",
+        _ => null,
+    };
 
     internal static FAesKey? Parse(string text)
     {
