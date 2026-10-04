@@ -192,6 +192,7 @@ public static class GameFiles
         ("gameguard.des", AntiCheat.Other),
         ("DenuvoAC", AntiCheat.Other), ("denuvo-anti-cheat.sys", AntiCheat.Other), ("denuvo-anti-cheat-runtime.dll", AntiCheat.Other),
         ("denuvo-anti-cheat-update-service.exe", AntiCheat.Other), ("Denuvo Anti-Cheat Installer.exe", AntiCheat.Other),
+        ("Elytra-Setup.exe", AntiCheat.Other),   // Elytra Anti-Cheat Framework (WARDOGS: Elytra\Elytra-Setup.exe, installed by Steam)
         ("*.xem", AntiCheat.Other), ("*_BE.exe", AntiCheat.BattlEye),
     ];
 

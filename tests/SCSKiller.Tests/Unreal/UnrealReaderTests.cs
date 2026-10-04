@@ -441,12 +441,6 @@ public class UnrealReaderTests(ITestOutputHelper output)
                 Assert.False(UnrealReader.OpensAny([], game, key));
             }
         }
-        finally
-        {
-            // CUE4Parse's PakFileReader keeps the file it opened when its constructor throws: its finalizer closes it
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            Directory.Delete(dir, true);
-        }
+        finally { Directory.Delete(dir, true); }   // no GC needed: Opens closes the files itself when CUE4Parse throws
     }
 }

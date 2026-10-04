@@ -121,7 +121,15 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     /// <summary>Whether <paramref name="key"/> decrypts the index of the encrypted container at <paramref name="path"/>.</summary>
     static bool Opens(string path, EGame game, FAesKey key)
     {
-        using var r = OpenContainer(path, new VersionContainer(game));
+        // our own streams: CUE4Parse's path constructors leave the file open when they throw (a damaged container) until a GC
+        var utoc = path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase);
+        var casPath = Path.ChangeExtension(path, ".ucas");
+        if (utoc && !File.Exists(casPath)) { using var whole = OpenContainer(path, new VersionContainer(game)); return whole.TestAesKey(key); }
+        using var toc = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var cas = utoc ? File.Open(casPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete) : null;
+        using AbstractAesVfsReader r = utoc
+            ? new IoStoreReader(path, toc, cas!, EIoStoreTocReadOptions.ReadDirectoryIndex, new VersionContainer(game))
+            : new PakFileReader(path, toc, new VersionContainer(game));
         return r.TestAesKey(key);
     }
 
