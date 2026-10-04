@@ -153,11 +153,14 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="320" />
                         <ColumnDefinition />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <AutoSuggestBox x:Name="Search" PlaceholderText="Search by name, store or engine" QueryIcon="Find"
                                     TextChanged="OnSearch" KeyDown="OnSearchKey" AutomationProperties.Name="Search games" />
-                    <TextBlock Grid.Column="1" Text="{x:Bind Vm.ShownText, Mode=OneWay}" Visibility="{x:Bind Vm.Filtering, Mode=OneWay}"
+                    <TextBlock Grid.Column="1" Text="{x:Bind Vm.ShownText, Mode=OneWay}" Visibility="{x:Bind Vm.HasShownText, Mode=OneWay}"
                                Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                    <CheckBox Grid.Column="2" Content="Hide unsupported games" IsChecked="{x:Bind Vm.HideUnsupported, Mode=TwoWay}"
+                              ToolTipService.ToolTip="Leaves out games SCSKiller can't compile. They're still checked at every scan and show again once they can be compiled." />
                 </Grid>
                 <!-- Same columns as the row template below. -->
                 <Grid Grid.Row="2" Margin="20,0,20,0" ColumnSpacing="12" VerticalAlignment="Center">
@@ -184,6 +187,14 @@
                     <TextBlock Text="{x:Bind Vm.NoMatchText, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                     <TextBlock Text="Try part of the name, a store (Steam, GOG…) or an engine (UE 5)." Style="{StaticResource Secondary}"
                                TextWrapping="Wrap" TextAlignment="Center" />
+                </StackPanel>
+
+                <!-- Every game (or every match) is unsupported and hidden: say so, with the way back to them (Why?, unlocking a key). -->
+                <StackPanel Grid.Row="3" Visibility="{x:Bind Vm.AllHidden, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="8" MaxWidth="460" Padding="24">
+                    <TextBlock Text="{x:Bind Vm.AllHiddenText, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+                    <TextBlock Text="{x:Bind Vm.AllHiddenNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
+                    <Button Content="Show unsupported games" Click="OnShowUnsupported" HorizontalAlignment="Center" Margin="0,4,0,0" />
                 </StackPanel>
 
                 <!-- First scan, nothing listed yet: a centred message in the list's place. -->

@@ -32,13 +32,14 @@ public sealed partial class LibraryPage : Page
 
     /// <summary>--screenshots: a search typed, and the list scrolled to its last section.</summary>
     public string SearchText { set => Search.Text = value; }
-    public void ScrollToEnd() { if (Vm.Games.Count > 0) List.ScrollIntoView(Vm.Groups[^1][^1]); }
+    public void ScrollToEnd() { if (Vm.Groups.Count > 0) List.ScrollIntoView(Vm.Groups[^1][^1]); }
 
     static GameRow RowOf(object sender) => (GameRow)((FrameworkElement)sender).DataContext;
 
     void OnGameClick(object _, ItemClickEventArgs e) => App.Main.Navigate(typeof(DetailPage), ((GameRow)e.ClickedItem).Id);
     void OnDetails(object sender, RoutedEventArgs _) => App.Main.Navigate(typeof(DetailPage), RowOf(sender).Id);
     void OnSettings(object _, RoutedEventArgs __) => App.Main.Navigate(typeof(SettingsPage));
+    void OnShowUnsupported(object _, RoutedEventArgs __) => Vm.HideUnsupported = false;
     void OnPlay(object sender, RoutedEventArgs _) => Vm.Play(RowOf(sender));
 
     // Either click fetches the server's data whatever its age; Shift+click also forces re-detection, which is otherwise

@@ -331,7 +331,8 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool ActiveCheck = true,        // the anonymous daily check that counts active installs (ScsKiller.ActiveCheck); off = nothing is sent
     string? GpuNoticeDismissed = null,   // the GPU name whose "doesn't compile on this GPU" notice was closed (Format.GpuNotice)
     bool LookUpKeysOnline = false,   // a scan that finds an encrypted Unreal game without a key looks it up in the key list (Unreal.KeyCollection)
-    string? KeyListUrl = null);      // the key list's page; null = KeyCollection.DefaultUrl
+    string? KeyListUrl = null,       // the key list's page; null = KeyCollection.DefaultUrl
+    bool HideUnsupported = false);   // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
 
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Paused, Done, Failed, Stopped }
 public sealed record QueueItem(string GameId, QueueStage Stage, WarmProgress? Progress, string? Error,

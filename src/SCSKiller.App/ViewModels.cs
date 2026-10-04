@@ -343,16 +343,26 @@ public sealed class LibraryVm : Bindable
     public LibraryVm() => cache = new(() => (App.Core.Vendor.GetCacheUsage(), App.Core.Vendor.GetCacheLimit(), (App.Core.Vendor as AmdBackend)?.AppCache.DxcBytes()), ShowCache);
 
     public ObservableCollection<GameRow> Games { get; } = [];   // every game, sorted; the list shows Groups
-    /// <summary>The list: rows matching <see cref="Filter"/> per store, empty stores left out. Filtering reuses the rows
-    /// (no icon reads, no IO).</summary>
+    /// <summary>The list: rows matching <see cref="Filter"/> per store, without the unsupported ones while
+    /// <see cref="HideUnsupported"/>, empty stores left out. Filtering reuses the rows (no icon reads, no IO).</summary>
     public ObservableCollection<StoreGroup> Groups { get; } = [];
     string filter = "";
     public string Filter { get => filter; set { if (value.Trim() != filter) { filter = value.Trim(); ApplyFilter(); Changed(); } } }
-    int shown;
+    // the same setting as Settings' checkbox; only the list changes, no scan
+    public bool? HideUnsupported
+    {
+        get => App.Core.Settings.HideUnsupported;
+        set { if (value is { } v && v != App.Core.Settings.HideUnsupported) { App.Core.Settings = App.Core.Settings with { HideUnsupported = v }; ApplyFilter(); Changed(); } }
+    }
+    int shown, hidden;   // hidden: matching the search, left out by HideUnsupported
     public bool Filtering => filter.Length > 0;
-    public string ShownText => $"{shown} of {Games.Count} shown";
-    public bool NoMatch => Filtering && Games.Count > 0 && shown == 0;
+    public bool HasShownText => Filtering || hidden > 0;
+    public string ShownText => string.Join(" · ", new[] { Filtering ? $"{shown} of {Games.Count} shown" : null, hidden > 0 ? $"{hidden} unsupported hidden" : null }.OfType<string>());
+    public bool NoMatch => Filtering && Games.Count > 0 && shown == 0 && hidden == 0;
     public string NoMatchText => $"No games match “{filter}”";
+    public bool AllHidden => shown == 0 && hidden > 0;
+    public string AllHiddenText => Filtering ? $"No supported games match “{filter}”" : "No supported games to show";
+    public string AllHiddenNote => $"{hidden} unsupported game{(hidden == 1 ? " is" : "s are")} hidden. Show them to see why each can't be compiled, or to unlock an encrypted game with its key.";
     public bool Scanning { get; private set; }
     int refreshing;   // Rescan calls not finished: the scan, then a user refresh's server fetches
     public bool Refreshing => refreshing > 0;
@@ -482,7 +492,7 @@ public sealed class LibraryVm : Bindable
     /// rows show changes; a row whose state changed is swapped in place.</summary>
     void ApplyFilter()
     {
-        var visible = Games.Where(r => filter.Length == 0 || r.Matches(filter)).ToList();
+        (var visible, hidden) = LibraryFilter.Apply(Games.Where(r => filter.Length == 0 || r.Matches(filter)), r => r.State, App.Core.Settings.HideUnsupported);
         // known-stutter games go on top (StutterList.Recommended), out of their store's section, compiled or not
         var byId = visible.ToDictionary(r => r.Id);
         var recommended = StutterList.Recommended(visible.Select(r => r.State)).Select(s => byId[s.Game.Id]).ToList();
@@ -1250,6 +1260,7 @@ public sealed class SettingsVm : Bindable
     public bool? ShareRecordings { get => S.ShareRecordings; set { if (value is { } v && v != S.ShareRecordings) S = S with { ShareRecordings = v }; } }
     public bool? ActiveCheck { get => S.ActiveCheck; set { if (value is { } v && v != S.ActiveCheck) S = S with { ActiveCheck = v }; } }
     public bool? LookUpKeysOnline { get => S.LookUpKeysOnline; set { if (value is { } v && v != S.LookUpKeysOnline) S = S with { LookUpKeysOnline = v }; } }
+    public bool? HideUnsupported { get => S.HideUnsupported; set { if (value is { } v && v != S.HideUnsupported) S = S with { HideUnsupported = v }; } }
     /// <summary>The default address is saved as null, so a later default change reaches it.</summary>
     public string KeyListUrl
     {

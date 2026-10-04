@@ -253,6 +253,13 @@
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <CheckBox IsChecked="{x:Bind Vm.HideUnsupported, Mode=TwoWay}" AutomationProperties.Name="Hide unsupported games in the Library">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Hide unsupported games in the Library" TextWrapping="Wrap" />
+                                <TextBlock Text="Leaves out the games SCSKiller can't compile. They're still checked at every scan and show again once they can be compiled, for example when an encrypted game's key is found. The Library's search bar has the same switch."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
                         <CheckBox IsChecked="{x:Bind Vm.LookUpKeysOnline, Mode=TwoWay}" AutomationProperties.Name="Look up keys for encrypted games online">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Look up keys for encrypted games online" TextWrapping="Wrap" />

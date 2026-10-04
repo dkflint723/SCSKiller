@@ -20,6 +20,9 @@ All notable changes to the SCSKiller app and command line. The format follows
   game whose key was found and later lost gets them tried again. An import waits for the scan's key lookup to finish,
   and says when its keys couldn't be kept. The file never leaves your PC. On the command line:
   `scskiller key --import <file>`.
+- "Hide unsupported games" (off by default), in Settings and beside the Library's search box, leaves the games
+  SCSKiller can't compile out of the Library. They're still checked at every scan and show again once they can be
+  compiled (an encrypted game unlocked by its key); the Library says how many are hidden, with a way to show them.
 
 ### Changed
 
