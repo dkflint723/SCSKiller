@@ -190,7 +190,7 @@
                 </StackPanel>
 
                 <!-- Every game (or every match) is unsupported and hidden: say so, with the way back to them (Why?, unlocking a key). -->
-                <StackPanel Grid.Row="3" Visibility="{x:Bind Vm.AllHidden, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                <StackPanel Grid.Row="3" Canvas.ZIndex="1" Visibility="{x:Bind Vm.AllHidden, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Spacing="8" MaxWidth="460" Padding="24">
                     <TextBlock Text="{x:Bind Vm.AllHiddenText, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                     <TextBlock Text="{x:Bind Vm.AllHiddenNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
