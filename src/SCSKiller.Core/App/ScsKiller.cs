@@ -1340,19 +1340,20 @@ public sealed partial class ScsKiller : IScsKiller
 
     public async Task<KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default)
     {
-        var r = await LookUpKey(Find(gameId).Game, savedPage, true, ct);
+        var r = await LookUpKey(Find(gameId).Game, savedPage, true, true, ct);
         // a saved page is now the cached list: the other encrypted games get their lookup from it
         if (savedPage != null && r.Outcome != KeyLookupOutcome.FetchFailed) StartKeyLookups(Games.Where(s => s.Game.Id != gameId));
         return r;
     }
 
-    async Task<KeyLookup> LookUpKey(Game g, string? savedPage, bool userRequested, CancellationToken ct)
+    async Task<KeyLookup> LookUpKey(Game g, string? savedPage, bool userRequested, bool online, CancellationToken ct)
     {
         // the checks open the game's containers: off the caller's thread
         if (await Task.Run(() => KeyCheck(g), ct) is not { } check) return new(KeyLookupOutcome.NoWorkingKey, $"{g.Name} isn't an Unreal game SCSKiller can read.");
-        return await Task.Run(() => KeyList.LookUpAsync(KeyListUrl, check.Names, check.TrySet, userRequested,
-            (Path.Combine(Store.GameDir(g.Id), "aes.lookup"), ExeStamp(g)), Log, ct, savedPage), ct);
+        return await Task.Run(() => KeyList.LookUpAsync(KeyListUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online), ct);
     }
+
+    (string File, string Stamp) LookupMemo(Game g) => (Path.Combine(Store.GameDir(g.Id), "aes.lookup"), ExeStamp(g));
 
     public string? KeyProblem(string gameId) => Unreal is { } u ? UnrealKeys.Advice(u.KeyMiss(Find(gameId).Game)) : null;
 
@@ -1362,6 +1363,8 @@ public sealed partial class ScsKiller : IScsKiller
         if (keys is not { } k) return new(0, 0, [], problem);
         var unreal = Games.Where(s => s.Engine?.Family == "Unreal").OrderBy(s => s.Game.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         var locked = unreal.Count(s => s.Engine!.Encrypted);
+        // the file's entries and those imported before, as the scans' pass tries them; it then skips them for the same exe
+        var named = k.Named.Concat(KeyList.Imported()).DistinctBy(e => (e.Name, e.Key)).ToList();
         var results = new List<KeyImportGame>();
         foreach (var s in unreal)
         {
@@ -1375,7 +1378,16 @@ public sealed partial class ScsKiller : IScsKiller
             progress?.Report($"Trying the keys on {g.Name} ({results.Count(r => r.Outcome != KeyImportOutcome.Skipped) + 1} of {locked})…");
             KeyLookup? r;
             // the checks open the game's containers: off the caller's thread
-            try { r = await Task.Run(() => KeyCheck(g) is { } check ? KeyCollection.TryImported(k.Named, k.Unnamed, check.Names, check.TrySet, Log, ct) : null, ct); }
+            try
+            {
+                r = await Task.Run(() =>
+                {
+                    if (KeyCheck(g) is not { } check) return null;
+                    var tried = KeyCollection.TryImported(named, k.Unnamed, check.Names, check.TrySet, Log, ct);
+                    KeyList.ImportedTried(check.Names, LookupMemo(g));
+                    return tried;
+                }, ct);
+            }
             catch (Exception e) when (e is not OperationCanceledException) { r = new(KeyLookupOutcome.NoWorkingKey, $"Trying the keys failed: {e.Message}"); }
             if (r == null)
             {
@@ -1388,12 +1400,12 @@ public sealed partial class ScsKiller : IScsKiller
         return new(k.Named.Count, k.Unnamed.Count, [.. results.OrderBy(r => r.Outcome)]);
     }
 
-    /// <summary>With Settings.LookUpKeysOnline, a background pass after a scan over its encrypted Unreal games: each is looked
-    /// up once per exe build and listed candidates (aes.lookup), the list fetched at most daily; a key found re-evaluates the
-    /// game. Only the game's files are read (anti-cheat games too: no exe scan, no process). Never blocks the scan.</summary>
+    /// <summary>A background pass after a scan over its encrypted Unreal games: each tries the user's imported keys (always:
+    /// nothing leaves the PC), then, with Settings.LookUpKeysOnline and none of them working, the list, fetched at most daily.
+    /// Once per exe build and candidates (aes.lookup), so a new import retries; a key found re-evaluates the game. Only the
+    /// game's files are read (anti-cheat games too: no exe scan, no process). Never blocks the scan.</summary>
     void StartKeyLookups(IEnumerable<GameState> states)
     {
-        if (!Settings.LookUpKeysOnline) return;
         var games = states.Where(s => s.Engine is { Family: "Unreal", Encrypted: true }).Select(s => s.Game).ToList();
         if (games.Count == 0) return;
         lock (_scanLock) KeyLookupPass = KeyLookupPass.ContinueWith(_ => LookUpKeys(games), TaskScheduler.Default).Unwrap();
@@ -1401,15 +1413,17 @@ public sealed partial class ScsKiller : IScsKiller
 
     async Task LookUpKeys(List<Game> games)
     {
+        var fetched = true;   // false after a failed fetch: the next game's would fail the same way, its imported keys are still tried
         foreach (var g in games)
             try
             {
-                if (!Settings.LookUpKeysOnline) return;   // turned off meanwhile
-                var r = await LookUpKey(g, null, false, CancellationToken.None);
+                var online = fetched && Settings.LookUpKeysOnline;   // read per game: turned off meanwhile
+                if (!online && KeyList.Imported().Count == 0) return;
+                var r = await LookUpKey(g, null, false, online, CancellationToken.None);
                 if (r.Outcome == KeyLookupOutcome.AlreadyTried) continue;
                 Log?.Report($"{g.Name}: AES key lookup: {r.Message}");
                 if (r.Outcome == KeyLookupOutcome.Unlocked) Refresh(g);
-                else if (r.Outcome == KeyLookupOutcome.FetchFailed) return;   // the next game's lookup would fail the same way
+                else if (r.Outcome == KeyLookupOutcome.FetchFailed) fetched = false;
             }
             catch (Exception e) { Log?.Report($"{g.Name}: looking up the AES key failed: {e.Message}"); }
     }

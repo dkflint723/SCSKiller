@@ -36,7 +36,7 @@ public sealed record KeyImport(int Named, int Unnamed, IReadOnlyList<KeyImportGa
 /// (<see cref="UnrealKeys.Set"/>). The parsed list is kept in keys\collection.json with when it was fetched: refetched at
 /// most every <see cref="AutoEvery"/>, on the user's request every <see cref="UserEvery"/>; a failure backs off and the
 /// cached copy is used. Keys the user imports from a file (<see cref="ImportFile"/>) are kept apart, in keys\imported.json,
-/// so a refetch never drops them; lookups match both, imported entries first.</summary>
+/// so a refetch never drops them; a lookup tries them first, without the network.</summary>
 public sealed class KeyCollection
 {
     public const string DefaultUrl = "https://cs.rin.ru/forum/viewtopic.php?f=10&t=100672";
@@ -66,55 +66,90 @@ public sealed class KeyCollection
     /// <summary>When the cached list was fetched (or loaded from a saved page); null = none.</summary>
     public DateTimeOffset? FetchedAt => Load()?.FetchedAt;
 
-    /// <summary>Looks the game up under <paramref name="names"/> and gives each candidate key (<see cref="Candidates"/>), in
-    /// order, to <paramref name="trySet"/>, which stores it only if it opens the game's files; the first it takes wins.
-    /// <paramref name="tried"/>: a file that remembers the candidates last tried for the game with a stamp of its files; a
-    /// lookup that isn't <paramref name="userRequested"/> skips the same candidates for the same stamp (AlreadyTried).
+    /// <summary>Looks the game up under <paramref name="names"/>: first in the user's imported entries (no network), then, if
+    /// none of them works and <paramref name="online"/>, in the list; each candidate key (<see cref="Candidates"/>), in order,
+    /// goes to <paramref name="trySet"/>, which stores it only if it opens the game's files; the first it takes wins. A key
+    /// is tried once per pass: the list's candidates leave out the imported ones.
+    /// <paramref name="tried"/>: a file that remembers the candidates last tried for the game with a stamp of its files, the
+    /// list's on its first line and the imported ones on its second; a lookup that isn't <paramref name="userRequested"/>
+    /// skips the same candidates for the same stamp (AlreadyTried when nothing was left to try), so a new import retries.
     /// <paramref name="savedPage"/>: the list as the user saved it from a browser, used instead of fetching and cached.
-    /// The user's imported entries are candidates too, before the list's; they are tried when the list can't be had.
-    /// The log names list entries, never a key.</summary>
+    /// The log names entries, never a key.</summary>
     public async Task<KeyLookup> LookUpAsync(string url, IEnumerable<string?> names, Func<string, bool> trySet, bool userRequested,
-        (string File, string Stamp)? tried = null, IProgress<string>? log = null, CancellationToken ct = default, string? savedPage = null)
+        (string File, string Stamp)? tried = null, IProgress<string>? log = null, CancellationToken ct = default, string? savedPage = null, bool online = true)
     {
+        var known = names.ToList();
+        var mine = Candidates(Imported(), known);
+        var memos = tried is { } t ? Remembered(t.File) : [];
+        var mineMemo = tried is { } t1 ? Memo(t1.Stamp, mine) : null;
+        var local = 0;   // imported keys tried in this pass
+        if (mine.Count > 0 && (userRequested || mineMemo == null || memos.ElementAtOrDefault(1) != mineMemo))
+        {
+            for (; local < mine.Count; local++)
+            {
+                ct.ThrowIfCancellationRequested();
+                log?.Report($"checking the key imported for \"{mine[local].Name}\"");
+                if (!trySet(mine[local].Key)) continue;
+                Remember(tried, 1, mineMemo);
+                return new(KeyLookupOutcome.Unlocked, $"Unlocked with the key imported for \"{mine[local].Name}\", from your imported keys.", mine[local].Name, local + 1);
+            }
+            Remember(tried, 1, mineMemo);
+        }
+        var mineNote = local == 0 ? "" : local == 1 ? $"Your imported key for \"{mine[0].Name}\" doesn't open this game's files. "
+            : $"None of your {local} imported keys for this game opens its files. ";
+        if (!online)
+            return local > 0 ? new(KeyLookupOutcome.NoWorkingKey, mineNote.TrimEnd(), Tried: local)
+                : new(KeyLookupOutcome.AlreadyTried, mine.Count == 0 ? "No imported key for this game." : "The imported keys for this game were already tried.");
         var (list, problem) = savedPage != null ? Import(url, savedPage) : await ListAsync(url, userRequested, ct);
-        var mine = Imported();
-        var candidates = Candidates(mine.Concat(list ?? []), names);
-        if (list == null && candidates.Count == 0) return new(KeyLookupOutcome.FetchFailed, $"Couldn't get the key list: {problem}.");
-        var stale = list == null ? $" (the key list couldn't be had: {problem}; tried your imported keys)"
-            : problem != null ? $" (the list couldn't be refreshed: {problem}; used the saved copy{(FetchedAt is { } at ? $" from {at.ToLocalTime():d MMM yyyy}" : "")})" : "";
-        if (candidates.Count == 0)
-            return new(KeyLookupOutcome.NoWorkingKey, $"The key list ({list!.Count + mine.Count:N0} entries{(mine.Count > 0 ? $", {mine.Count:N0} of them imported" : "")}) has no entry for this game{stale}.");
-        string Source(KeyEntry e) => mine.Contains(e) ? "imported" : "listed";
-        var memo = tried is { } t ? $"{t.Stamp}|{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', candidates.Select(c => c.Key.ToUpperInvariant())))))}" : null;
-        if (!userRequested && memo != null && Remembered(tried!.Value.File) == memo)
-            return new(KeyLookupOutcome.AlreadyTried, "The keys listed for this game were already tried.");
+        if (list == null) return new(KeyLookupOutcome.FetchFailed, $"{mineNote}Couldn't get the key list: {problem}.", Tried: local);
+        var stale = problem != null ? $" (the list couldn't be refreshed: {problem}; used the saved copy{(FetchedAt is { } at ? $" from {at.ToLocalTime():d MMM yyyy}" : "")})" : "";
+        var imported = mine.Select(e => e.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = Candidates(list.Where(e => !imported.Contains(e.Key)), known);
+        if (candidates.Count == 0) return new(KeyLookupOutcome.NoWorkingKey, $"{mineNote}The key list ({list.Count:N0} entries) has no entry for this game{stale}.", Tried: local);
+        var memo = tried is { } t2 ? Memo(t2.Stamp, candidates) : null;
+        if (!userRequested && memo != null && memos.ElementAtOrDefault(0) == memo)
+            return local > 0 ? new(KeyLookupOutcome.NoWorkingKey, $"{mineNote}The keys listed for it were already tried.", Tried: local)
+                : new(KeyLookupOutcome.AlreadyTried, "The keys listed for this game were already tried.");
         for (var i = 0; i < candidates.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            log?.Report($"checking the key {Source(candidates[i])} for \"{candidates[i].Name}\"");
+            log?.Report($"checking the key listed for \"{candidates[i].Name}\"");
             if (!trySet(candidates[i].Key)) continue;
-            Remember(tried, memo);
-            return new(KeyLookupOutcome.Unlocked, $"Unlocked with the key {Source(candidates[i])} for \"{candidates[i].Name}\"{stale}.", candidates[i].Name, i + 1);
+            Remember(tried, 0, memo);
+            return new(KeyLookupOutcome.Unlocked, $"Unlocked with the key listed for \"{candidates[i].Name}\", from the online list{stale}.", candidates[i].Name, local + i + 1);
         }
-        Remember(tried, memo);
-        return new(KeyLookupOutcome.NoWorkingKey, candidates.Count == 1
+        Remember(tried, 0, memo);
+        return new(KeyLookupOutcome.NoWorkingKey, mineNote + (candidates.Count == 1
             ? $"The key listed for \"{candidates[0].Name}\" doesn't open this game's files{stale}."
-            : $"None of the {candidates.Count} keys listed for this game ({string.Join(", ", candidates.Select(c => c.Name).Distinct().Take(4))}) opens its files{stale}.", Tried: candidates.Count);
+            : $"None of the {candidates.Count} keys listed for this game ({string.Join(", ", candidates.Select(c => c.Name).Distinct().Take(4))}) opens its files{stale}."), Tried: local + candidates.Count);
     }
 
-    static string? Remembered(string path)
+    /// <summary>Records that the imported entries a lookup would try for the game were tried (an import tried them), so the
+    /// next scan doesn't try them again for the same stamp.</summary>
+    public void ImportedTried(IEnumerable<string?> names, (string File, string Stamp) tried)
     {
-        try { return File.Exists(path) ? File.ReadAllText(path) : null; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        if (Candidates(Imported(), names) is { Count: > 0 } mine) Remember(tried, 1, Memo(tried.Stamp, mine));
     }
 
-    static void Remember((string File, string Stamp)? tried, string? memo)
+    static string Memo(string stamp, List<KeyEntry> candidates) =>
+        $"{stamp}|{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', candidates.Select(c => c.Key.ToUpperInvariant())))))}";
+
+    static string[] Remembered(string path)
+    {
+        try { return File.Exists(path) ? File.ReadAllText(path).Split('\n') : []; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    // line 0: the list's candidates (the file's only line before imports existed), line 1: the imported ones
+    static void Remember((string File, string Stamp)? tried, int line, string? memo)
     {
         if (tried is not { } t || memo == null) return;
+        var lines = Remembered(t.File).Concat(["", ""]).Take(2).ToArray();
+        lines[line] = memo;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(t.File)!);
-            File.WriteAllText(t.File, memo);
+            File.WriteAllText(t.File, string.Join('\n', lines));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // tried again at the next scan
     }

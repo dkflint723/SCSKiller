@@ -275,7 +275,7 @@
                             <Button x:Name="ImportKeysButton" Content="Import keys…" Click="OnImportKeys" AutomationProperties.Name="Import encryption keys from a file" />
                             <ProgressRing x:Name="ImportKeysRing" IsActive="False" Width="20" Height="20" Visibility="Collapsed" />
                         </StackPanel>
-                        <TextBlock Text="Tries a file of keys you collected (lines of a game's name and its key, CSV, JSON or a saved page) on every encrypted Unreal game without a working key. The file is read on this PC only, and a key is kept only if it opens the game's files."
+                        <TextBlock Text="Tries a file of keys you collected (lines of a game's name and its key, CSV, JSON or a saved page) on every encrypted Unreal game without a working key, now and after each scan, before the online list. The keys stay on this PC, and a key is kept only if it opens the game's files."
                                    Style="{StaticResource Caption}" TextWrapping="Wrap" />
                         <TextBlock x:Name="ImportKeysStatus" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>

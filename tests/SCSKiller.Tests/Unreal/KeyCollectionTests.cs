@@ -360,7 +360,7 @@ public class KeyCollectionTests : IDisposable
         File.Copy(Path.Combine(_dir, "keys", "imported.json"), Path.Combine(_dir, "empty", "keys", "imported.json"));
         var offline = await fresh.LookUpAsync(Url, ["Zulu Game"], k => k == K(50), true);
         Assert.Equal(KeyLookupOutcome.Unlocked, offline.Outcome);   // no list at all: the imported entries still
-        Assert.Contains("tried your imported keys", offline.Message);
+        Assert.Contains("from your imported keys", offline.Message);
         Assert.Equal(KeyLookupOutcome.FetchFailed, (await fresh.LookUpAsync(Url, ["Hotel"], _ => true, true)).Outcome);
     }
 

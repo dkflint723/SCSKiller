@@ -130,6 +130,89 @@ public partial class AppTests
         Assert.NotNull(missing.Problem);
     }
 
+    static string Hex(int i) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData([(byte)i]));
+    static readonly string PageKey = new string('A', 32) + new string('5', 32);   // KeyPage's
+
+    [Fact]
+    public async Task Imported_keys_are_tried_after_every_scan_without_the_network_once_per_import()
+    {
+        var page = new KeyPage();
+        var tried = new List<(string Game, string Key)>();
+        Func<Game, (string[], Func<string, bool>)?> check = g => ([g.Name], key => { lock (tried) tried.Add((g.Name, key)); return g.Name == "Other Game" && key == Hex(7); });
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k.KeyCheck = check;
+        Assert.False(k.Settings.LookUpKeysOnline);
+        await k.ScanAsync(default);
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"Other Game 0x{Hex(7)}\nFake Game 0x{Hex(8)}");
+        var r = await k.ImportKeysAsync(file);
+        Assert.Equal(KeyImportOutcome.NoWorkingKey, r.Games.Single().Outcome);
+        Assert.Equal([("Fake Game", Hex(8))], tried);
+
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Single(tried);   // the import tried them: not again for the same exe
+
+        var install = Path.Combine(_root, "Other");   // installed after the import
+        Directory.CreateDirectory(install);
+        var other = new Game("test:other", "Other Game", Store.Other, install, Path.Combine(install, "Other.exe"));
+        var reader = new FakeReader(EncryptedUnreal);
+        var k2 = Killer(reader, games: [_game, other]);
+        k2.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k2.KeyCheck = check;
+        await k2.ScanAsync(default);
+        var changed = new List<string>();
+        k2.GameChanged += s => { lock (changed) changed.Add(s.Game.Id); };
+        await k2.KeyLookupPass;
+        Assert.Equal([("Fake Game", Hex(8)), ("Other Game", Hex(7))], tried);   // the next scan unlocks it
+        Assert.Equal([other.Id], changed);   // and re-evaluates it
+
+        File.WriteAllText(file, $"Fake Game 0x{Hex(9)}");
+        k2.KeyList.ImportFile(file);   // a new import: retried at the next scan
+        await k2.ScanAsync(default);
+        await k2.KeyLookupPass;
+        Assert.Equal([Hex(8), Hex(9), Hex(8)], tried.Where(t => t.Game == "Fake Game").Select(t => t.Key));
+        await k2.ScanAsync(default);
+        await k2.KeyLookupPass;
+        Assert.Equal(4, tried.Count);   // unchanged: not again
+        Assert.Equal(0, page.Requests);   // the online lookup is off: nothing fetched
+    }
+
+    [Fact]
+    public async Task A_lookup_tries_imported_keys_before_the_online_list_and_each_key_once()
+    {
+        var page = new KeyPage();
+        var tried = new List<string>();
+        var works = "";
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k.KeyCheck = g => ([g.Name], key => { lock (tried) tried.Add(key); return key == works; });
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"Fake Game 0x{Hex(1)}\nFake Game (old) 0x{PageKey}");
+        k.KeyList.ImportFile(file);
+        k.Settings = k.Settings with { LookUpKeysOnline = true };
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal([Hex(1), PageKey], tried);   // the listed key is one of the imported: not tried twice
+        Assert.Equal(1, page.Requests);   // nothing imported worked: the list
+
+        works = Hex(1);
+        tried.Clear();
+        var r = await k.LookUpKeyAsync(_game.Id);
+        Assert.Equal((KeyLookupOutcome.Unlocked, "Fake Game", 1), (r.Outcome, r.Entry, r.Tried));
+        Assert.Contains("from your imported keys", r.Message);
+        Assert.Equal(1, page.Requests);   // found locally: not fetched
+
+        File.WriteAllText(file, $"Zulu 0x{Hex(2)}");
+        new KeyCollection(Path.Combine(_root, "other-data")).ImportFile(file);
+        k.KeyList = new KeyCollection(Path.Combine(_root, "other-data"), page);
+        works = PageKey;
+        r = await k.LookUpKeyAsync(_game.Id);
+        Assert.Equal(KeyLookupOutcome.Unlocked, r.Outcome);
+        Assert.Contains("from the online list", r.Message);
+    }
+
     [Fact]
     public async Task A_scan_never_looks_up_keys_of_unencrypted_games()
     {
