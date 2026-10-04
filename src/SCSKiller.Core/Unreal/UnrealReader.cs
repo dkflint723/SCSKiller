@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -207,14 +208,22 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         var byKey = new Dictionary<string, (string Sha, string Platform)>(); // version-1 archives: archive hash -> shader
         var lanes = new ConcurrentDictionary<string, string>(); // shader -> its [WaveSize] platform suffix
         var byHash = new Dictionary<string, (string Sha, string Platform)>(); // library hash -> shader
-        var undecodable = 0;
+        var (undecodable, opened, unreadable) = (0, 0, 0);
         string? why = null;
+        ExceptionDispatchInfo? first = null;
         using var content = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         foreach (var lib in Libraries(provider))
         {
             var sw = Stopwatch.StartNew();
-            var arc = Open(provider, lib.File);
+            using var arc = TryOpen(provider, lib.File, out var error);
+            if (error != null)
+            {
+                (first, unreadable) = (first ?? ExceptionDispatchInfo.Capture(error), unreadable + 1);
+                log?.Report($"{lib.File.Path}: unreadable, skipped ({error.Message})");
+                continue;
+            }
             if (arc == null) { log?.Report($"{lib.File.Path}: unsupported shader archive layout, skipped"); continue; }
+            opened++;
             var sha = new string[arc.Count];
             var (bad, failed) = (0, 0);
             Parallel.ForEach(arc.Codes, new ParallelOptions { CancellationToken = ct }, work =>
@@ -258,6 +267,8 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             }
             log?.Report($"{lib.File.Name}: {(arc.Keys != null ? "version 1 (no maps)" : $"{arc.MapHashes.Length} shader maps")}, {arc.Count} shaders{(bad > 0 ? $", {bad} unparseable" : "")}{(failed > 0 ? $", {failed} code blocks that don't decompress, skipped" : "")} ({sw.Elapsed.TotalSeconds:F1}s)");
         }
+        if (opened == 0) first?.Throw();   // none read: the game is broken, not indexed with nothing
+        if (unreadable > 0) log?.Report($"{unreadable} unreadable shader {(unreadable == 1 ? "library" : "libraries")} skipped: their shaders aren't compiled");
         if (shaders.IsEmpty && undecodable > 0) throw new InvalidDataException($"none of the game's shader code decompresses ({undecodable} blocks): {why}");
         if (byKey.Count > 0) // version-1 archives: maps from the packages that reference their shaders
         {
@@ -306,10 +317,15 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         using var provider = Mount(PaksDir(game.InstallDir) ?? throw new DirectoryNotFoundException($"no Content/Paks under {game.InstallDir}"), GameOf(engine), keys.Stored(game));
         if (!Libraries(provider).Any()) { ReadInline(provider, game, sha1s, sink, ct); return; }
         var left = new ConcurrentDictionary<string, bool>(sha1s.Select(s => KeyValuePair.Create(s, true)));
+        var opened = 0;
+        ExceptionDispatchInfo? first = null;
         foreach (var lib in Libraries(provider))
         {
             if (left.IsEmpty) break;
-            if (Open(provider, lib.File) is not { } arc) continue;
+            using var arc = TryOpen(provider, lib.File, out var error);
+            if (error != null) first ??= ExceptionDispatchInfo.Capture(error);   // skipped at indexing too: the plan has none of its own
+            if (arc == null) continue;
+            opened++;
             Parallel.ForEach(arc.Codes, new ParallelOptions { CancellationToken = ct }, work =>
             {
                 IEnumerable<(int, byte[])> codes;
@@ -323,6 +339,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
                 }
             });
         }
+        if (opened == 0) first?.Throw();   // as Index: none read
     }
 
     /// <summary>Class-name suffixes of the objects that carry inline shader maps: Material, MaterialInstanceConstant (and
@@ -468,7 +485,20 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     /// (IoStore groups decompress several shaders at once).</summary>
     internal sealed record Archive(string[] MapHashes, (int Off, int Num)[] Maps, uint[] Indices, int Count, Func<IEnumerable<(int, byte[])>>[] Codes,
         string[]? Keys = null, // version 1: each shader's archive hash (packages reference it); no maps
-        string[]? Hashes = null); // each shader's library hash (FSHAHash), which pipeline caches name it by
+        string[]? Hashes = null, // each shader's library hash (FSHAHash), which pipeline caches name it by
+        Microsoft.Win32.SafeHandles.SafeFileHandle? Pak = null) : IDisposable // OpenLarge: the pak Codes read from, once they are done
+    {
+        public void Dispose() => Pak?.Dispose();
+    }
+
+    /// <summary><see cref="Open"/>, with what it threw instead: one library that doesn't read (a layout CUE4Parse rejects, a
+    /// broken pak entry) is skipped, not the game.</summary>
+    static Archive? TryOpen(AbstractVfsFileProvider provider, GameFile file, out Exception? error)
+    {
+        error = null;
+        try { return Open(provider, file); }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException)) { error = e; return null; }
+    }
 
     static IEnumerable<Library> Libraries(AbstractFileProvider provider) =>
         provider.Files.Values.Where(f => f.Extension == "ushaderbytecode").OrderBy(f => f.Path, StringComparer.Ordinal).Select(f =>
@@ -537,32 +567,41 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         if (entry.IsCompressed || entry.IsEncrypted || entry.Vfs is not PakFileReader { Path: var pak })
             throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(entry.Size)} shader library that is compressed or encrypted in its pak, not read");
         var (start, size) = (entry.Offset + entry.StructSize, entry.Size);
-        byte[] head;
-        using (var h = File.OpenHandle(pak, FileMode.Open, FileAccess.Read, FileShare.Read))
+        // one handle for the header and every shader's code (RandomAccess.Read is safe across threads); the Archive owns it
+        var file = File.OpenHandle(pak, FileMode.Open, FileAccess.Read, FileShare.Read);
+        try
+        {
+            byte[] head;
             for (var n = Math.Min(size, 1L << 20); ; n = Math.Min(Math.Min(size, Array.MaxLength), n * 4))
             {
                 head = new byte[n];
-                ReadAt(h, head, start);
+                ReadAt(file, head, start);
                 // the header has to fit: LibraryEnd is null until it does, then the code it sizes has to end at the file's end
                 if (LibraryEnd(head, 20, false) == size || LibraryEnd(head, 8, false) == size || n == Math.Min(size, Array.MaxLength)) break;
             }
-        if (BitConverter.ToUInt32(head) != 2) throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(size)} shader library of version {BitConverter.ToUInt32(head)}, not read");
-        var ar = new FByteArchive(entry.Path, head, new VersionContainer(PickLayout(entry.Path, head, size, game)));
-        ar.Position = 4;
-        FSerializedShaderArchive lib;
-        try { lib = new FSerializedShaderArchive(ar); }
-        catch (Exception e) when (e is not OutOfMemoryException) { throw new InvalidDataException($"{entry.Path}: not a shader library ({e.Message})", e); }
-        var code0 = start + ar.Position;
-        return new Archive(lib.ShaderMapHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(),
-            lib.ShaderMapEntries.Select(e => ((int)e.ShaderIndicesOffset, (int)e.NumShaders)).ToArray(), lib.ShaderIndices, lib.ShaderEntries.Length,
-            Enumerable.Range(0, lib.ShaderEntries.Length).Select(i => (Func<IEnumerable<(int, byte[])>>)(() =>
-            {
-                var e = lib.ShaderEntries[i];
-                if (code0 + (long)e.Offset + e.Size > start + size) throw new InvalidDataException($"{entry.Path}: shader {i}'s code runs past the file");
-                var raw = new byte[e.Size];
-                using (var h = File.OpenHandle(pak, FileMode.Open, FileAccess.Read, FileShare.Read)) ReadAt(h, raw, code0 + (long)e.Offset);
-                return [(i, e.Size == e.UncompressedSize ? raw : Decompress(raw, (int)e.UncompressedSize))];
-            })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray());
+            if (BitConverter.ToUInt32(head) != 2) throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(size)} shader library of version {BitConverter.ToUInt32(head)}, not read");
+            var ar = new FByteArchive(entry.Path, head, new VersionContainer(PickLayout(entry.Path, head, size, game)));
+            ar.Position = 4;
+            FSerializedShaderArchive lib;
+            try { lib = new FSerializedShaderArchive(ar); }
+            catch (Exception e) when (e is not OutOfMemoryException) { throw new InvalidDataException($"{entry.Path}: not a shader library ({e.Message})", e); }
+            var code0 = start + ar.Position;
+            return new Archive(lib.ShaderMapHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(),
+                lib.ShaderMapEntries.Select(e => ((int)e.ShaderIndicesOffset, (int)e.NumShaders)).ToArray(), lib.ShaderIndices, lib.ShaderEntries.Length,
+                Enumerable.Range(0, lib.ShaderEntries.Length).Select(i => (Func<IEnumerable<(int, byte[])>>)(() =>
+                {
+                    var e = lib.ShaderEntries[i];
+                    if (code0 + (long)e.Offset + e.Size > start + size) throw new InvalidDataException($"{entry.Path}: shader {i}'s code runs past the file");
+                    var raw = new byte[e.Size];
+                    ReadAt(file, raw, code0 + (long)e.Offset);
+                    return [(i, e.Size == e.UncompressedSize ? raw : Decompress(raw, (int)e.UncompressedSize))];
+                })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(), Pak: file);
+        }
+        catch
+        {
+            file.Dispose();
+            throw;
+        }
     }
 
     static void ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle h, byte[] into, long offset)

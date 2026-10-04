@@ -291,6 +291,15 @@ public class UnrealReaderTests(ITestOutputHelper output)
     [Fact]
     public void PakEraShaderLibraryEndsAfterItsCode()
     {
+        var b = PakEraLibrary();
+        Assert.Equal(b.Length, UnrealReader.LibraryEnd(b, 20, ioStore: false));
+        var arc = UnrealReader.ReadLibrary("x", b, CUE4Parse.UE4.Versions.EGame.GAME_UE5_6);
+        Assert.Equal([4, 5, 6, 7, 8], arc.ShaderCode[1]);
+    }
+
+    /// <summary>One map of two shaders, codes 1 2 3 and 4 5 6 7 8.</summary>
+    static byte[] PakEraLibrary()
+    {
         var o = new MemoryStream();
         var w = new BinaryWriter(o);
         w.Write(2);
@@ -301,11 +310,60 @@ public class UnrealReaderTests(ITestOutputHelper output)
         w.Write(0);                                                                         // preloads
         w.Write(2); w.Write(0); w.Write(1);                                                 // indices
         w.Write(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });                                     // code
-        var b = o.ToArray();
-        Assert.Equal(b.Length, UnrealReader.LibraryEnd(b, 20, ioStore: false));
-        var arc = UnrealReader.ReadLibrary("x", b, CUE4Parse.UE4.Versions.EGame.GAME_UE5_6);
-        Assert.Equal([4, 5, 6, 7, 8], arc.ShaderCode[1]);
+        return o.ToArray();
     }
+
+    /// <summary>A shader library that doesn't read is skipped, its game's other libraries indexed and read; when none reads,
+    /// the index fails with the first one's error rather than finding nothing.</summary>
+    [Fact]
+    public void An_unreadable_shader_library_is_skipped_unless_none_reads()
+    {
+        var root = Ff7.TempDir("unreadable-library");
+        var paks = Directory.CreateDirectory(Path.Combine(root, "Game", "Content", "Paks")).FullName;
+        var broken = ("Game/Content/ShaderArchive-Broken-PCD3D_SM6.ushaderbytecode", new byte[] { 2, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0x7F });   // its counts run past the file
+        File.WriteAllBytes(Path.Combine(paks, "pakchunk0-Windows.pak"), Pak(broken));
+        var game = new Game("test:unreadable", "Unreadable", Store.Other, root, Path.Combine(root, "Game.exe"));
+        var engine = new EngineInfo("Unreal", "5.6", null, "D3D12", false, null);
+        var r = new UnrealReader(Ff7.TempDir("unreadable-library-data"));
+        var e = Assert.Throws<InvalidDataException>(() => r.Index(game, engine, null, CancellationToken.None));
+        Assert.Contains("ShaderArchive-Broken-PCD3D_SM6.ushaderbytecode: not a shader library", e.Message);
+        Assert.Throws<InvalidDataException>(() => r.ReadShaders(game, engine, new HashSet<string> { "x" }, (_, _) => { }, CancellationToken.None));
+
+        File.WriteAllBytes(Path.Combine(paks, "pakchunk0-Windows.pak"), Pak(broken, ("Game/Content/ShaderArchive-Game-PCD3D_SM6.ushaderbytecode", PakEraLibrary())));
+        var lines = new List<string>();
+        var index = r.Index(game, engine, new SyncLog(lines.Add), CancellationToken.None);
+        var sha = Convert.ToHexStringLower(SHA1.HashData([4, 5, 6, 7, 8]));
+        Assert.Equal(["Game"], index.Maps.Select(m => m.Library));
+        Assert.Contains(sha, index.Maps.Single().Shaders);
+        Assert.Contains(lines, l => l.Contains("ShaderArchive-Broken-PCD3D_SM6.ushaderbytecode: unreadable, skipped"));
+        Assert.Contains("1 unreadable shader library skipped: their shaders aren't compiled", lines);
+        var read = new List<string>();
+        r.ReadShaders(game, engine, new HashSet<string> { sha }, (h, _) => read.Add(h), CancellationToken.None);   // as a warm asks
+        Assert.Equal([sha], read);
+    }
+
+    /// <summary>A version-3 pak (uncompressed, unencrypted) of <paramref name="files"/>, mounted at ../../../.</summary>
+    static byte[] Pak(params (string Path, byte[] Data)[] files)
+    {
+        var o = new MemoryStream();
+        var w = new BinaryWriter(o);
+        void Entry(long offset, byte[] data)   // FPakEntry: offset, size, uncompressed size, compression, hash, flags, block size
+        {
+            w.Write(offset); w.Write((long)data.Length); w.Write((long)data.Length); w.Write(0); w.Write(SHA1.HashData(data)); w.Write((byte)0); w.Write(0);
+        }
+        void Str(string s) { w.Write(s.Length + 1); w.Write(System.Text.Encoding.ASCII.GetBytes(s)); w.Write((byte)0); }
+        var at = new List<long>();
+        foreach (var (_, data) in files) { at.Add(o.Position); Entry(0, data); w.Write(data); }   // each file after its own entry
+        var index = o.Position;
+        Str("../../../");
+        w.Write(files.Length);
+        for (var i = 0; i < files.Length; i++) { Str(files[i].Path); Entry(at[i], files[i].Data); }
+        var size = o.Position - index;
+        w.Write((byte)0); w.Write(0x5A6F12E1u); w.Write(3); w.Write(index); w.Write(size); w.Write(new byte[20]);   // FPakInfo: unencrypted index, magic, version
+        return o.ToArray();
+    }
+
+    sealed class SyncLog(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
 
     /// <summary>Shader code no codec decompresses throws InvalidDataException, which indexing counts and skips, with the
     /// block's first bytes: they tell the format apart (Oodle 8C, zlib 78, zstd 28B52FFD).</summary>

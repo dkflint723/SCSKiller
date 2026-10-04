@@ -3243,7 +3243,7 @@ public sealed partial class ScsKiller : IScsKiller
                 Log?.Report($"{id}: {e.Message}");
                 QueueItem? item;
                 lock (_lock) item = _queue.FirstOrDefault(q => q.GameId == id);
-                if (item != null && !Finished(item.Stage)) Set(item with { Stage = QueueStage.Failed, Error = e.Message });
+                if (item != null && !Finished(item.Stage)) Set(item with { Stage = QueueStage.Failed, Error = CompileError(id, _stage, e) });
             }
             finally { lock (_lock) (_current, _run, _itemCts) = (null, null, null); }
         }
@@ -3452,7 +3452,11 @@ public sealed partial class ScsKiller : IScsKiller
                     Store.SaveGame(id, rec);
                 }
                 // now, not before the waits (for the game, idle, a pause): ReShade or its add-ons may have changed meanwhile
-                if (BlockingMod(game) is { } mod) throw new InvalidOperationException($"not ready: {ShaderModReason(mod.Mod!)}");
+                if (BlockingMod(game) is { } mod)
+                {
+                    Stage(QueueStage.Failed, $"not ready: {ShaderModReason(mod.Mod!)}");   // a verdict, not an error: no compile-error.log
+                    return;
+                }
                 layer = LayerFor(game, work);
                 if (layer != null) Log?.Report($"{game.Name}: compiling through a copy of the game's ReShade layer");
                 // the stopped part's pipelines went through another layer, or none: they aren't this one's
@@ -3536,7 +3540,7 @@ public sealed partial class ScsKiller : IScsKiller
             }
         }
         catch (OperationCanceledException) { Stage(QueueStage.Stopped); }
-        catch (Exception e) { Stage(QueueStage.Failed, e.Message); }
+        catch (Exception e) { Stage(QueueStage.Failed, CompileError(id, _stage, e)); }
         finally
         {
             if (_warmer is Warmer done) done.Ags = null;   // its closure holds this compile's whole index and recording
@@ -3566,6 +3570,24 @@ public sealed partial class ScsKiller : IScsKiller
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return ""; }
         return $" (log: {kept})";
+    }
+
+    /// <summary>A failed item's error: the stage it failed in, and the whole exception kept in compile-error.log (the app
+    /// sets no <see cref="Log"/>, so the stack is nowhere else). Overwritten by the next failure and, like warm-failed.log,
+    /// kept after a success: the last failure's, for a report.</summary>
+    string CompileError(string id, QueueStage stage, Exception e)
+    {
+        var shown = e;
+        while (shown is AggregateException { InnerExceptions.Count: 1 } a) shown = a.InnerExceptions[0];
+        var named = stage is QueueStage.Indexing or QueueStage.Planning or QueueStage.Materializing or QueueStage.Warming ? $"{stage} failed: " : "";
+        var kept = Path.Combine(Store.GameDir(id), "compile-error.log");
+        try
+        {
+            AppStore.WriteAtomic(kept, System.Text.Encoding.UTF8.GetBytes(
+                $"{DateTimeOffset.Now:O}\r\nstage: {stage}\r\nSCSKiller {AppVersion.Current} ({CoreBuild})\r\ngame: {id}\r\n\r\n{e}\r\n"));
+        }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException) { return named + shown.Message; }
+        return $"{named}{shown.Message} (log: {kept})";
     }
 
     /// <summary>The logs of a completed warm the driver rejected PSOs in, every process's, copied out of work\ to

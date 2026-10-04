@@ -7707,6 +7707,56 @@ public partial class AppTests : IDisposable
         Assert.Equal("device removed", File.ReadAllText(log));
     }
 
+    sealed class ThrowingPlanner : IPlanner
+    {
+        readonly FakePlanner _inner = new();
+        public PlanCheck Check(Game game, EngineInfo engine, Recording? recording, VendorCaps caps) => _inner.Check(game, engine, recording, caps);
+        public Plan Build(Game game, EngineInfo engine, ShaderIndex index, Recording? recording, VendorCaps caps, string outDir, IProgress<string>? log, CancellationToken ct, bool maximum = false) =>
+            throw new AggregateException(new InvalidDataException("bad shader 42"));   // as a Parallel.ForEach throws it
+        public void Materialize(Plan plan, Game game, EngineInfo engine, IEngineReader reader, Recording? recording, string workDir, CancellationToken ct) =>
+            _inner.Materialize(plan, game, engine, reader, recording, workDir, ct);
+    }
+
+    sealed class ThrowingIndexReader(EngineInfo engine) : IEngineReader
+    {
+        public EngineInfo? Detect(Game game) => engine;
+        public ShaderIndex Index(Game game, EngineInfo e, IProgress<string>? log, CancellationToken ct) => throw new InvalidDataException("ShaderArchive-Game.ushaderbytecode: not a shader library");
+        public void ReadShaders(Game game, EngineInfo e, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct) { }
+    }
+
+    /// <summary>The app sets no Log: a compile that throws names its stage and keeps the whole exception in compile-error.log,
+    /// which the next failure overwrites and a later success leaves.</summary>
+    [Fact]
+    public async Task A_compile_that_throws_names_the_stage_and_keeps_the_stack()
+    {
+        var k = Killer(new FakeReader(Unreal), planner: new ThrowingPlanner());
+        await k.ScanAsync(default);
+        k.Enqueue(_game.Id);
+        k.StartQueue();
+        await k.WhenQueueIdle().WaitAsync(TimeSpan.FromSeconds(10));
+        var q = k.Queue.Single();
+        var log = Path.Combine(k.Store.GameDir(_game.Id), "compile-error.log");
+        Assert.Equal((QueueStage.Failed, $"Planning failed: bad shader 42 (log: {log})"), (q.Stage, q.Error));
+        var text = File.ReadAllText(log);
+        Assert.Contains("stage: Planning", text);
+        Assert.Contains($"game: {_game.Id}", text);
+        Assert.Contains("System.AggregateException", text);
+        Assert.Contains(nameof(ThrowingPlanner), text);   // the stack
+
+        k = Killer(new ThrowingIndexReader(Unreal));
+        await k.ScanAsync(default);
+        k.Enqueue(_game.Id);
+        k.StartQueue();
+        await k.WhenQueueIdle().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.StartsWith("Indexing failed: ShaderArchive-Game.ushaderbytecode: not a shader library (log: ", k.Queue.Single().Error);
+        Assert.Contains("stage: Indexing", File.ReadAllText(log));
+
+        k = Killer(new FakeReader(Unreal));
+        await k.ScanAsync(default);
+        await WarmOnce(k, _game.Id);
+        Assert.Contains("stage: Indexing", File.ReadAllText(log));
+    }
+
     sealed class RejectingWarmer : IWarmer
     {
         public long Failed;

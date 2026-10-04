@@ -455,7 +455,8 @@ async Task<int> Index()
     if (args.Length < 2 || Opt("--out") is not { } outDir) return Fail("index <game> --out <dir>");
     var (_, _, _, engine, index) = await OpenIndex(args[1], new Progress<string>(Console.WriteLine));
     Directory.CreateDirectory(outDir);
-    await File.WriteAllTextAsync(Path.Combine(outDir, "index.json"), JsonSerializer.Serialize(new { engine, index }, AppStore.Json));
+    await using (var json = File.Create(Path.Combine(outDir, "index.json")))   // streamed: a big game's index as one string runs out of memory
+        await JsonSerializer.SerializeAsync(json, new { engine, index }, AppStore.Json);
     Console.WriteLine($"{index.Shaders.Count} shaders, {index.Maps.Count} shader maps, content hash {index.ContentHash} -> {outDir}");
     return 0;
 }

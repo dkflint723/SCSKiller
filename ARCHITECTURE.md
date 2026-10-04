@@ -97,7 +97,9 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
   - `community.db`: the community database's hash-only recording for the game's build, merged with `recording.db` in
     `work\` when a compile plans;
   - `work\`: the materialized plan, deleted after a warm; `warm-failed.log`: the last failed warm's log, kept from it;
-    `warm-rejects.log`: the logs of the last completed warm the driver rejected PSOs in;
+    `warm-rejects.log`: the logs of the last completed warm the driver rejected PSOs in; `compile-error.log`: the last
+    compile that failed with an error (in the index, plan, materialize or warm stage), its whole exception with the
+    time, stage, SCSKiller build and game id, kept after a later success;
   - keys found for the game, kept locally only: `aes.key` (an Unreal pak key), `archive.keys` (FromSoftware archive
     keys, with the SHA-256 of the exe they came from), `pak.modulus` (RE Engine table key);
   - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package.

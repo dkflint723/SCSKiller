@@ -5,6 +5,17 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A compile that fails with an error names the stage it failed in (indexing, planning, materializing or warming) and
+  keeps the whole error in `compile-error.log` in the game's data folder, for a bug report.
+
+### Fixed
+
+- An Unreal game with one shader library SCSKiller can't read compiles the shaders of its other libraries instead of
+  failing; the index's log names the library it skipped.
+- `scskiller index --out` writes a big game's index without running out of memory.
+
 ## [1.2.1] - 2026-10-04
 
 ### Added
