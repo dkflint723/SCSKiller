@@ -84,6 +84,20 @@ public partial class AppTests
         public void Report(string value) { lock (lines) lines.Add(value); }
     }
 
+    /// <summary>An encrypted Unreal game until a key is stored for it (<see cref="Unlock"/>), as UnrealReader, whose detect
+    /// stamp has the key file's: a key stored or lost re-detects the game.</summary>
+    sealed class Keyed : IEngineReader
+    {
+        readonly HashSet<string> unlocked = [];
+        public void Unlock(Game g) { lock (unlocked) unlocked.Add(g.Id); }
+        public void Lose(Game g) { lock (unlocked) unlocked.Remove(g.Id); }
+        bool Has(Game g) { lock (unlocked) return unlocked.Contains(g.Id); }
+        public EngineInfo? Detect(Game game) => Has(game) ? Unreal : EncryptedUnreal;
+        public string DetectStamp(Game game, EngineInfo? engine) => Has(game) ? "key" : "";
+        public ShaderIndex Index(Game game, EngineInfo e, IProgress<string>? log, CancellationToken ct) => new("content-1", ["PCD3D_SM6"], new Dictionary<string, ShaderInfo>(), []);
+        public void ReadShaders(Game game, EngineInfo e, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct) { }
+    }
+
     [Fact]
     public async Task A_key_file_import_unlocks_only_encrypted_games_and_never_logs_a_key()
     {
@@ -138,8 +152,15 @@ public partial class AppTests
     {
         var page = new KeyPage();
         var tried = new List<(string Game, string Key)>();
-        Func<Game, (string[], Func<string, bool>)?> check = g => ([g.Name], key => { lock (tried) tried.Add((g.Name, key)); return g.Name == "Other Game" && key == Hex(7); });
-        var k = Killer(new FakeReader(EncryptedUnreal));
+        var reader = new Keyed();
+        Func<Game, (string[], Func<string, bool>)?> check = g => ([g.Name], key =>
+        {
+            lock (tried) tried.Add((g.Name, key));
+            if (g.Name != "Other Game" || key != Hex(7)) return false;
+            reader.Unlock(g);
+            return true;
+        });
+        var k = Killer(reader);
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
         k.KeyCheck = check;
         Assert.False(k.Settings.LookUpKeysOnline);
@@ -157,7 +178,6 @@ public partial class AppTests
         var install = Path.Combine(_root, "Other");   // installed after the import
         Directory.CreateDirectory(install);
         var other = new Game("test:other", "Other Game", Store.Other, install, Path.Combine(install, "Other.exe"));
-        var reader = new FakeReader(EncryptedUnreal);
         var k2 = Killer(reader, games: [_game, other]);
         k2.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
         k2.KeyCheck = check;
@@ -177,6 +197,184 @@ public partial class AppTests
         await k2.KeyLookupPass;
         Assert.Equal(4, tried.Count);   // unchanged: not again
         Assert.Equal(0, page.Requests);   // the online lookup is off: nothing fetched
+    }
+
+    string GameDir(Game g) => new SCSKiller.Core.App.AppStore(Path.Combine(_root, "data")).GameDir(g.Id);
+
+    [Fact]
+    public async Task A_key_found_and_lost_is_looked_up_again_but_candidates_that_failed_are_not()
+    {
+        var page = new KeyPage();
+        var reader = new Keyed();
+        var k = Killer(reader);
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        var (tries, opens) = (0, true);
+        k.KeyCheck = g => ([g.Name], key =>
+        {
+            Interlocked.Increment(ref tries);
+            if (key != Hex(1) || !opens) return false;
+            reader.Unlock(g);
+            return true;
+        });
+        await k.ScanAsync(default);
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"Fake Game 0x{Hex(1)}");
+        Assert.Equal(1, (await k.ImportKeysAsync(file)).Unlocked);
+        var memo = Path.Combine(GameDir(_game), "aes.lookup");
+        Assert.False(File.Exists(memo));   // only candidates tried in vain are remembered
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(1, tries);   // unlocked: not looked up
+
+        reader.Lose(_game);   // the key file deleted
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal((2, 0), (tries, page.Requests));   // unlocked again from the imported keys, nothing fetched
+        Assert.False(k.Games.Single().Engine!.Encrypted);   // and re-evaluated
+
+        opens = false;   // the key stops opening the files, the same exe
+        reader.Lose(_game);
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(3, tries);   // tried again
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(3, tries);   // in vain: not again for the same exe and keys
+        Assert.True(File.Exists(memo));
+
+        // a memo from before only failures were remembered, with a key stored that doesn't open the files: tried again once
+        File.WriteAllText(memo, string.Join('\n', File.ReadAllText(memo).Split('\n').Take(2)));
+        var legacy = File.ReadAllText(memo);
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(3, tries);   // without a stored key it may be a failure's: kept
+        File.WriteAllText(Path.Combine(GameDir(_game), "aes.key"), "0x" + Hex(1));
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(4, tries);
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(4, tries);
+        Assert.StartsWith(legacy, File.ReadAllText(memo));
+    }
+
+    [Fact]
+    public async Task Unnamed_imported_keys_are_kept_and_unlock_a_game_installed_after_the_import()
+    {
+        var reader = new Keyed();
+        var tried = new List<(string Game, string Key)>();
+        Func<Game, (string[], Func<string, bool>)?> check = g => ([g.Name], key =>
+        {
+            lock (tried) tried.Add((g.Name, key));
+            if (g.Name != "Other Game" || key != Hex(5)) return false;
+            reader.Unlock(g);
+            return true;
+        });
+        var k = Killer(reader);
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), new KeyPage());
+        k.KeyCheck = check;
+        await k.ScanAsync(default);
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"0x{Hex(5)}\nFake Game 0x{Hex(6)}");
+        var r = await k.ImportKeysAsync(file);
+        Assert.Equal((1, 1, KeyImportOutcome.NoWorkingKey), (r.Named, r.Unnamed, r.Games.Single().Outcome));
+        Assert.Equal([("Fake Game", Hex(6)), ("Fake Game", Hex(5))], tried);
+        Assert.Equal([Hex(5)], k.KeyList.ImportedUnnamed());   // kept in keys\imported.json
+        Assert.Contains("\"unnamed\"", File.ReadAllText(Path.Combine(_root, "data", "keys", "imported.json")));
+
+        var install = Path.Combine(_root, "Other");   // installed after the import
+        Directory.CreateDirectory(install);
+        var other = new Game("test:other", "Other Game", Store.Other, install, Path.Combine(install, "Other.exe"));
+        var k2 = Killer(reader, games: [_game, other]);
+        k2.KeyList = new KeyCollection(Path.Combine(_root, "data"), new KeyPage());
+        k2.KeyCheck = check;
+        await k2.ScanAsync(default);
+        await k2.KeyLookupPass;
+        Assert.Equal([("Fake Game", Hex(6)), ("Fake Game", Hex(5)), ("Other Game", Hex(5))], tried);   // the unnamed key, after its named ones (none)
+        Assert.False(k2.Games.Single(s => s.Game.Id == other.Id).Engine!.Encrypted);
+    }
+
+    [Fact]
+    public async Task The_user_lookup_reports_its_stages_in_order()
+    {
+        var page = new KeyPage();
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k.KeyCheck = g => ([g.Name], _ => false);
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"Fake Game 0x{Hex(1)}");
+        k.KeyList.ImportFile(file);
+        await k.ScanAsync(default);
+        await k.KeyLookupPass;
+        var stages = new List<string>();
+        var r = await k.LookUpKeyAsync(_game.Id, stage: new Lines(stages));
+        Assert.Equal(KeyLookupOutcome.NoWorkingKey, r.Outcome);
+        Assert.Equal(["Trying your imported keys…", "Checking the community's key list…"], stages);
+        stages.Clear();
+        await k.LookUpKeyAsync(_game.Id, $"<div class=\"postbody\">Fake Game 0x{Hex(2)}</div>", new Lines(stages));
+        Assert.Equal(["Trying your imported keys…", "Checking the saved page…"], stages);
+    }
+
+    [Fact]
+    public async Task An_import_waits_for_the_key_lookup_of_a_scan()
+    {
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), new KeyPage());
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"Fake Game 0x{Hex(1)}");
+        k.KeyList.ImportFile(file);
+        using var go = new ManualResetEventSlim();
+        using var entered = new SemaphoreSlim(0);
+        var (inside, most) = (0, 0);
+        k.KeyCheck = g => ([g.Name], _ =>
+        {
+            var n = Interlocked.Increment(ref inside);
+            lock (entered) most = Math.Max(most, n);
+            entered.Release();
+            go.Wait();
+            Interlocked.Decrement(ref inside);
+            return false;
+        });
+        await k.ScanAsync(default);
+        Assert.True(await entered.WaitAsync(TimeSpan.FromSeconds(30)));   // the scan's pass is trying the imported key
+        File.WriteAllText(file, $"Fake Game 0x{Hex(2)}");
+        var progress = new List<string>();
+        var import = k.ImportKeysAsync(file, new Lines(progress));
+        await Task.Delay(300);
+        Assert.False(import.IsCompleted);
+        Assert.Equal(0, entered.CurrentCount);   // nothing tried by the import meanwhile
+        Assert.Equal(["Waiting for the key lookup that runs after a scan…"], progress);
+        go.Set();
+        var r = await import;
+        Assert.Equal(2, r.Games.Single().Tried);
+        Assert.Equal(1, most);
+        await k.KeyLookupPass;
+    }
+
+    [Fact]
+    public async Task An_import_says_when_its_keys_could_not_be_kept()
+    {
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), new KeyPage());
+        var tries = 0;
+        k.KeyCheck = g => ([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
+        await k.ScanAsync(default);
+        var file = Path.Combine(_root, "keys.txt");
+        File.WriteAllText(file, $"Fake Game 0x{Hex(1)}");
+        var saved = Path.Combine(_root, "data", "keys", "imported.json");
+        Directory.CreateDirectory(saved);   // can't be replaced
+        var r = await k.ImportKeysAsync(file);
+        Assert.Null(r.Problem);
+        Assert.Contains("saving", r.NotKept);
+        Assert.Equal((KeyImportOutcome.NoWorkingKey, 1), (r.Games.Single().Outcome, tries));   // the games are tried all the same
+
+        Directory.Delete(saved);
+        File.WriteAllText(saved, "not json");
+        r = await k.ImportKeysAsync(file);
+        Assert.Contains("can't be read", r.NotKept);
+        Assert.Equal("not json", File.ReadAllText(saved));
+        File.Delete(saved);
+        Assert.Null((await k.ImportKeysAsync(file)).NotKept);
     }
 
     [Fact]

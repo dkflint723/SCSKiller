@@ -337,7 +337,8 @@ public class KeyCollectionTests : IDisposable
         Assert.Equal((1 + 1, 1, (string?)null), (got!.Value.Named.Count, got.Value.Unnamed.Count, problem));
         File.WriteAllText(file, $"Zulu Game 0x{K(53)}");
         keys.ImportFile(file);
-        Assert.Equal([new("Zulu Game", K(53)), new("Zulu Game", K(50)), new("Wardogs", K(51))], keys.Imported());   // the latest import first; unnamed keys aren't kept
+        Assert.Equal([new("Zulu Game", K(53)), new("Zulu Game", K(50)), new("Wardogs", K(51))], keys.Imported());   // the latest import first
+        Assert.Equal([K(52)], keys.ImportedUnnamed());   // the unnamed keys too
 
         _clock.Now += TimeSpan.FromHours(25);
         Assert.Equal(9, (await keys.ListAsync(Url, false)).List!.Count);   // refetched: the list as the page has it
@@ -348,7 +349,7 @@ public class KeyCollectionTests : IDisposable
         var tried = new List<string>();
         var r = await keys.LookUpAsync(Url, ["Wardogs"], k => { tried.Add(k); return k == K(3); }, true);
         Assert.Equal((KeyLookupOutcome.Unlocked, "Wardogs"), (r.Outcome, r.Entry));
-        Assert.Equal([K(51), K(3)], tried);   // the imported entry first
+        Assert.Equal([K(51), K(52), K(3)], tried);   // the imported entry first, then the unnamed key
         Assert.Contains("listed for", r.Message);
         var zulu = await new KeyCollection(_dir, server, _clock).LookUpAsync(Url, ["Zulu Game"], k => k == K(50), true);
         Assert.Equal(KeyLookupOutcome.Unlocked, zulu.Outcome);
@@ -361,7 +362,34 @@ public class KeyCollectionTests : IDisposable
         var offline = await fresh.LookUpAsync(Url, ["Zulu Game"], k => k == K(50), true);
         Assert.Equal(KeyLookupOutcome.Unlocked, offline.Outcome);   // no list at all: the imported entries still
         Assert.Contains("from your imported keys", offline.Message);
-        Assert.Equal(KeyLookupOutcome.FetchFailed, (await fresh.LookUpAsync(Url, ["Hotel"], _ => true, true)).Outcome);
+        Assert.Equal(KeyLookupOutcome.FetchFailed, (await fresh.LookUpAsync(Url, ["Hotel"], k => k != K(52), true)).Outcome);   // the unnamed key, then no list
+    }
+
+    [Fact]
+    public void An_import_keeps_an_existing_files_entries_and_unnamed_keys_no_named_entry_has()
+    {
+        Directory.CreateDirectory(Path.Combine(_dir, "keys"));
+        var path = Path.Combine(_dir, "keys", "imported.json");
+        File.WriteAllText(path, $$"""{"entries":[{"name":"Alpha","key":"{{K(1).ToLowerInvariant()}}"},{"name":"Bravo","key":"{{K(2)}}"}]}""");   // from before unnamed keys were kept
+        var keys = new KeyCollection(_dir, new Server(() => Html(Page)), _clock);
+        var file = Path.Combine(_dir, "mine.txt");
+        File.WriteAllText(file, string.Join("\n", [$"Charlie 0x{K(3)}", $"0x{K(2)}", $"0x{K(4)}", .. Enumerable.Range(0, 600).Select(i => "0x" + Many(i))]));
+        Assert.Null(keys.ImportFile(file).Problem);
+        Assert.Equal([new("Charlie", K(3)), new("Alpha", K(1)), new("Bravo", K(2))], keys.Imported());
+        var unnamed = keys.ImportedUnnamed();
+        Assert.Equal((KeyCollection.MaxImportedUnnamed, K(4)), (unnamed.Count, unnamed[0]));
+        Assert.DoesNotContain(K(2), unnamed);   // Bravo's
+
+        File.WriteAllText(file, $"0x{K(5)}");
+        keys.ImportFile(file);
+        Assert.Equal([K(5), K(4)], keys.ImportedUnnamed().Take(2));   // the latest import first
+        Assert.Equal(3, keys.Imported().Count);
+
+        File.WriteAllText(path, "{ \"entries\": [ oops");
+        var (got, problem) = keys.ImportFile(file);
+        Assert.NotNull(got);
+        Assert.Contains("can't be read", problem);
+        Assert.Equal("{ \"entries\": [ oops", File.ReadAllText(path));   // never replaced: its keys would be lost
     }
 
     sealed class SyncLog(List<string> lines) : IProgress<string>

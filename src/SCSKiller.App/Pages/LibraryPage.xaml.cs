@@ -160,10 +160,12 @@ public sealed partial class LibraryPage : Page
         async Task LookUp(string? page)
         {
             (lookup.IsEnabled, saved.IsEnabled, ring.IsActive, ring.Visibility, status.Visibility) = (false, false, true, Visibility.Visible, Visibility.Visible);
-            status.Text = page == null ? "Checking the community's key list…" : "Checking the saved page…";
+            status.Text = page == null ? "Looking up the key…" : "Checking the saved page…";
+            var done = false;   // a stage reported late doesn't cover the result
             KeyLookup r;
-            try { r = await App.Core.LookUpKeyAsync(row.Id, page); }
+            try { r = await App.Core.LookUpKeyAsync(row.Id, page, new Progress<string>(m => { if (!done) status.Text = m; })); }
             catch (Exception ex) { r = new(KeyLookupOutcome.FetchFailed, $"The lookup failed: {ex.Message}"); }
+            done = true;
             var unlocked = r.Outcome == KeyLookupOutcome.Unlocked;
             (ring.IsActive, ring.Visibility, lookup.IsEnabled, saved.IsEnabled) = (false, Visibility.Collapsed, !unlocked, !unlocked);
             status.Text = unlocked ? r.Message + " The game is checked again now." : r.Message;

@@ -69,7 +69,8 @@ public sealed partial class SettingsPage : Page
         done = true;
         (ImportKeysButton.IsEnabled, ImportKeysRing.IsActive, ImportKeysRing.Visibility) = (true, false, Visibility.Collapsed);
         if (r.Problem != null) { ImportKeysStatus.Text = $"Nothing imported: {r.Problem}."; return; }
-        var summary = $"{r.Named:N0} named and {r.Unnamed:N0} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != KeyImportOutcome.Skipped)} encrypted games unlocked.";
+        var summary = $"{r.Named:N0} named and {r.Unnamed:N0} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != KeyImportOutcome.Skipped)} encrypted games unlocked." +
+            (r.NotKept != null ? $" They weren't kept for later scans: {r.NotKept}." : "");
         ImportKeysStatus.Text = summary;
         var rescan = r.Unlocked > 0 ? App.Core.RescanAsync(CancellationToken.None) : null;
         var list = new StackPanel { Spacing = 8, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap,

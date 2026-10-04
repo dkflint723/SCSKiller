@@ -474,6 +474,7 @@ async Task<int> ImportKeys()
     if (r.Problem != null) return Fail(r.Problem);
     foreach (var g in r.Games) Console.WriteLine($"{g.Name}: {g.Message}");
     Console.WriteLine($"{r.Named} named and {r.Unnamed} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != KeyImportOutcome.Skipped)} encrypted games unlocked");
+    if (r.NotKept != null) Console.Error.WriteLine($"the keys weren't kept for later scans: {r.NotKept}");
     if (r.Unlocked == 0) return 0;
     await k.RescanAsync(CancellationToken.None);
     foreach (var g in r.Games.Where(g => g.Outcome == KeyImportOutcome.Unlocked)) Console.WriteLine($"{g.Name}: {k.Games.First(s => s.Game.Id == g.GameId).StatusReason}");

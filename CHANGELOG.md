@@ -14,9 +14,12 @@ All notable changes to the SCSKiller app and command line. The format follows
   and "Load saved page…" read the page you save instead. On the command line: `scskiller key <game> --lookup`.
 - "Import keys…" in Settings tries a file of encryption keys you collected (lines of a game's name and its key, or a key
   alone; CSV, JSON or a saved page) on every encrypted Unreal game without a working key, keeps only keys that open a
-  game's files, and lists what each game got. The named keys are kept: every scan tries them on encrypted games (also
-  ones installed later), before and without the online list, and "Look up key online" tries them first. The file never
-  leaves your PC. On the command line: `scskiller key --import <file>`.
+  game's files, and lists what each game got. The keys are kept, named and unnamed: every scan tries them on encrypted
+  games (also ones installed later), before and without the online list, and "Look up key online" tries them first and
+  says so while it does. Keys that didn't work aren't tried again for the same game build until you import more; a
+  game whose key was found and later lost gets them tried again. An import waits for the scan's key lookup to finish,
+  and says when its keys couldn't be kept. The file never leaves your PC. On the command line:
+  `scskiller key --import <file>`.
 
 ### Changed
 

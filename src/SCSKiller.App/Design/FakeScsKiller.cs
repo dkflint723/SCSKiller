@@ -144,8 +144,9 @@ public sealed class FakeScsKiller : IScsKiller
     public bool QueueRunning => running;
     public bool Compiling => Queue.Any(Format.Running);
     public bool SetEncryptionKey(string gameId, string key) => false;
-    public async Task<Core.Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, CancellationToken ct = default)
+    public async Task<Core.Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, IProgress<string>? stage = null, CancellationToken ct = default)
     {
+        stage?.Report("Checking the community's key list…");
         await Task.Delay(1500, ct);
         return new(Core.Unreal.KeyLookupOutcome.NoWorkingKey, "None of the 2 keys listed for this game (Sample Game, Sample Game (demo)) opens its files.", Tried: 2);
     }

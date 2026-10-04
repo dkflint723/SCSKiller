@@ -103,14 +103,19 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
   - keys found for the game, kept locally only: `aes.key` (an Unreal pak key), `archive.keys` (FromSoftware archive
     keys, with the SHA-256 of the exe they came from), `pak.modulus` (RE Engine table key); `aes.scan`: why the exe's
     static key search found nothing, for that exe build; `aes.lookup`: the exe build and a hash of the key list's
-    candidates last tried for the game, and on a second line of the imported ones, so a scan's lookup doesn't try them
-    again (a new import does);
+    candidates last tried in vain for the game, and on a second line of the imported ones, so a scan's lookup doesn't try
+    them again (a new import does); deleted when a key is stored, so a key lost later (the file deleted, or it no longer
+    opens the files of the same exe) is looked up again. A third line, `failed`, marks a file written since only failures
+    are remembered: an older one is dropped when the game's stored key doesn't open its files. `aes.key` and `aes.lookup`
+    are replaced whole under their `.lock`;
   - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package.
 - `packs\<vendor>\<dll name>-<dll sha1>.pack`: middleware packs (see [Middleware packs](#middleware-packs)).
 - `keys\collection.json`: the community's Unreal key list as last fetched (names and keys, when it was fetched and the
   last try; see [Engine readers](#engine-readers)).
-- `keys\imported.json`: the named keys the user imported from files ("Import keys…", `key --import`), the latest import
-  first; apart from the fetched list so a refetch keeps them, and tried before it.
+- `keys\imported.json`: the keys the user imported from files ("Import keys…", `key --import`), the latest import first:
+  `entries` (name and key) and `unnamed` (a key alone on its line, none that an entry has, at most 500); apart from the
+  fetched list so a refetch keeps them, and tried before it. Replaced whole under its `.lock`; one that can't be read is
+  never replaced (the import says the keys weren't kept).
 - `community\`: the community database's manifest and downloaded recordings; `community\packs\<gpu vendor>\<vendor>\`
   the shared middleware packs downloaded for this PC's GPU vendor.
 - `recorders.log`: what recorder installs and removals did.
@@ -278,8 +283,9 @@ open game files read-only and never launch or attach to the game.
   matched to the game's names locally, and at most 20 candidates are tried), or imported from a file of keys the user
   collected (`KeyCollection.ImportFile`: text lines, CSV, JSON or a saved page, at most 16 MB; per encrypted game the
   entries matched to its names as a lookup matches them, then at most 50 unnamed keys). After every scan, a background
-  pass tries the imported keys on the encrypted games (always: no network) and, only if none works and the online lookup
-  is on, the list's other candidates; the Why? dialog's lookup goes in the same order. Every key is stored only if it
+  pass tries the imported keys on the encrypted games (always: no network; the same named entries and unnamed keys) and,
+  only if none works and the online lookup is on, the list's other candidates; the Why? dialog's lookup goes in the same
+  order and says which stage it is in. An import waits for that pass, and the next pass for it (`KeyLookupPass`). Every key is stored only if it
   opens one of the game's encrypted containers. A shipped pipeline cache (`*.stable.upipelinecache`, file versions
   22-28, `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact
   shader map, so the planner pairs those shaders as the game does (global and post-process passes that no signature

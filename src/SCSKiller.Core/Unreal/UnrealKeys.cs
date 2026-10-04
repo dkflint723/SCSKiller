@@ -17,6 +17,7 @@ public sealed class UnrealKeys(string dataDir)
 {
     string KeyFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.key");
     string ScanFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.scan");
+    string LookupFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.lookup");
     static string Stamp(string exe) => new FileInfo(exe) is { Exists: true } f ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
 
     /// <summary>A key that <paramref name="opens"/> the game's encrypted containers: the stored one, else a static scan of
@@ -43,7 +44,7 @@ public sealed class UnrealKeys(string dataDir)
         }
         why = $"{how} ({sw.Elapsed.TotalSeconds:F1} s)";
         Directory.CreateDirectory(Path.GetDirectoryName(KeyFile(game))!);
-        if (key != null) File.WriteAllText(KeyFile(game), key.KeyString);
+        if (key != null) Keep(game, key);
         else File.WriteAllLines(ScanFile(game), [stamp, why]);
         return key;
     }
@@ -58,10 +59,16 @@ public sealed class UnrealKeys(string dataDir)
     public bool Set(Game game, string key, Func<FAesKey, bool> opens)
     {
         if (Parse(key) is not { } k || !opens(k)) return false;
-        Directory.CreateDirectory(Path.GetDirectoryName(KeyFile(game))!);
-        File.WriteAllText(KeyFile(game), k.KeyString);
+        Keep(game, k);
         File.Delete(ScanFile(game));
         return true;
+    }
+
+    // replaced whole, under the lock the app and the command line share: a scan's lookup and an import may store one at once
+    void Keep(Game game, FAesKey key)
+    {
+        using (new AppStore.PathGate(KeyFile(game))) AppStore.WriteAtomic(KeyFile(game), System.Text.Encoding.ASCII.GetBytes(key.KeyString));
+        KeyCollection.Forget(LookupFile(game));   // only candidates tried in vain are remembered: once this key is lost, again
     }
 
     /// <summary>Why <see cref="Get"/> has no key for a game whose files stay encrypted, from what it recorded; the exe is only
