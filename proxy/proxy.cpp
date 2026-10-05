@@ -5,7 +5,8 @@
 // Config:  scskiller.ini [scskiller] mode=record|warm threads=N next=<a mod's d3d12.dll, renamed>  (next to the dll), or env
 //          SCSKILLER_MODE / SCSKILLER_THREADS (Steam launch options: SCSKILLER_MODE=warm %command%).
 //          max_db_bytes=N (ini only; missing = no limit): once scskiller.db has N bytes, no record is appended.
-//          frames=0 (ini only): no frame times.
+//          frames=0 / nvapi=0 (or env SCSKILLER_FRAMES / SCSKILLER_NVAPI): none of the frame-timing / NVAPI hooks
+//          (frame generation interposers, the app's frame-gen rule): no frame times / no 'N' records.
 // Output:  scskiller.db (append-only), scskiller.log, scskiller_creates.csv (t_ms,kind,known,tuple_known,ms,key,proxy_ms,tid,presents),
 //          scskiller_frames.bin (frame_hooks).
 // Input:   scskiller.keys (optional, record mode): what the app already imported, never recorded again, and the shaders
@@ -51,6 +52,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -127,6 +129,7 @@ static HANDLE g_csv_h;        // the csv's file handle, for that "#end"
 static long long g_session_unix;  // that line's stamp, also the frames file's launch stamp: the two name one launch
 static uint64_t g_db_bytes, g_db_cap;  // scskiller.db's size; max_db_bytes
 static bool g_db_capped, g_db_full;
+static bool g_frames_on = true, g_nvapi_on = true;  // frames= / nvapi=, read in DllMain: off installs none of those hooks
 
 static double now_ms() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - g_t0).count(); }
 static long long unix_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
@@ -2238,6 +2241,7 @@ static void* hk_nv_qi(uint32_t id) {  // which NVAPI functions the process uses,
 }
 
 static void nv_hooks() {
+    if (!g_nvapi_on) return;
     HMODULE m = LoadLibraryW(L"nvapi64.dll");  // NVIDIA only; the game may load it later, the same module then
     auto qi = m ? (void* (*)(uint32_t))GetProcAddress(m, "nvapi_QueryInterface") : nullptr;
     if (!qi) return;
@@ -2534,10 +2538,7 @@ static void frame_writer() {
 }
 
 static void frame_hooks() {
-    if (g_warm) return;
-    wchar_t on[8];  // not cfg(): a staged warm child may inherit SCSKILLER_* variables
-    GetPrivateProfileStringW(L"scskiller", L"frames", L"1", on, 8, (g_dir + L"scskiller.ini").c_str());
-    if (!wcscmp(on, L"0")) return logf("frames: off (scskiller.ini frames=0)");
+    if (g_warm || !g_frames_on) return;
     // the dxgi.dll the game uses: a mod's in the game folder, if one is loaded by that name
     HMODULE m = GetModuleHandleW(L"dxgi.dll");
     if (!m) m = LoadLibraryW(L"dxgi.dll");
@@ -2921,6 +2922,17 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     logf("loaded into %ls", p);
     if (!g_storage.empty()) logf("through REFramework's %ls: the game folder is %ls", g_storage.c_str(), g_dir.c_str());
     if (warm_asked && !g_warm) logf("mode warm ignored: this process isn't scskiller_warm, it records");
+    // Before any hook. The app writes both as 0 where a frame generation interposer (Streamline's DLSS-G, an FSR3 FG mod)
+    // wraps the swap chain and calls NVAPI: hooks there crashed NVIDIA's driver (FINAL FANTASY XVI, frame generation on).
+    std::string off;
+    for (auto [on, env, key, what] : {std::tuple{&g_frames_on, L"SCSKILLER_FRAMES", L"frames", "frame timing"}, {&g_nvapi_on, L"SCSKILLER_NVAPI", L"nvapi", "NVAPI"}})
+        if (!(*on = cfg(env, key, L"1") != L"0")) {
+            char b[96];
+            const bool from_env = GetEnvironmentVariableW(env, nullptr, 0) > 0;
+            snprintf(b, sizeof b, from_env ? "%s (%ls=0)" : "%s (scskiller.ini %ls=0)", what, from_env ? env : key);
+            off += (off.empty() ? "" : ", ") + std::string(b);
+        }
+    if (!off.empty()) logf("hooks off: %s; pipelines are still recorded", off.c_str());
     g_next = mod;
     if (mod) logf("next: %ls (the device and every export it has come from it)", next);
     else if (next_why) logf("next: %ls %s: the system d3d12.dll is used without it", next, next_why);

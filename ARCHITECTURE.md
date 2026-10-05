@@ -94,6 +94,8 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
     the last complete warm (sorted 20-byte record keys; named by a hash of their contents and never rewritten, so
     `state.json`, which names the current ones, always names what it was saved with);
   - `index.*`: the cached shader index; `index.shaders`: the build's shader SHA-1s, which uploads are checked against;
+    `index.rootsigs`: the root signatures its pipeline list names (`ShaderMap.RootSignature`), for the count of new
+    pipelines only;
   - `recording.db`: the game's recording, the only durable copy of what the recorder captured (see
     [Recorder](#recorder));
   - `community.db`: the community database's hash-only recording for the game's build, merged with `recording.db` in
@@ -534,7 +536,8 @@ After a build:
   Inputs (`WarmInputs`): every record of the recording, the community recording while one is in use, the plan, and for a
   D3D12 game the entries of its DLLs' packs this GPU runs (`Planner.SeedsPacks`, `MiddlewarePacks.Runs`), each with one
   bit: whether every blob it names directly is in the recordings, the plan, the build's shaders (index.shaders; unknown:
-  taken as there), the DLLs or the root signatures their packs seed. On NVIDIA a recorded ray tracing state object is one
+  taken as there) or the root signatures its pipeline list names (index.rootsigs, FINAL FANTASY XVI's), the DLLs or the
+  root signatures their packs seed. On NVIDIA a recorded ray tracing state object is one
   input per identity (`PsoDb.StateObjectIdentity`: its subobjects without an addition's base or a launch's `_LRS_` alias
   ending) and NVAPI state (the last 'N' of the recordings' union, as the warm replays it), keyed by the SHA-1 of the two:
   NVIDIA's key leaves export names out and holds the NVAPI state. The input carries its records' keys: a crash names
@@ -542,7 +545,13 @@ After a build:
   until the next warm. AMD caches a whole state object, so there each record is one. The warm's key file holds the same reading of what
   it compiles, taken as it starts and never again: the recordings as it prepares them (imports and community downloads wait meanwhile), and its
   plan. What counts is each input the key file lacks, or holds without a blob that is at hand now (losing one doesn't
-  count), less the pipelines that crash this driver. Of that, the plan's planner-made records (its key
+  count), less the pipelines that crash this driver, and less what the warm compiled under other keys
+  (`WarmInputs.Covered`): on a state-independent cache (NVIDIA) a recorded 'G' / 'C' / 'S' without stream output whose
+  root signature, shaders and NVAPI state are those of a plan pipeline the key file holds whole; the driver's record of
+  a game's create a layer changed ('W' naming both) while the last warm ran through the layer installed now
+  (`GameRecord.WarmedLayer`), which makes it again from the game's (a layer's own creates still count); and a plan
+  pipeline the key file holds with a blob missing whose blobs all come from the install (shaders and index.rootsigs:
+  key files from before index.rootsigs marked those). Of that, the plan's planner-made records (its key
   file) are, after a newer planner rebuilt the plan, "SCSKiller can now compile N more pipelines"; otherwise they add to
   "N new pipelines; compile again to include them" ("recorded" when all are); their sum is the new-shaders
   notification's count. The result is cached on every input (each by size, write time and a hash of its first and last
@@ -564,7 +573,11 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
 
 - **Where it's installed** (`ReconcileRecorders`, app only): in every compatible game when "Record in all compatible
   games" is on, unless the game's own switch says otherwise. Compatible means D3D12, supported, no anti-cheat of any
-  kind, no foreign `d3d12.dll` (unless chained, below), and a folder writable without elevation. A running game's
+  kind, no foreign `d3d12.dll` (unless chained, below), and a folder writable without elevation. "Record all" leaves out
+  a game whose files list every pipeline with its root signature on a state-independent cache
+  (`GameState.RecordingNotNeeded`: `EngineInfo.ShipsRootSignatures`, `VendorCaps.StateIndependentCache` and a Ready
+  check, FINAL FANTASY XVI on NVIDIA): a recording adds nothing to its plan, and a recorder it put there is taken out
+  (the game's switch On still records it; the game page says it isn't needed). A running game's
   folder is left alone until it exits: every write there (the proxy, the ini, the keys file, the inbox's rotation, a
   removal) checks first that the game isn't running (`GameFolderWrite`, the watcher and the uninstall hook the same
   way): no process named like an exe of its install root or exe folder, so also one a launcher started under another
@@ -640,6 +653,19 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   decides), as it ignores the recorder's own files; later launches overwrite it, which raises no event. Any other file
   created there disarms, as anywhere in the install. ReShade and its add-ons are the game folder's (their copies in
   `_storage_` are never loaded). The game shows REFramework as a note, never a skip.
+- **Hook switches** (`scskiller.ini` `frames=0` / `nvapi=0`, or `SCSKILLER_FRAMES=0` / `SCSKILLER_NVAPI=0`, read in
+  `DllMain` before any hook): `frames=0` installs none of the frame-timing hooks (no DXGI factory or swap chain vtable
+  patch, no frame log); `nvapi=0` none of the NVAPI ones (no inline patch of nvapi64.dll, so no `'N'` records). Both
+  are on by default, and the log's `hooks off:` line names what is off and where it was set. Pipelines, root signatures
+  and state objects are recorded either way; the game page then has the session's counts without frame times.
+  **Frame generation** (`Games.FrameGen`): where the exe's folder or the install root holds NVIDIA Streamline with
+  DLSS-G (`sl.interposer.dll` with `sl.dlss_g.dll`, or `nvngx_dlssg.dll`), the DLSS-G to FSR3 mod
+  (`dlssg_to_fsr3*.dll`) or OptiScaler set to generate frames (`OptiScaler.ini` `FGType` optifg, nukems or xefg, or
+  auto with its FG library there), `ScsKiller.IniText` writes both as 0 at every install and ini update (a reconcile,
+  an import), and the game page says the recorder records pipelines only. Those interposers wrap the swap chain and
+  call NVAPI themselves: with the hooks in, FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver
+  (`nvwgf2umx.dll`, a fail-fast) 4 s after launch, every time. Frame generation outside the game's folder (Lossless
+  Scaling, the driver's own) isn't seen.
 - **One recorder per process**: the first copy of the proxy to load claims the process (a named mutex with its pid, in
   `DllMain`, before any hook); any other copy forwards every export as the first does (the system dll, or `next=`'s)
   and hooks nothing, writes nothing. The recorder logs the other copies at its first device.
@@ -791,8 +817,8 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   the low 28 bits the microseconds since the previous record; top 4 bits 15 = no frame for the low 28 bits'
   milliseconds. The file holds the last launch that presented, replaced at its first frame (3 hours at 300 FPS is
   13 MB; a launch stops writing at 32 MB). It isn't part of the recording: not in the recording limit or the recording's
-  size, never shared; Clear recording and removing the recorder delete it with the csv. `frames=0` in `scskiller.ini` turns it off (diagnostics
-  only). The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the
+  size, never shared; Clear recording and removing the recorder delete it with the csv. `frames=0` in `scskiller.ini`
+  turns it off (see Recorder, "Hook switches": frame generation sets it). The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the
   same launch (the `#session` with the same stamp; from an older recorder, without `#clock`, the only one within 10 s, else none). A frame
   is **cold-filled** when its overlapping compiles of 100 ms or more (not a library load or a RayQuery PSO at the
   floor) sum to half its length or more: a compiled run's load creates stay under

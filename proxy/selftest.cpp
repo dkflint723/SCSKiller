@@ -3227,6 +3227,63 @@ static int anticheat_rows(const std::wstring& dir, const wchar_t* client) {
     return 0;
 }
 
+// `selftest hooks`: what the proxy patched, on WARP: a swap chain's Present / Present1 and the DXGI factory's
+// CreateSwapChainForHwnd (frames=), nvapi_QueryInterface's and NvAPI_D3D12_CreateGraphicsPipelineState's entry bytes
+// (nvapi=), each against the same taken before the proxy loaded, around a device, a swap chain, three presents and a
+// compute PSO through it. Prints "present_hooked <0|1>", "factory_hooked <0|1>", "nvapi_hooked <0|1|-1>" (-1: no
+// nvapi64.dll), "computes <n>" (records the proxy added) and "frames_file <0|1>".
+static int hooks_rows(const std::wstring& dir) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    auto chain = [&](ID3D12Device* dev, IDXGISwapChain1** sc) {
+        HWND wnd = CreateWindowExW(0, L"STATIC", L"scskiller hooks", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+        D3D12_COMMAND_QUEUE_DESC qd = {};
+        ID3D12CommandQueue* q = nullptr;
+        DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+        d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        return wnd && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) && SUCCEEDED(f->CreateSwapChainForHwnd(q, wnd, &d, nullptr, nullptr, sc));
+    };
+    HMODULE real = load_system(L"d3d12.dll");
+    auto real_create = real ? (decltype(&D3D12CreateDevice))GetProcAddress(real, "D3D12CreateDevice") : nullptr;
+    ID3D12Device* dev0 = nullptr;
+    IDXGISwapChain1* sc0 = nullptr;
+    CHECK(real_create && SUCCEEDED(real_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev0))) && chain(dev0, &sc0));
+    void **scvt = *(void***)sc0, **fvt = *(void***)f;
+    void *present = scvt[8], *present1 = scvt[22], *createsc = fvt[15];
+    HMODULE nv = LoadLibraryW(L"nvapi64.dll");
+    auto qi = nv ? (void* (*)(uint32_t))GetProcAddress(nv, "nvapi_QueryInterface") : nullptr;
+    void* gfx = qi ? qi(0x2FC28856) : nullptr;
+    uint64_t qi_at = 0, gfx_at = 0;
+    if (qi) memcpy(&qi_at, (void*)qi, 8);
+    if (gfx) memcpy(&gfx_at, gfx, 8);
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    CHECK(m);
+    auto create = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
+    auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+    auto stats = (void(WINAPI*)(uint64_t*))GetProcAddress(m, "SCSKiller_Stats");
+    ID3D12Device* dev = nullptr;
+    IDXGISwapChain1* sc = nullptr;
+    CHECK(create && ser && stats && SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && chain(dev, &sc));
+    for (int i = 0; i < 3; ++i) sc->Present(0, 0);
+    D3D12_ROOT_PARAMETER up = {D3D12_ROOT_PARAMETER_TYPE_UAV};
+    D3D12_ROOT_SIGNATURE_DESC rd = {1, &up};
+    ID3DBlob *rb = nullptr, *err = nullptr;
+    ID3D12RootSignature* rs = nullptr;
+    CHECK(SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))));
+    CHECK(SUCCEEDED(compute_pso(dev, rs, GetTickCount())));
+    Sleep(1500);  // the proxy writes the frames once a second
+    uint64_t st[7], qi_now = 0, gfx_now = 0;
+    stats(st);
+    if (qi) memcpy(&qi_now, (void*)qi, 8);
+    if (gfx) memcpy(&gfx_now, gfx, 8);
+    printf("present_hooked %d\nfactory_hooked %d\n", scvt[8] != present || scvt[22] != present1, fvt[15] != createsc);
+    printf("nvapi_hooked %d\ncomputes %llu\n", qi ? qi_now != qi_at || gfx_now != gfx_at : -1, st[1] - st[0]);
+    printf("frames_file %d\n", GetFileAttributesW((dir + L"scskiller_frames.bin").c_str()) != INVALID_FILE_ATTRIBUTES);
+    return 0;
+}
+
 // `selftest factoryrejected` (run unarmed): a device factory both through an SDK configuration the proxy got before its first
 // device (its CreateDeviceFactory hook) and straight from D3D12GetInterface, each after that first device was rejected.
 // Prints "config factory hooked <0|1>" (or "no config factory") and "factory hooked <0|1>": a rejected run hooks neither.
@@ -3430,6 +3487,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2 && !wcscmp(argv[1], L"frames")) return frames_rows(dir, _wtoi(argv[2]));
     if (argc > 1 && !wcscmp(argv[1], L"unload")) return unload_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesheld")) return frames_held(dir);
+    if (argc > 1 && !wcscmp(argv[1], L"hooks")) return hooks_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"factory")) return factory_rows(dir, argc > 2 ? argv[2] : nullptr);
     if (argc > 2 && !wcscmp(argv[1], L"anticheat")) return anticheat_rows(dir, argv[2]);
     if (argc > 2 && !wcscmp(argv[1], L"refw")) return refw_rows(dir, !wcscmp(argv[2], L"twice"));

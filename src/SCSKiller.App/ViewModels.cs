@@ -280,9 +280,11 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => "recorder on: play for about 5 minutes",
         _ => s.StatusReason,
     } + ModNote(s);
-    /// <summary>A shader mod that doesn't block the game: "; RenoDX changes this game's pipelines: ..."; REFramework beside the recorder.</summary>
+    /// <summary>A shader mod that doesn't block the game: "; RenoDX changes this game's pipelines: ..."; REFramework or frame
+    /// generation beside the recorder.</summary>
     internal static string ModNote(GameState s) => (s is { ShaderMod: not null, ShaderModBlocks: false } ? "; " + ScsKiller.ShaderModNote(s) : "")
-        + (s.ReFramework && s.RecorderEffective ? "; " + ScsKiller.ReFrameworkNote : "");
+        + (s.ReFramework && s.RecorderEffective ? "; " + ScsKiller.ReFrameworkNote : "")
+        + (s.FrameGen != null && s.RecorderEffective ? "; " + ScsKiller.FrameGenNote(s) : "");
     /// <summary>The row's note under the status: a few words (<see cref="Format.ShortNote"/>); null when the status says it all.</summary>
     public string? Note => Format.ShortNote(s);
     public string RowNote => Playing ? "Playing now" + (Note is { } n ? " · " + n : "") : Note ?? "";
@@ -944,13 +946,14 @@ public sealed class DetailVm(string id) : Bindable
     public bool CanToggleRecord => ShowOffline ? OfflinePending == null && !s.OfflineRunning
         : RecordPending == null && AlongsidePending == null && NoAntiCheat && s.RecorderSkip == null;
     public bool ShowUseDefault => RecordPending == null && s.RecorderOverride != RecorderOverride.Default && s.RecorderSkip == null;
-    public string UseDefaultText => $"Use default ({(App.Core.Settings.RecordAllGames ? "on" : "off")})";
+    public string UseDefaultText => $"Use default ({(App.Core.Settings.RecordAllGames && !s.RecordingNotNeeded ? "on" : "off")})";
     public string RecordNote => ShowOffline
         ? $"{Fmt.AntiCheatName(s.AntiCheat)} treats an extra d3d12.dll as tampering, so this game is compiled from its files only."
         : !NoAntiCheat
         ? $"Not available: {Fmt.AntiCheatName(s.AntiCheat)} treats an extra d3d12.dll as tampering, so this game is compiled from its files only."
         : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records."
         : s.RecorderSkip is { } skip ? $"Not available: {skip}."
+        : s.RecordingNotNeeded && !RecordOn ? ScsKiller.RecordingNotNeededNote
         : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time."
           + (s.RecorderNote is { } note ? $" ({Sentence(note)})" : "");
 
@@ -1282,8 +1285,8 @@ public sealed class SettingsVm : Bindable
             var skipped = games.Where(g => g.RecorderSkip is ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipForeignDll or ScsKiller.SkipModNotChainable
                     or ScsKiller.SkipVulkanMod or ScsKiller.SkipNeedsAdmin)
                 .GroupBy(g => g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
-            int n = games.Count(g => g.RecorderInstalled);
-            return $"Recording in {n} game{(n == 1 ? "" : "s")}" + string.Concat(skipped);
+            int n = games.Count(g => g.RecorderInstalled), unneeded = games.Count(g => g.RecordingNotNeeded && !g.RecorderEffective);
+            return $"Recording in {n} game{(n == 1 ? "" : "s")}" + string.Concat(skipped) + (unneeded > 0 ? $" · {unneeded} not needed" : "");
         }
     }
 

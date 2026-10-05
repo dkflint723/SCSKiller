@@ -264,20 +264,38 @@ public sealed class Sharing
     /// shader's SHA-1. What an upload flags against (<see cref="HashOnly.LocalOnly"/>).</summary>
     public const string ShippedFile = "index.shaders";
 
+    /// <summary>The same for the root signatures the build's pipeline list names (<see cref="ShaderMap.RootSignature"/>,
+    /// served by its reader like a shader): a warm finds them in the install, so the count of new pipelines doesn't take a
+    /// plan pipeline created with one for a pipeline whose blob is missing. Kept apart from <see cref="ShippedFile"/>: the
+    /// recorder and an upload still carry a root signature's bytes. None written when the index names none.</summary>
+    public const string ShippedRootSignaturesFile = "index.rootsigs";
+
     public static void SaveShipped(string gameDir, ShaderIndex index)
     {
         if (index.ContentHash.Length != 40) return;   // not a build Share uploads for
         Directory.CreateDirectory(gameDir);
-        var tmp = Path.Combine(gameDir, ShippedFile + ".tmp");
-        using (var f = new BufferedStream(File.Create(tmp), 1 << 20))
-            foreach (var h in index.Shaders.Keys.Prepend(index.ContentHash)) f.Write(Convert.FromHexString(h));
-        File.Move(tmp, Path.Combine(gameDir, ShippedFile), true);
+        Save(ShippedFile, index.Shaders.Keys);
+        var rs = index.Maps.Select(m => m.RootSignature).OfType<string>().Distinct().ToList();
+        if (rs.Count > 0) Save(ShippedRootSignaturesFile, rs);
+        else File.Delete(Path.Combine(gameDir, ShippedRootSignaturesFile));
+
+        void Save(string name, IEnumerable<string> hashes)
+        {
+            var tmp = Path.Combine(gameDir, name + ".tmp");
+            using (var f = new BufferedStream(File.Create(tmp), 1 << 20))
+                foreach (var h in hashes.Prepend(index.ContentHash)) f.Write(Convert.FromHexString(h));
+            File.Move(tmp, Path.Combine(gameDir, name), true);
+        }
     }
 
     /// <summary>The shaders of <see cref="ShippedFile"/>, null when it's missing or for another build.</summary>
-    internal static HashSet<string>? Shipped(string gameDir, string contentHash)
+    internal static HashSet<string>? Shipped(string gameDir, string contentHash) => Hashes(Path.Combine(gameDir, ShippedFile), contentHash);
+
+    /// <summary>The root signatures of <see cref="ShippedRootSignaturesFile"/>, null when it's missing or for another build.</summary>
+    internal static HashSet<string>? ShippedRootSignatures(string gameDir, string contentHash) => Hashes(Path.Combine(gameDir, ShippedRootSignaturesFile), contentHash);
+
+    static HashSet<string>? Hashes(string path, string contentHash)
     {
-        var path = Path.Combine(gameDir, ShippedFile);
         var b = File.Exists(path) ? File.ReadAllBytes(path) : [];
         if (b.Length < 20 || b.Length % 20 != 0 || Convert.ToHexStringLower(b.AsSpan(0, 20)) != contentHash) return null;
         return [.. b.Chunk(20).Skip(1).Select(Convert.ToHexStringLower)];

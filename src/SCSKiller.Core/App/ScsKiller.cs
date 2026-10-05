@@ -589,7 +589,9 @@ public sealed partial class ScsKiller : IScsKiller
                 RecordedSinceWarm = pending.Recorded, CommunityDbPsos = entry?.Psos ?? 0, PsoPerSecond = rec.PsoPerSecond,
                 LastFrames = frames, ShaderMod = shaderMod?.Mod, ShaderModBlocks = reshade?.Blocks == true, ShaderModLayer = reshade?.Layered == true,
                 ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RecorderUnused = recorderUnused, RootUnconfirmed = unconfirmed,
-                ReFramework = antiCheat == AntiCheat.None && ReFramework.Detect(exeDir) },
+                ReFramework = antiCheat == AntiCheat.None && ReFramework.Detect(exeDir),
+                FrameGen = antiCheat == AntiCheat.None ? FrameGen.Detect(exeDir, g.InstallDir) : null,
+                RecordingNotNeeded = RecordingNotNeeded(engine, check, Vendor.Caps) && !NeedsRtRecording(rec.Plan?.Stats) },
             rec, ours, exeDir);
     }
 
@@ -598,7 +600,7 @@ public sealed partial class ScsKiller : IScsKiller
         var skip = RecorderSkip(s, ModSkip(exeDir, rec, ours)) ?? _recorderSkips.GetValueOrDefault(s.Game.Id);
         var o = rec.Recorder ?? (ours ? RecorderOverride.On : RecorderOverride.Default);
         var db = Length(Path.Combine(exeDir, "scskiller.db"));
-        return s with { RecorderOverride = o, RecorderSkip = skip, RecorderEffective = RecorderEffective(o, Settings.RecordAllGames, skip),
+        return s with { RecorderOverride = o, RecorderSkip = skip, RecorderEffective = RecorderEffective(o, Settings.RecordAllGames, skip, s.RecordingNotNeeded),
             RecorderNote = _recorderNotes.GetValueOrDefault(s.Game.Id), RecorderMod = ModName(exeDir, rec, ours),
             RecordAlongsideMod = rec.RecordAlongsideMod,
             RecordingBytes = RecordingFiles(s.Game).Where(f => Path.GetFileName(f) != FrameLog.FileName).Sum(Length),
@@ -1740,7 +1742,8 @@ public sealed partial class ScsKiller : IScsKiller
         var packs = _planner is Planner p && SeedsPacks(g) ? new[] { p.Packs, p.SharedPacks }.OfType<MiddlewarePacks>().ToList() : [];
         var packFiles = packs.SelectMany(x => dlls.Where(d => Directory.Exists(Path.Combine(x.Dir, d.Vendor)))
             .Select(d => Middleware.TryScan(d.Path) is { } i ? x.PathOf(d.Vendor, d.Name, i.ContentHash) : null));
-        string?[] inputs = [RecordingPath(g.Id), community, r.Plan?.FilePath, Path.Combine(dir, Sharing.ShippedFile), .. dlls.Select(d => d.Path), .. packFiles];
+        string?[] inputs = [RecordingPath(g.Id), community, r.Plan?.FilePath, Path.Combine(dir, Sharing.ShippedFile), Path.Combine(dir, Sharing.ShippedRootSignaturesFile),
+            .. dlls.Select(d => d.Path), .. packFiles];
         return KeyFiles.Derived(dir, inputs, $"{IndexIsInstalled(g, r)}|{r.IndexContentHash}|{OnAmd}|{Vendor.Vendor}", () =>
             WarmInputs.Of(RecordedNow(g, r), r.Plan?.FilePath, SeedsNow(g).SelectMany(s => s.Entries), Elsewhere(g, r)));
     }
@@ -1752,14 +1755,15 @@ public sealed partial class ScsKiller : IScsKiller
             : [];
 
     /// <summary>The blobs on disk a warm of this game finds outside its recordings and plan, for the count and the warm's
-    /// snapshot alike: the build's shaders (index.shaders; unknown: taken as there), the DLLs next to its exe and the root
-    /// signatures of what their packs seed.</summary>
+    /// snapshot alike: the build's shaders (index.shaders; unknown: taken as there) and the root signatures its pipeline
+    /// list names (index.rootsigs), the DLLs next to its exe and the root signatures of what their packs seed.</summary>
     Func<string, bool> Elsewhere(Game g, GameRecord r)
     {
         var shipped = Shipped(g, r);
+        var shippedRs = shipped != null && r.IndexContentHash is { } hash ? Sharing.ShippedRootSignatures(Store.GameDir(g.Id), hash) : null;
         var images = Middleware.Detect(g).Where(d => d.Packable).Select(d => Middleware.TryScan(d.Path)).OfType<MiddlewareImage>().ToList();
         var roots = SeedsNow(g).SelectMany(s => s.RootSignatures).ToHashSet();
-        return h => shipped?.Contains(h) != false || roots.Contains(h) || images.Any(i => i.Containers.ContainsKey(h));
+        return h => shipped?.Contains(h) != false || shippedRs?.Contains(h) == true || roots.Contains(h) || images.Any(i => i.Containers.ContainsKey(h));
     }
 
     /// <summary>The recordings' part of <see cref="InputsNow"/>, read now.</summary>
@@ -1794,7 +1798,31 @@ public sealed partial class ScsKiller : IScsKiller
         var made = r.PlanKeysFile is { } pf ? KeyFiles.Set(Path.Combine(dir, pf)) : null;
         var crash = CrashInputs(CrashKeysNow(r), r.Plan?.FilePath);
         var fresh = InputsNow(g, r).Where(i => !crash.Contains(WarmInputs.Key(i)) && !WarmInputs.Records(i).Any(crash.Contains) && (warmed == null || !WarmInputs.Taken(warmed, i))).Select(WarmInputs.Key).ToList();
+        if (fresh.Count > 0 && warmed != null && r.WarmKeysFile is { } wk)
+        {
+            var covered = CoveredNow(g, r, Path.Combine(dir, wk), warmed);
+            fresh.RemoveAll(covered.Contains);
+        }
         return new(fresh.Count(k => made?.Contains(k) != true), made == null ? null : fresh.Count(made.Contains), warmed == null);
+    }
+
+    /// <summary>The inputs the last complete warm compiled under other keys (<see cref="WarmInputs.Covered"/>): on a
+    /// state-independent cache, the recordings' records of a plan pipeline it took; through the layer it ran through, if
+    /// that's the one installed now, what the layer made of the game's creates; a plan pipeline it took with a root
+    /// signature counted missing that the install's pipeline list names (index.rootsigs). Cached on all of those files.</summary>
+    HashSet<string> CoveredNow(Game g, GameRecord r, string warmKeys, IReadOnlySet<string> warmed)
+    {
+        var dir = Store.GameDir(g.Id);
+        var community = CommunityInUse(g.Id) != null ? Path.Combine(dir, "community.db") : null;
+        var (stateIndependent, sameLayer) = (Vendor.Caps.StateIndependentCache, r.WarmedLayer != null && r.WarmedLayer == LayerNow(g));
+        var shipped = Shipped(g, r);
+        var shippedRs = shipped != null && r.IndexContentHash is { } hash ? Sharing.ShippedRootSignatures(dir, hash) : null;
+        Func<string, bool>? installed = shippedRs == null ? null : h => shipped!.Contains(h) || shippedRs.Contains(h);
+        if (!stateIndependent && !sameLayer && installed == null) return [];
+        string?[] recordings = [RecordingPath(g.Id), community];
+        string?[] inputs = [.. recordings, r.Plan?.FilePath, warmKeys, Path.Combine(dir, Sharing.ShippedFile), Path.Combine(dir, Sharing.ShippedRootSignaturesFile)];
+        return KeyFiles.Derived(dir + "|covered", inputs, $"{stateIndependent}|{sameLayer}|{installed != null}", () =>
+            WarmInputs.Covered([.. recordings.OfType<string>()], r.Plan?.FilePath, warmed, stateIndependent, sameLayer, installed));
     }
 
     /// <summary>The plan's records the planner made: neither a pack entry nor in the recording prepared for it in <paramref name="work"/>.</summary>
@@ -2245,8 +2273,21 @@ public sealed partial class ScsKiller : IScsKiller
         }
     }
 
-    public static bool RecorderEffective(RecorderOverride o, bool recordAllGames, string? skip) =>
-        skip == null && (o == RecorderOverride.On || (o == RecorderOverride.Default && recordAllGames));
+    /// <summary><paramref name="notNeeded"/>: <see cref="GameState.RecordingNotNeeded"/>, which "record all" leaves out; the
+    /// game's own switch still records it.</summary>
+    public static bool RecorderEffective(RecorderOverride o, bool recordAllGames, string? skip, bool notNeeded = false) =>
+        skip == null && (o == RecorderOverride.On || (o == RecorderOverride.Default && recordAllGames && !notNeeded));
+
+    /// <summary>The game's files name every pipeline with its root signature (<see cref="EngineInfo.ShipsRootSignatures"/>)
+    /// and this GPU's cache ignores the state they don't give (<see cref="VendorCaps.StateIndependentCache"/>): the plan
+    /// compiles them all without a recording (FINAL FANTASY XVI on NVIDIA), and a recorder would only add a d3d12.dll.</summary>
+    public static bool RecordingNotNeeded(EngineInfo? e, PlanCheck check, VendorCaps caps) =>
+        e is { ShipsRootSignatures: true } && caps.StateIndependentCache && check.Readiness == Readiness.Ready;
+
+    public const string RecordingNotNeededNote = "Not needed: the game's files list every pipeline it creates, and this GPU compiles all of them without a recording. \"Record in all compatible games\" leaves it out; turn it on here to record it anyway.";
+
+    /// <summary>The game page's note for <see cref="GameState.FrameGen"/> while the recorder is on.</summary>
+    public static string FrameGenNote(GameState s) => $"frame generation ({s.FrameGen}) is present: the recorder records pipelines only, no frame times";
 
     readonly object _recorderLock = new();
     // game id -> SkipNeedsAdmin (the last write was refused); game id -> the last reconcile's pending or failed change
@@ -2535,7 +2576,7 @@ public sealed partial class ScsKiller : IScsKiller
             }
             clean = true;
         }
-        bool want = RecorderEffective(rec.Recorder.Value, Settings.RecordAllGames, RecorderSkip(s, ModSkip(dir, rec, ours)));
+        bool want = RecorderEffective(rec.Recorder.Value, Settings.RecordAllGames, RecorderSkip(s, ModSkip(dir, rec, ours)), s.RecordingNotNeeded);
         // another SCSKiller build's proxy, never a newer one's (a release's under a dev build, all 0.0.0.0)
         bool update = want && ours && ProxySha() is { } sha && Sha256(dll) != sha && FileVersion(dll) <= FileVersion(_proxyDll!);
         string? note = null;
@@ -2944,7 +2985,9 @@ public sealed partial class ScsKiller : IScsKiller
         return RecorderIni
             + (DbCap(g) is { } cap
                 ? $"; the recording limit per game (Settings): no new records once scskiller.db has this many bytes\r\nmax_db_bytes={cap}\r\n" : "")
-            + (next == null ? "" : $"; the game's own d3d12.dll (a mod), renamed by SCSKiller and put back when the recorder is removed\r\nnext={next}\r\n");
+            + (next == null ? "" : $"; the game's own d3d12.dll (a mod), renamed by SCSKiller and put back when the recorder is removed\r\nnext={next}\r\n")
+            + (FrameGen.Detect(dir, g.InstallDir) is { } fg
+                ? $"; {fg} wraps the swap chain and calls NVAPI: no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n" : "");
     }
 
     /// <summary>Rewrites SCSKiller's own scskiller.ini when its limit line is out of date (the setting changed, an import

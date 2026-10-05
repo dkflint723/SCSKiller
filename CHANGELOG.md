@@ -29,11 +29,24 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ### Changed
 
+- Games with frame generation in their folder (NVIDIA DLSS Frame Generation through Streamline, the DLSS-G to FSR3 mod,
+  OptiScaler's frame generation) are recorded without the recorder's frame timing and NVAPI hooks: the recorder
+  records their pipelines, and the game page says it shows no frame times there. Each switch is also in the recorder's
+  `scskiller.ini` (`frames=0`, `nvapi=0`).
+- "Record in all compatible games" leaves out games SCSKiller compiles completely from their files without a recording
+  (FINAL FANTASY XVI on NVIDIA), and takes out a recorder it put there. The game's own switch still records one; the
+  game page says it isn't needed.
 - A compile that fails with an error names the stage it failed in (indexing, planning, materializing or warming) and
   keeps the whole error in `compile-error.log` in the game's data folder, for a bug report.
 
 ### Fixed
 
+- FINAL FANTASY XVI with DLSS Frame Generation on crashed a few seconds after launch with the recorder installed: the
+  recorder is now taken out of it on NVIDIA (it isn't needed there), and where it's kept it installs none of the hooks
+  that were in at the crash.
+- A recording of FINAL FANTASY XVI no longer makes every pipeline of its plan count as new after a compile; pipelines
+  a compile already covered (the same shaders and root signature under other state on NVIDIA, what an HDR mod's layer
+  makes of them while compiles run through the same layer) don't count either.
 - An Unreal game with one shader library SCSKiller can't read compiles the shaders of its other libraries instead of
   failing; the index's log names the library it skipped.
 - `scskiller index --out` writes a big game's index without running out of memory.

@@ -83,6 +83,57 @@ public static class WarmInputs
 
     public static string Key(string input) => input[..40];
 
+    /// <summary>The recordings' records a warm compiled though <paramref name="baseline"/> doesn't hold their keys. With
+    /// <paramref name="stateIndependent"/> (NVIDIA: fixed-function state and input layouts don't change what compiles), a
+    /// 'G' / 'C' / 'S' whose root signature, shaders and NVAPI state are a plan pipeline's the baseline took with its blobs
+    /// at hand. With <paramref name="sameLayer"/> (the warm ran through the layer installed now), the driver's record of a
+    /// game's create the layer changed ('W' naming both): replaying the game's through the layer makes it again. A layer's
+    /// own creates ('W' naming no game create) aren't: bind-time clones come only from a recording under it. With
+    /// <paramref name="installed"/> (the build's shaders and the root signatures its pipeline list names), a plan pipeline
+    /// the baseline took with a blob missing whose blobs all come from the install: the warm read them there, and the
+    /// baseline marked it only because its list of what the install gives back didn't name root signatures yet.</summary>
+    public static HashSet<string> Covered(IReadOnlyList<string> recordings, string? planFile, IReadOnlySet<string> baseline, bool stateIndependent, bool sameLayer,
+        Func<string, bool>? installed = null)
+    {
+        var covered = new HashSet<string>();
+        var nv = new Dictionary<string, string>();   // the replay's: the last 'N' per record in the recordings' union
+        foreach (var r in recordings.Where(File.Exists).SelectMany(PsoDb.Read))
+            if (r.Tag == 'N' && r.Payload.Length == NvState.Size) { var n = NvState.Parse(r); nv[n.Target] = Nv(n); }
+            else if (sameLayer && r.Tag == 'W' && r.Payload.Length == 40 && Hex(r.Payload.AsSpan(20)) != Zero) covered.Add(Hex(r.Payload.AsSpan(0, 20)));
+        if (!stateIndependent && installed == null) return covered;
+        var body = Planner.PlanBody(planFile);
+        var planNv = new Dictionary<string, string>();
+        foreach (var r in body.Where(r => r.Tag == 'N' && r.Payload.Length == NvState.Size)) { var n = NvState.Parse(r); planNv[n.Target] = Nv(n); }
+        var taken = new HashSet<string>();
+        foreach (var (key, r) in Planner.PlanInputs(body))
+        {
+            var whole = baseline.Contains(key);
+            if (!whole && installed != null && r.Tag is 'G' or 'C' or 'S' or 'P' && baseline.Contains(Token(key + "!")) && Missing(r, installed).Count == 0)
+                whole = covered.Add(key);
+            if (whole && stateIndependent && TupleOf(r) is { } t) taken.Add(t + "|" + planNv.GetValueOrDefault(r.Key, "none"));
+        }
+        if (taken.Count == 0) return covered;
+        foreach (var r in recordings.Where(File.Exists).SelectMany(PsoDb.Read))
+            if (r.Tag is 'G' or 'C' or 'S' && !baseline.Contains(r.Key) && TupleOf(r) is { } t && taken.Contains(t + "|" + nv.GetValueOrDefault(r.Key, "none"))) covered.Add(r.Key);
+        return covered;
+
+        static string Nv(NvState n) => $"{n.Slot},{n.Space},{n.Options}";
+    }
+
+    static string? TupleOf(Rec r)
+    {
+        try
+        {
+            return r.Tag switch
+            {
+                'G' or 'C' or 'S' => StreamOutputOf(r) == null ? Parse(r).Tuple : null,   // stream output changes the compile
+                'P' => ParseItem(r.Payload) is var (_, rs, st) ? Tuple(rs, st) : null,
+                _ => null,
+            };
+        }
+        catch (Exception e) when (e is InvalidDataException or ArgumentException or KeyNotFoundException or IndexOutOfRangeException) { return null; }   // a record from a newer proxy
+    }
+
     /// <summary>The keys of the records an input stands for: a state object identity's records, else its own key.</summary>
     public static IEnumerable<string> Records(string input) => input.Contains('|') ? input.Split('|').Skip(1) : [Key(input)];
 
