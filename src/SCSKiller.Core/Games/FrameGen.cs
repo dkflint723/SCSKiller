@@ -4,8 +4,9 @@ namespace SCSKiller.Core.Games;
 
 /// <summary>Frame generation that wraps the game's swap chain and calls NVAPI, found by its files in the exe's folder or the
 /// install root (top level only): NVIDIA Streamline with DLSS-G, Nukem's DLSS-G to FSR3 mod, OptiScaler's frame generation.
-/// The recorder installs neither its frame-timing nor its NVAPI hooks there (scskiller.ini frames=0, nvapi=0): with them,
-/// FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver 4 s in. Frame generation the game doesn't ship (Lossless
+/// The files ship whether it's on or not, so they take no recorder hook off by themselves (the crash guard does); only
+/// where the recorder isn't needed does it start at pipelines only (ScsKiller.StartLevel): with the frame-timing and NVAPI
+/// hooks, FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver 4 s in. Frame generation the game doesn't ship (Lossless
 /// Scaling, the driver's Smooth Motion) runs outside its folder and isn't seen.</summary>
 public static class FrameGen
 {

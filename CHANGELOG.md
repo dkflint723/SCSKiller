@@ -29,14 +29,15 @@ All notable changes to the SCSKiller app and command line. The format follows
 - The recorder steps back by itself in a game that closes within 45 seconds of starting with it (no clean exit): the
   first time it records pipelines only (no frame timing or NVAPI hooks), the second time it's taken out of that game.
   The game page and the log say what happened; "Try again" on the game page, or the game's next update, puts it back
-  in full.
+  where it started.
 
 ### Changed
 
-- Games with frame generation in their folder (NVIDIA DLSS Frame Generation through Streamline, the DLSS-G to FSR3 mod,
-  OptiScaler's frame generation) are recorded without the recorder's frame timing and NVAPI hooks: the recorder
-  records their pipelines, and the game page says it shows no frame times there. Each switch is also in the recorder's
-  `scskiller.ini` (`frames=0`, `nvapi=0`).
+- The game page notes frame generation in a game's folder (NVIDIA DLSS Frame Generation through Streamline, the DLSS-G
+  to FSR3 mod, OptiScaler's frame generation): the recorder keeps its frame timing, and if the game closes early with
+  it, it switches to pipelines only. A game that doesn't need the recorder (FINAL FANTASY XVI on NVIDIA) records
+  pipelines only from the start when you turn it on there. The recorder's frame timing and NVAPI hooks can each be
+  turned off in its `scskiller.ini` (`frames=0`, `nvapi=0`).
 - "Record in all compatible games" leaves out games SCSKiller compiles completely from their files without a recording
   (FINAL FANTASY XVI on NVIDIA), and takes out a recorder it put there. The game's own switch still records one; the
   game page says it isn't needed.
@@ -46,7 +47,7 @@ All notable changes to the SCSKiller app and command line. The format follows
 ### Fixed
 
 - FINAL FANTASY XVI with DLSS Frame Generation on crashed a few seconds after launch with the recorder installed: the
-  recorder is now taken out of it on NVIDIA (it isn't needed there), and where it's kept it installs none of the hooks
+  recorder is now taken out of it on NVIDIA (it isn't needed there), and turned on there it installs none of the hooks
   that were in at the crash.
 - A recording of FINAL FANTASY XVI no longer makes every pipeline of its plan count as new after a compile; pipelines
   a compile already covered (the same shaders and root signature under other state on NVIDIA, what an HDR mod's layer

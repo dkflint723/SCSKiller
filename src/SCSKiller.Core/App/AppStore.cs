@@ -90,7 +90,7 @@ public sealed class GameRecord
     public bool RecordedLong { get; set; }                   // a recorded launch of ScsKiller.EnoughRecording or more since the recording was last cleared
     public bool RtUnseen { get; set; }                       // a recorded launch of ScsKiller.EnoughRecording built no ray tracing state object, and none since did
     // The crash guard (RecorderHealth): a recorded launch that closed early steps the recorder down, Full -> Minimal -> Off
-    public RecorderLevel? RecorderLevel { get; set; }        // null = Full
+    public RecorderLevel? RecorderLevel { get; set; }        // null = its start (ScsKiller.StartLevel): Full, or Minimal beside frame generation where it isn't needed
     public string? RecorderLevelReason { get; set; }         // the game page's note for the step down
     public DateTimeOffset? RecorderLevelAt { get; set; }     // when the current level began (a step down or a reset): only later launches are judged
     public string? RecorderLevelBuild { get; set; }          // the build it stepped down on (Game.Version, else the exe's size and write time): another one resets it

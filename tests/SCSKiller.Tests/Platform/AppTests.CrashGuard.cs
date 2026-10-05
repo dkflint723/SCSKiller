@@ -68,9 +68,9 @@ public partial class AppTests
         for (int i = 0; i < ScsKiller.ExitPolls; i++) poll(3);
     }
 
-    (ScsKiller K, HashSet<string> Running, Action<int> Poll, Func<DateTimeOffset> Now) Guarded()
+    (ScsKiller K, HashSet<string> Running, Action<int> Poll, Func<DateTimeOffset> Now) Guarded(IEngineReader? reader = null)
     {
-        var k = Managed();
+        var k = Managed(reader);
         var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var clock = DateTimeOffset.FromUnixTimeMilliseconds(T0);
         (k.RunningGameExes, k.Clock) = (() => running.ToHashSet(StringComparer.OrdinalIgnoreCase), () => clock);
@@ -132,6 +132,28 @@ public partial class AppTests
         Assert.Equal((RecorderLevel.Full, (string?)null, (string?)null, true), (s.RecorderLevel, s.RecorderLevelReason, s.RecorderSkip, s.RecorderInstalled));
         Assert.True(ScsKiller.IsOurProxy(dll));
         Assert.DoesNotContain("frames=0", File.ReadAllText(ini));
+    }
+
+    /// <summary>Frame generation's files (shipped, on or not) start the recorder in full like any game; an early failure
+    /// steps it down as anywhere, with the frame hooks' evidence counted.</summary>
+    [Fact]
+    public async Task Beside_frame_generation_the_recorder_starts_in_full_and_steps_down_on_an_early_failure()
+    {
+        using var _ = new FreshLedger(_root);
+        var (k, running, poll, now) = Guarded();
+        foreach (var f in new[] { "sl.interposer.dll", "sl.dlss_g.dll" }) File.WriteAllBytes(Path.Combine(_exeDir, f), Planning.MiddlewarePackTests.Pe(f));
+        await k.ScanAsync(default);
+        var (ini, exe) = (Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
+        var s = k.Games.Single();
+        Assert.Equal(("Streamline DLSS-G", RecorderLevel.Full, true), (s.FrameGen, s.RecorderLevel, s.RecorderInstalled));
+        Assert.DoesNotContain("frames=0", File.ReadAllText(ini));
+
+        Play(running, now, poll, _exeDir, exe, 4);
+        s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Minimal, true, true), (s.RecorderLevel, s.RecorderSteppedDown, s.RecorderInstalled));
+        Assert.Equal("frame generation (Streamline DLSS-G) is present: the recorder records pipelines only, no frame times", ScsKiller.FrameGenNote(s));
+        Assert.Contains("\r\nframes=0\r\n", File.ReadAllText(ini));
+        Assert.Contains("SCSKiller's crash guard", File.ReadAllText(ini));
     }
 
     [Fact]

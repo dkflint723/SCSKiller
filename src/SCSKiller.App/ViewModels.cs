@@ -954,15 +954,15 @@ public sealed class DetailVm(string id) : Bindable
         : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records."
         : s.RecorderSkip == ScsKiller.SkipCrashed && s.RecorderLevelReason is { } crashed ? $"{Sentence(crashed)}. It stays out until the game updates or you try again."
         : s.RecorderSkip is { } skip ? $"Not available: {skip}."
-        : s.RecorderLevel == RecorderLevel.Minimal && s.RecorderLevelReason is { } minimal ? $"{Sentence(minimal)}."
+        : s.RecorderLevel == RecorderLevel.Minimal && s.RecorderLevelReason is { } minimal && (s.RecorderSteppedDown || RecordOn) ? $"{Sentence(minimal)}."
           + (s.RecorderNote is { } pending ? $" ({Sentence(pending)})" : "")
         : s.RecordingNotNeeded && !RecordOn ? ScsKiller.RecordingNotNeededNote
         : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time."
           + (s.RecorderNote is { } note ? $" ({Sentence(note)})" : "");
 
-    // The crash guard stepped the recorder down (RecorderHealth): "Try again" puts it back to full
+    // The crash guard stepped the recorder down (RecorderHealth): "Try again" puts it back to its start
     public bool? TryAgainPending { get; set; }
-    public bool ShowTryAgain => s.RecorderLevel != RecorderLevel.Full && NoAntiCheat;
+    public bool ShowTryAgain => s.RecorderSteppedDown && NoAntiCheat;
     public bool CanTryAgain => TryAgainPending == null && RecordPending == null;
 
     // A mod's d3d12.dll where the recorder goes (ReShade, a wrapper): off = the game isn't recorded; on = the recorder chains to it

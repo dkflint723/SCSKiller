@@ -88,9 +88,9 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
   - `state.json`: the game's record (status, learned cache keys, last warm). A save writes only the fields its
     holder changed since loading the record, onto the stored one re-read under a lock across processes (sets merge
     by what was added and removed), so a long compile never puts back what a game's exit saved meanwhile. The recorder's
-    crash guard keeps its level there (`RecorderLevel`, null = Full; `RecorderLevelReason`, `RecorderLevelAt`,
-    `RecorderLevelBuild`), the last launch it judged (`RecorderSessionSeen`, its `#session` stamp) and when our proxy
-    went in (`RecorderInstalledAt`; see [Recorder](#recorder), "Crash guard");
+    crash guard keeps its level there (`RecorderLevel`, null = its start, `ScsKiller.StartLevel`; `RecorderLevelReason`,
+    `RecorderLevelAt`, `RecorderLevelBuild`), the last launch it judged (`RecorderSessionSeen`, its `#session` stamp)
+    and when our proxy went in (`RecorderInstalledAt`; see [Recorder](#recorder), "Crash guard");
   - `*.lock`: the locks the app, the command line and scheduled tasks take turns on, in any session (the file opened
     exclusively), for `state.json` and `recording.db`, and `compile.lock`, held for a whole compile of the game;
   - `plan.bin`: the plan (hash-only); `plan-<hash>.keys`: its planner-made pipelines; `warm-<hash>.keys`: the inputs of
@@ -664,14 +664,18 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   **Frame generation** (`Games.FrameGen`): where the exe's folder or the install root holds NVIDIA Streamline with
   DLSS-G (`sl.interposer.dll` with `sl.dlss_g.dll`, or `nvngx_dlssg.dll`), the DLSS-G to FSR3 mod
   (`dlssg_to_fsr3*.dll`) or OptiScaler set to generate frames (`OptiScaler.ini` `FGType` optifg, nukems or xefg, or
-  auto with its FG library there), `ScsKiller.IniText` writes both as 0 at every install and ini update (a reconcile,
-  an import), and the game page says the recorder records pipelines only. Those interposers wrap the swap chain and
-  call NVAPI themselves: with the hooks in, FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver
-  (`nvwgf2umx.dll`, a fail-fast) 4 s after launch, every time. Frame generation outside the game's folder (Lossless
-  Scaling, the driver's own) isn't seen.
+  auto with its FG library there), the game page notes it (`ScsKiller.FrameGenNote`: if the game closes early with the
+  recorder, it switches to pipelines only). The files alone take no hook off: they ship whether frame generation is on
+  or not (Onimusha, PRAGMATA, RE Requiem, CONTROL Resonant), so the recorder starts in full and the crash guard steps it
+  down where the hooks are trouble. Those interposers wrap the swap chain and call NVAPI themselves: with the hooks in,
+  FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver (`nvwgf2umx.dll`, a fail-fast) 4 s after launch, every
+  time. So a game with frame generation that doesn't need the recorder (`GameState.RecordingNotNeeded`, FINAL FANTASY
+  XVI on NVIDIA: recorded only when the user turns it on) starts at Minimal (`ScsKiller.StartLevel`; the game page
+  says it records pipelines only). Frame generation outside the game's folder (Lossless Scaling, the driver's own)
+  isn't seen.
 - **Crash guard** (`RecorderHealth`, `ScsKiller.GuardRecorder`, app only): a recorded launch that closed early steps the
   recorder down for that game, Full, then Minimal (`ScsKiller.IniText` writes `frames=0` and `nvapi=0`: pipelines
-  only), then Off (`ScsKiller.SkipCrashed`: Reconcile takes it out through the usual removal, and neither "record all"
+  only; a game's start where frame generation is present and the recorder isn't needed, see "Hook switches"), then Off (`ScsKiller.SkipCrashed`: Reconcile takes it out through the usual removal, and neither "record all"
   nor the game's switch On puts it back). Judged in every evaluation (a watched exit's refresh, a scan, so also at the
   next start for a launch while the app was closed), only once the game no longer runs, and only the csv's last
   `#session` of the game's exe that started after the install (`GameRecord.RecorderInstalledAt`; a recorder from before
@@ -679,11 +683,12 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   last launch judged (`RecorderSessionSeen`): each launch is judged once. Early means no `#end` and under 45 s
   (`RecorderHealth.Threshold`): from the `#session` to the watched run's last sighting (`GameRecord.LastPlay`, when it
   holds the `#session`); without a watched run, to the launch's last frame and last create, but only when the frame log
-  is of this launch, or the frame hooks were on (Full, no frame generation) and it has none of this launch (no frame
+  is of this launch, or the frame hooks were on (Full) and it has none of this launch (no frame
   presented). A launch with `#end`, longer, without creates (and no watched run) or with neither a watched run nor
   frame evidence (Minimal: an Unreal game ends itself without `#end`, its creates may stop early) is fine. Another
   build of the game (`Game.Version`, else the exe's size and write time, against `RecorderLevelBuild`) or the game
-  page's "Try again" (`IScsKiller.ResetRecorderHealth`) puts it back to Full; the judged launches stay judged. Each step
+  page's "Try again" (`IScsKiller.ResetRecorderHealth`, shown only after a step down: `GameState.RecorderSteppedDown`)
+  puts it back to its start (Full, or Minimal as above); the judged launches stay judged. Each step
   is a line in `recorders.log` and the game page's note (`GameState.RecorderLevelReason`). Accepted limits: a game quit
   on purpose within 45 s without `#end` counts, and a crash whose process Windows Error Reporting keeps alive past 45 s
   doesn't.
@@ -844,7 +849,7 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   milliseconds. The file holds the last launch that presented, replaced at its first frame (3 hours at 300 FPS is
   13 MB; a launch stops writing at 32 MB). It isn't part of the recording: not in the recording limit or the recording's
   size, never shared; Clear recording and removing the recorder delete it with the csv. `frames=0` in `scskiller.ini`
-  turns it off (see Recorder, "Hook switches": frame generation sets it). The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the
+  turns it off (see Recorder, "Hook switches": the crash guard's Minimal sets it). The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the
   same launch (the `#session` with the same stamp; from an older recorder, without `#clock`, the only one within 10 s, else none). A frame
   is **cold-filled** when its overlapping compiles of 100 ms or more (not a library load or a RayQuery PSO at the
   floor) sum to half its length or more: a compiled run's load creates stay under

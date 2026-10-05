@@ -46,9 +46,10 @@ public static class RecorderHealth
         return new(start, lasted < threshold ? lasted : null);
     }
 
-    /// <summary>The note and log line for a step down to <paramref name="level"/> after a launch of <paramref name="lasted"/>.</summary>
-    public static string Note(string game, RecorderLevel level, TimeSpan lasted) => level == RecorderLevel.Off
-        ? $"{game} closed again shortly after starting ({Seconds(lasted)}): the recorder was taken out for this game"
+    /// <summary>The note and log line for a step down to <paramref name="level"/> after a launch of <paramref name="lasted"/>;
+    /// <paramref name="again"/>: from a step down (to Off from one that started at Minimal: not).</summary>
+    public static string Note(string game, RecorderLevel level, TimeSpan lasted, bool again = true) => level == RecorderLevel.Off
+        ? $"{game} closed {(again ? "again " : "")}shortly after starting ({Seconds(lasted)}): the recorder was taken out for this game"
         : $"{game} closed {Seconds(lasted)} after starting with the recorder: it now records pipelines only for this game (no frame times)";
 
     static string Seconds(TimeSpan t) => $"{Math.Max(1, (int)Math.Round(t.TotalSeconds))} s";

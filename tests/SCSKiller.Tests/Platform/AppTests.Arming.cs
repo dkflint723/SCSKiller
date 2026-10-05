@@ -37,9 +37,9 @@ public partial class AppTests
         PsoDb.Write(f, 'B', [.. SHA1.HashData(shader), .. shader]);
     }
 
-    ScsKiller Managed()
+    ScsKiller Managed(IEngineReader? reader = null)
     {
-        var k = Killer(new FakeReader(Unreal));
+        var k = Killer(reader ?? new FakeReader(Unreal));
         k.ProcessNames = () => new HashSet<string>();
         k.ManageRecorders = true;
         return k;

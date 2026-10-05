@@ -553,7 +553,10 @@ public sealed partial class ScsKiller : IScsKiller
         try { ours = IsOurProxy(dll); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { ours = rec.RecorderFiles.ContainsKey("d3d12.dll"); }   // held by the game
         var recorderUnused = ours && RecorderUnused(rec.LastPlay, session, dll);
-        if (ManageRecorders) GuardRecorder(g, rec, ours && sessionDir == exeDir && antiCheat == AntiCheat.None, frames);   // not an offline session's
+        var frameGen = antiCheat == AntiCheat.None ? FrameGen.Detect(exeDir, g.InstallDir) : null;
+        var notNeeded = RecordingNotNeeded(engine, check, Vendor.Caps) && !NeedsRtRecording(rec.Plan?.Stats);
+        var start = StartLevel(frameGen, notNeeded);
+        if (ManageRecorders) GuardRecorder(g, rec, ours && sessionDir == exeDir && antiCheat == AntiCheat.None, frames, start);   // not an offline session's
         // the recorder is never installed next to anti-cheat, nor in a game the user added before they confirm its folder
         var unconfirmed = Unconfirmed(g);
         var noRecording = antiCheat != AntiCheat.None ? $"which {(antiCheat == AntiCheat.Other ? "its anti-cheat" : antiCheat)} blocks"
@@ -592,24 +595,25 @@ public sealed partial class ScsKiller : IScsKiller
                 LastFrames = frames, ShaderMod = shaderMod?.Mod, ShaderModBlocks = reshade?.Blocks == true, ShaderModLayer = reshade?.Layered == true,
                 ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RecorderUnused = recorderUnused, RootUnconfirmed = unconfirmed,
                 ReFramework = antiCheat == AntiCheat.None && ReFramework.Detect(exeDir),
-                FrameGen = antiCheat == AntiCheat.None ? FrameGen.Detect(exeDir, g.InstallDir) : null,
-                RecordingNotNeeded = RecordingNotNeeded(engine, check, Vendor.Caps) && !NeedsRtRecording(rec.Plan?.Stats),
-                RecorderLevel = rec.RecorderLevel ?? RecorderLevel.Full, RecorderLevelReason = rec.RecorderLevel != null ? rec.RecorderLevelReason : null },
+                FrameGen = frameGen, RecordingNotNeeded = notNeeded,
+                RecorderLevel = rec.RecorderLevel ?? start, RecorderSteppedDown = rec.RecorderLevel != null,
+                RecorderLevelReason = rec.RecorderLevel != null ? rec.RecorderLevelReason : start == RecorderLevel.Minimal ? FrameGenStartNote(frameGen!) : null },
             rec, ours, exeDir);
     }
 
     /// <summary>The crash guard (<see cref="RecorderHealth"/>), app only. Another build of the game puts the recorder back to
-    /// Full; with <paramref name="judge"/> (our proxy in, its csv in the game folder), the last launch since the install and
-    /// the level's start, once the game is no longer running, steps it down when it closed early: Full to Minimal, Minimal to
-    /// Off. Reconcile acts on the level: the ini's hook switches (<see cref="IniText"/>), the removal (<see cref="SkipCrashed"/>).</summary>
-    void GuardRecorder(Game g, GameRecord rec, bool judge, FrameReport? frames)
+    /// <paramref name="start"/> (<see cref="StartLevel(string?, bool)"/>); with <paramref name="judge"/> (our proxy in, its csv
+    /// in the game folder), the last launch since the install and the level's start, once the game is no longer running, steps
+    /// it down when it closed early: Full to Minimal, Minimal to Off. Reconcile acts on the level: the ini's hook switches
+    /// (<see cref="IniText"/>), the removal (<see cref="SkipCrashed"/>).</summary>
+    void GuardRecorder(Game g, GameRecord rec, bool judge, FrameReport? frames, RecorderLevel start)
     {
         var exeDir = Path.GetDirectoryName(g.ExePath)!;
         var build = Build(g, g.ExePath);
         bool changed = false;
         if (rec.RecorderLevel != null && rec.RecorderLevelBuild != build)
         {
-            RecorderLog($"{g.Name}: the game was updated: the recorder records in full again");
+            RecorderLog($"{g.Name}: the game was updated: the recorder {Records(start)} again");
             ResetLevel(rec);
             changed = true;
         }
@@ -619,15 +623,16 @@ public sealed partial class ScsKiller : IScsKiller
             && RecorderHealth.Judge(Path.Combine(exeDir, "scskiller_creates.csv"), Path.GetFileName(g.ExePath),
                 Math.Max(rec.RecorderInstalledAt!.Value.ToUnixTimeMilliseconds(), rec.RecorderLevelAt?.ToUnixTimeMilliseconds() ?? 0),
                 long.TryParse(rec.RecorderSessionSeen, CultureInfo.InvariantCulture, out var seen) ? seen : 0, rec.LastPlay, frames,
-                framesExpected: rec.RecorderLevel == null && FrameGen.Detect(exeDir, g.InstallDir) == null) is { } v
+                framesExpected: (rec.RecorderLevel ?? start) == RecorderLevel.Full) is { } v
             && !GameRunning(g))   // a launch still running has no #end yet
         {
             rec.RecorderSessionSeen = v.Session.ToString(CultureInfo.InvariantCulture);
             changed = true;
             if (v.EarlyFailure is { } lasted)
             {
-                var level = rec.RecorderLevel == RecorderLevel.Minimal ? RecorderLevel.Off : RecorderLevel.Minimal;
-                (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelAt, rec.RecorderLevelBuild) = (level, RecorderHealth.Note(g.Name, level, lasted), Clock(), build);
+                var level = (rec.RecorderLevel ?? start) == RecorderLevel.Minimal ? RecorderLevel.Off : RecorderLevel.Minimal;
+                (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelAt, rec.RecorderLevelBuild) =
+                    (level, RecorderHealth.Note(g.Name, level, lasted, again: rec.RecorderLevel != null), Clock(), build);
                 RecorderLog(rec.RecorderLevelReason);
             }
         }
@@ -638,6 +643,19 @@ public sealed partial class ScsKiller : IScsKiller
 
     void ResetLevel(GameRecord rec) => (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelBuild, rec.RecorderLevelAt) = (null, null, null, Clock());
 
+    static string Records(RecorderLevel start) => start == RecorderLevel.Full ? "records in full" : "records pipelines only";
+
+    /// <summary>The recorder's level before any step down (<see cref="GameRecord.RecorderLevel"/> null): pipelines only where
+    /// frame generation is present and the recorder isn't needed (<see cref="GameState.RecordingNotNeeded"/>: recorded only when
+    /// the user asks; FINAL FANTASY XVI under Streamline DLSS-G crashed with the frame hooks); else Full, for the crash guard
+    /// to step down. Frame generation alone takes no hooks off: its files ship whether it's on or not.</summary>
+    public static RecorderLevel StartLevel(string? frameGen, bool notNeeded) => frameGen != null && notNeeded ? RecorderLevel.Minimal : RecorderLevel.Full;
+
+    /// <summary><see cref="StartLevel(string?, bool)"/> now: the frame generation read again, the last evaluation's
+    /// <see cref="GameState.RecordingNotNeeded"/>.</summary>
+    RecorderLevel StartLevel(Game g) => Games.FirstOrDefault(s => s.Game.Id == g.Id) is { RecordingNotNeeded: true }
+        ? StartLevel(FrameGen.Detect(Path.GetDirectoryName(g.ExePath)!, g.InstallDir), true) : RecorderLevel.Full;
+
     public void ResetRecorderHealth(string gameId)
     {
         lock (_recorderLock)
@@ -647,9 +665,10 @@ public sealed partial class ScsKiller : IScsKiller
             if (rec.RecorderLevel == null) return;
             ResetLevel(rec);
             Store.SaveGame(gameId, rec);
-            RecorderLog($"{s.Game.Name}: the recorder records in full again (Try again)");
             Refresh(s.Game);   // Reconcile reads the level from the game's state
-            Reconcile(Find(gameId));
+            s = Find(gameId);
+            RecorderLog($"{s.Game.Name}: the recorder {Records(s.RecorderLevel)} again (Try again)");
+            Reconcile(s);
         }
     }
 
@@ -2354,7 +2373,13 @@ public sealed partial class ScsKiller : IScsKiller
     public const string RecordingNotNeededNote = "Not needed: the game's files list every pipeline it creates, and this GPU compiles all of them without a recording. \"Record in all compatible games\" leaves it out; turn it on here to record it anyway.";
 
     /// <summary>The game page's note for <see cref="GameState.FrameGen"/> while the recorder is on.</summary>
-    public static string FrameGenNote(GameState s) => $"frame generation ({s.FrameGen}) is present: the recorder records pipelines only, no frame times";
+    public static string FrameGenNote(GameState s) => s.RecorderLevel == RecorderLevel.Minimal
+        ? $"frame generation ({s.FrameGen}) is present: the recorder records pipelines only, no frame times"
+        : $"frame generation ({s.FrameGen}) is present: if the game closes early with the recorder, it switches to pipelines only";
+
+    /// <summary><see cref="GameState.RecorderLevelReason"/> at <see cref="StartLevel(string?, bool)"/> Minimal.</summary>
+    public static string FrameGenStartNote(string frameGen) =>
+        $"frame generation ({frameGen}) is present and the recorder isn't needed for this game: it records pipelines only (no frame times)";
 
     readonly object _recorderLock = new();
     // game id -> SkipNeedsAdmin (the last write was refused); game id -> the last reconcile's pending or failed change
@@ -3062,10 +3087,10 @@ public sealed partial class ScsKiller : IScsKiller
             + (DbCap(g) is { } cap
                 ? $"; the recording limit per game (Settings): no new records once scskiller.db has this many bytes\r\nmax_db_bytes={cap}\r\n" : "")
             + (next == null ? "" : $"; the game's own d3d12.dll (a mod), renamed by SCSKiller and put back when the recorder is removed\r\nnext={next}\r\n")
-            + (FrameGen.Detect(dir, g.InstallDir) is { } fg
-                ? $"; {fg} wraps the swap chain and calls NVAPI: no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n"
-                : rec.RecorderLevel == RecorderLevel.Minimal
-                ? "; the game closed early with the recorder (SCSKiller's crash guard): no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n" : "");
+            + ((rec.RecorderLevel ?? StartLevel(g)) != RecorderLevel.Minimal ? ""
+                : rec.RecorderLevel == null
+                ? "; frame generation is present and the recorder isn't needed for this game: no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n"
+                : "; the game closed early with the recorder (SCSKiller's crash guard): no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n");
     }
 
     /// <summary>Rewrites SCSKiller's own scskiller.ini when its limit line is out of date (the setting changed, an import

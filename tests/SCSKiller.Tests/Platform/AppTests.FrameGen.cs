@@ -6,8 +6,9 @@ using SCSKiller.Core.Planning;
 
 namespace SCSKiller.Tests.Platform;
 
-// Frame generation beside the recorder (scskiller.ini frames=0, nvapi=0), games whose files list every pipeline (no
-// recorder from "record all"), and the count of new pipelines for such a game.
+// Frame generation beside the recorder (noted; pipelines only from the start where the recorder isn't needed), the proxy's
+// frames=0 / nvapi=0, games whose files list every pipeline (no recorder from "record all"), and the count of new
+// pipelines for such a game.
 public partial class AppTests
 {
     static readonly EngineInfo Pspc = new("Square Enix PSPC", "0x0300000A", null, "D3D12", false, null, ShipsRootSignatures: true);
@@ -90,28 +91,34 @@ public partial class AppTests
         Assert.Contains(nvapi ? "nvapi_hooked 0" : "nvapi_hooked -1", nvapiOnly.Out);
     }
 
+    /// <summary>Frame generation's files ship whether it's on or not: they take no hooks off by themselves (the crash guard
+    /// does, if the game closes early); a user's own frames=0 / nvapi=0 still does.</summary>
     [Fact]
-    public async Task With_frame_generation_the_recorder_gets_no_frame_or_nvapi_hooks_and_the_game_page_says_so()
+    public async Task With_frame_generation_the_recorder_keeps_its_hooks_and_the_game_page_names_the_crash_guard()
     {
         var k = Managed();
         await k.ScanAsync(default);
         var ini = Path.Combine(_exeDir, "scskiller.ini");
         Assert.True(ScsKiller.IsOurProxy(Path.Combine(_exeDir, "d3d12.dll")));
-        Assert.DoesNotContain("frames=", File.ReadAllText(ini));   // none there: the hooks stay
-        Assert.DoesNotContain("nvapi=", File.ReadAllText(ini));
         Assert.Null(k.Games.Single().FrameGen);
 
         foreach (var f in new[] { "sl.interposer.dll", "sl.dlss_g.dll", "nvngx_dlssg.dll" }) File.WriteAllBytes(Path.Combine(_exeDir, f), Planning.MiddlewarePackTests.Pe(f));
         k.ReconcileRecorders();
         k.RefreshGame(_game.Id);
         var s = k.Games.Single();
-        Assert.Equal(("Streamline DLSS-G", true), (s.FrameGen, s.RecorderEffective));
-        var text = File.ReadAllText(ini);
-        Assert.Contains("\r\nframes=0\r\n", text);
-        Assert.Contains("\r\nnvapi=0\r\n", text);
-        Assert.Contains("mode=record", text);
-        Assert.Equal(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(ini))), k.Store.LoadGame(_game.Id).RecorderFiles["scskiller.ini"]);   // still ours: removed with the recorder
-        Assert.Equal("frame generation (Streamline DLSS-G) is present: the recorder records pipelines only, no frame times", ScsKiller.FrameGenNote(s));
+        Assert.Equal(("Streamline DLSS-G", true, RecorderLevel.Full, (string?)null, false), (s.FrameGen, s.RecorderEffective, s.RecorderLevel, s.RecorderLevelReason, s.RecorderSteppedDown));
+        Assert.DoesNotContain("frames=", File.ReadAllText(ini));   // the hooks stay
+        Assert.DoesNotContain("nvapi=", File.ReadAllText(ini));
+        Assert.Equal("frame generation (Streamline DLSS-G) is present: if the game closes early with the recorder, it switches to pipelines only", ScsKiller.FrameGenNote(s));
+        Assert.Equal("frame generation (Streamline DLSS-G) is present: the recorder records pipelines only, no frame times", ScsKiller.FrameGenNote(s with { RecorderLevel = RecorderLevel.Minimal }));
+
+        // the user's own switches: left alone
+        var own = "[scskiller]\r\nmode=record\r\nframes=0\r\nnvapi=0\r\n";
+        File.WriteAllText(ini, own);
+        k.ReconcileRecorders();
+        k.RefreshGame(_game.Id);
+        Assert.Equal(own, File.ReadAllText(ini));
+        Assert.True(ScsKiller.IsOurProxy(Path.Combine(_exeDir, "d3d12.dll")));
 
         // the recorder's report without a frame log: the session's counts, no frame times, nothing claimed missing
         File.WriteAllText(Path.Combine(_exeDir, "scskiller_creates.csv"), "10.0,G,0,0,50.0\n11.0,s,0,0,0.2\n12.0,C,1,1,0.5\n");
@@ -122,8 +129,52 @@ public partial class AppTests
         foreach (var f in new[] { "sl.interposer.dll", "sl.dlss_g.dll", "nvngx_dlssg.dll" }) File.Delete(Path.Combine(_exeDir, f));
         k.ReconcileRecorders();
         k.RefreshGame(_game.Id);
-        Assert.DoesNotContain("frames=", File.ReadAllText(ini));
         Assert.Null(k.Games.Single().FrameGen);
+    }
+
+    /// <summary>FINAL FANTASY XVI's case: frame generation beside a game whose files list every pipeline (recorded only when
+    /// the user asks) starts the recorder at pipelines only; an early failure there takes it out, and "Try again" or another
+    /// build puts it back at pipelines only, not in full.</summary>
+    [Fact]
+    public async Task Beside_frame_generation_a_game_that_doesnt_need_the_recorder_starts_it_at_pipelines_only()
+    {
+        using var _ = new FreshLedger(_root);
+        var (k, running, poll, now) = Guarded(new FakeReader(Pspc));
+        foreach (var f in new[] { "sl.interposer.dll", "sl.dlss_g.dll" }) File.WriteAllBytes(Path.Combine(_exeDir, f), Planning.MiddlewarePackTests.Pe(f));
+        await k.ScanAsync(default);
+        var (dll, ini, exe) = (Path.Combine(_exeDir, "d3d12.dll"), Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
+        var s = k.Games.Single();
+        const string start = "frame generation (Streamline DLSS-G) is present and the recorder isn't needed for this game: it records pipelines only (no frame times)";
+        Assert.Equal((true, false, RecorderLevel.Minimal, start, false), (s.RecordingNotNeeded, s.RecorderInstalled, s.RecorderLevel, s.RecorderLevelReason, s.RecorderSteppedDown));
+        Assert.Null(k.Store.LoadGame(_game.Id).RecorderLevel);
+
+        k.InstallRecorder(_game.Id);
+        var text = File.ReadAllText(ini);
+        Assert.Contains("\r\nframes=0\r\n", text);
+        Assert.Contains("\r\nnvapi=0\r\n", text);
+        Assert.Contains("frame generation is present and the recorder isn't needed for this game", text);
+        Assert.Equal("frame generation (Streamline DLSS-G) is present: the recorder records pipelines only, no frame times", ScsKiller.FrameGenNote(k.Games.Single()));
+
+        Play(running, now, poll, _exeDir, exe, 6);   // closed early at its start level: out
+        s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Off, ScsKiller.SkipCrashed, false, true), (s.RecorderLevel, s.RecorderSkip, s.RecorderInstalled, s.RecorderSteppedDown));
+        Assert.Equal("Fake Game closed shortly after starting (6 s): the recorder was taken out for this game", s.RecorderLevelReason);
+        Assert.False(File.Exists(dll));
+
+        k.ResetRecorderHealth(_game.Id);   // Try again: back to pipelines only
+        s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Minimal, start, false, true), (s.RecorderLevel, s.RecorderLevelReason, s.RecorderSteppedDown, s.RecorderInstalled));
+        Assert.Contains("\r\nframes=0\r\n", File.ReadAllText(ini));
+        Assert.Contains("the recorder records pipelines only again (Try again)", File.ReadAllText(Path.Combine(k.Store.DataDir, "recorders.log")));
+
+        Play(running, now, poll, _exeDir, exe, 6);
+        Assert.Equal(RecorderLevel.Off, k.Games.Single().RecorderLevel);
+        File.WriteAllBytes(_game.ExePath, new byte[5000]);   // a game update
+        await k.RescanAsync(default);
+        s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Minimal, false, true), (s.RecorderLevel, s.RecorderSteppedDown, s.RecorderInstalled));
+        Assert.Null(k.Store.LoadGame(_game.Id).RecorderLevel);
+        Assert.Contains("\r\nframes=0\r\n", File.ReadAllText(ini));
     }
 
     [Fact]

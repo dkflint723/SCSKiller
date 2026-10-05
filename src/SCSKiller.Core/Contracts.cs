@@ -272,13 +272,14 @@ public sealed record GameState(
     bool RecordedEnough = false,       // GameRecord.RecordedLong: asking for "5 minutes" again says nothing
     bool RecorderUnused = false,       // played long enough since the recorder went in, and it saw no device in that run (ScsKiller.RecorderUnusedNote)
     bool ReFramework = false,          // REFramework next to the exe, reporting its dlls from _storage_ (Games.ReFramework); not read in an anti-cheat install
-    string? FrameGen = null,           // frame generation that wraps its swap chain (Games.FrameGen): the recorder hooks no presents or NVAPI; null = none, or not read (anti-cheat)
+    string? FrameGen = null,           // frame generation's files (Games.FrameGen), on or not: noted; with RecordingNotNeeded the recorder starts at Minimal (ScsKiller.StartLevel); null = none, or not read (anti-cheat)
     bool RecordingNotNeeded = false,   // its files name every pipeline on this GPU's cache (ScsKiller.RecordingNotNeeded): "record all" leaves it out
     bool OfflineEligible = false,      // an EasyAntiCheat game of Games.OfflineEac on D3D12: an offline session may be offered
     bool OfflineRecord = false,        // the user allowed offline sessions for it (IScsKiller.SetOfflineRecording)
     bool OfflineRunning = false,       // a session SCSKiller started runs, or its files aren't out of the game folder yet
-    RecorderLevel RecorderLevel = RecorderLevel.Full,   // the crash guard's step (GameRecord.RecorderLevel); Off: RecorderSkip is ScsKiller.SkipCrashed
-    string? RecorderLevelReason = null);   // why it isn't Full, for the game page; null = Full
+    RecorderLevel RecorderLevel = RecorderLevel.Full,   // the crash guard's step (GameRecord.RecorderLevel), else ScsKiller.StartLevel; Off: RecorderSkip is ScsKiller.SkipCrashed
+    string? RecorderLevelReason = null,   // why it isn't Full, for the game page; null = Full
+    bool RecorderSteppedDown = false);    // the crash guard set the level (GameRecord.RecorderLevel): "Try again" puts it back to its start
 
 /// <summary>A launch's frame times from the recorder (<see cref="App.FrameLog"/>): its length, the startup stretch before
 /// play (the game's own precompile and first load), the 1% low of play, every frame of 50 ms or more, and for a graph
@@ -472,7 +473,8 @@ public interface IScsKiller
     /// the recording), never the recorder itself; the next compile plans from the game files. False when there was nothing
     /// to delete. Throws InvalidOperationException while the game runs or a compile of it is in progress.</summary>
     bool ClearRecording(string gameId);
-    /// <summary>The game page's "Try again": the recorder back to <see cref="RecorderLevel.Full"/> for the game, installed again
+    /// <summary>The game page's "Try again": the recorder back to its start for the game (<see cref="RecorderLevel.Full"/>, or
+    /// Minimal by <see cref="App.ScsKiller.StartLevel(string?, bool)"/>), installed again
     /// by its switch or "record all"; a launch already judged isn't judged again.</summary>
     void ResetRecorderHealth(string gameId);
 }
