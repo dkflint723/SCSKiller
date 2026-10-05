@@ -29,7 +29,8 @@ All notable changes to the SCSKiller app and command line. The format follows
 - The recorder steps back by itself in a game that closes within 45 seconds of starting with it (no clean exit): the
   first time it records pipelines only (no frame timing or NVAPI hooks), the second time it's taken out of that game.
   The game page and the log say what happened; "Try again" on the game page, or the game's next update, puts it back
-  where it started.
+  where it started. A launch while SCSKiller was closed counts only when the recorder's frame log shows it ended that
+  soon.
 
 ### Changed
 

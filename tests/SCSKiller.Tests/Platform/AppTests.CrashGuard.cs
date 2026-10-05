@@ -18,32 +18,38 @@ public partial class AppTests
         Directory.CreateDirectory(_root);
         var start = DateTimeOffset.FromUnixTimeMilliseconds(T0);
         PlayWindow Ran(double seconds) => new(start.AddSeconds(-2), start.AddSeconds(seconds));
-        RecorderVerdict? Judge(PlayWindow? played = null, FrameReport? frames = null, bool framesExpected = false, long after = T0 - 60_000, long seen = 0,
-            string exe = "Fake.exe") => RecorderHealth.Judge(csv, exe, after, seen, played, frames, framesExpected);
+        RecorderVerdict? Judge(PlayWindow? played = null, FrameReport? frames = null, long after = T0 - 60_000, long seen = 0,
+            string exe = "Fake.exe") => RecorderHealth.Judge(csv, exe, after, seen, played, frames);
         File.WriteAllText(csv, $"#session,{T0 - 600_000},Fake.exe\n#clock,90.0\n1000.0,G,0,0,50.0\n#end,{T0 - 300_000},90000.0\n"   // an older launch
             + $"#session,{T0},Fake.exe\n#clock,100.0\n1000.0,G,0,0,50.0\n4000.0,S,1,1,0.5\n");
 
         Assert.Equal(new RecorderVerdict(T0, TimeSpan.FromSeconds(4)), Judge(Ran(4)));         // watched: it exited 4 s after starting
         Assert.Equal(new RecorderVerdict(T0, null), Judge(Ran(120)));                          // played two minutes
-        Assert.Equal(new RecorderVerdict(T0, null), Judge());                                  // no watched run, no frame log expected: can't tell
+        Assert.Equal(new RecorderVerdict(T0, null), Judge());                                  // no watched run, no frame of it: can't tell
         Assert.Equal(new RecorderVerdict(T0, null), Judge(new(start.AddHours(-2), start.AddHours(-1))));   // an older run's window
-        Assert.Equal(TimeSpan.FromSeconds(4), Judge(framesExpected: true)!.EarlyFailure);     // the frame hooks on, no frame of this launch
         Assert.Equal(TimeSpan.FromSeconds(4), Judge(frames: FramesOf(T0, 3))!.EarlyFailure);   // its frames end within it
         Assert.Null(Judge(frames: FramesOf(T0, 600))!.EarlyFailure);                          // ten minutes of frames
-        Assert.Equal(TimeSpan.FromSeconds(4), Judge(frames: FramesOf(T0 - 600_000, 600), framesExpected: true)!.EarlyFailure);   // another launch's frames
-        Assert.Null(Judge(frames: FramesOf(T0 - 600_000, 3))!.EarlyFailure);                 // ...and the hooks were off: can't tell
+        Assert.Null(Judge(frames: FramesOf(T0 - 600_000, 600))!.EarlyFailure);               // another launch's frames: can't tell
+        Assert.Null(Judge(frames: FramesOf(T0 - 600_000, 3))!.EarlyFailure);                 // ...short ones too
         Assert.Null(Judge(Ran(4), seen: T0));                                                  // judged once: never again
         Assert.Null(Judge(Ran(4), after: T0));                                                 // from before the recorder's install or level
         Assert.Null(Judge(Ran(4), exe: "Other.exe"));                                          // only another exe's launches
 
         File.AppendAllText(csv, $"#end,{T0 + 4_000},4100.0\n");
-        Assert.Equal(new RecorderVerdict(T0, null), Judge(Ran(4), framesExpected: true));     // it exited cleanly: never a failure
+        Assert.Equal(new RecorderVerdict(T0, null), Judge(Ran(4), FramesOf(T0, 3)));          // it exited cleanly: never a failure
+
+        // two hours unwatched, every pipeline created in the first 30 s, no frame of it logged (held, capped, no present hook)
+        File.WriteAllText(csv, $"#session,{T0},Fake.exe\n#clock,100.0\n1000.0,G,0,0,50.0\n30000.0,S,1,1,0.5\n");
+        Assert.Equal(new RecorderVerdict(T0, null), Judge());
+        Assert.Equal(new RecorderVerdict(T0, null), Judge(frames: FramesOf(T0 - 600_000, 3)));
+        Assert.Null(Judge(frames: FramesOf(T0, 7200))!.EarlyFailure);
+        Assert.Equal(TimeSpan.FromSeconds(30), Judge(frames: FramesOf(T0, 20))!.EarlyFailure);   // its own frames end early: the last create counts
 
         File.WriteAllText(csv, $"#session,{T0},Fake.exe\n#clock,100.0\n");                     // no create at all
-        Assert.Equal(new RecorderVerdict(T0, null), Judge(framesExpected: true));
+        Assert.Equal(new RecorderVerdict(T0, null), Judge(frames: FramesOf(T0, 3)));
         Assert.Equal(TimeSpan.FromSeconds(4), Judge(Ran(4))!.EarlyFailure);                   // but the watched run tells
         File.WriteAllText(csv, "1000.0,G,0,0,50.0\n");                                          // an older proxy: no #session, no start
-        Assert.Null(Judge(Ran(4), framesExpected: true));
+        Assert.Null(Judge(Ran(4), FramesOf(T0, 3)));
         File.Delete(csv);
         Assert.Null(Judge(Ran(4)));
 
@@ -183,30 +189,70 @@ public partial class AppTests
     }
 
     /// <summary>The app wasn't running when the game crashed: the next start judges the launch from the recorder's files, as
-    /// far as they tell (the frame hooks were on, and no frame of that launch was logged).</summary>
+    /// far as they tell: only the launch's own frames, ending early, count; creates alone never do.</summary>
     [Fact]
     public async Task A_failure_while_the_app_was_closed_is_caught_at_the_next_start()
     {
         using var _ = new FreshLedger(_root);
         var (k, _, _, now) = Guarded();
         await k.ScanAsync(default);
-        var installed = k.Store.LoadGame(_game.Id).RecorderInstalledAt!.Value.ToUnixTimeMilliseconds();
-        var csv = Path.Combine(_exeDir, "scskiller_creates.csv");
-        File.WriteAllText(csv, $"#session,{installed + 60_000},{Path.GetFileName(_game.ExePath)}\n#clock,50.0\n500.0,G,0,0,40.0\n3000.0,S,1,1,0.5\n");
+        var exe = Path.GetFileName(_game.ExePath);
+        var (csv, bin) = (Path.Combine(_exeDir, "scskiller_creates.csv"), Path.Combine(_exeDir, FrameLog.FileName));
+        long At(int minutes) => now().AddMinutes(minutes).ToUnixTimeMilliseconds();
+        async Task<RecorderLevel> LevelAt(int minutes)   // the app's next start
+        {
+            var later = Managed();
+            later.Clock = () => now().AddMinutes(minutes);
+            await later.ScanAsync(default);
+            return later.Games.Single().RecorderLevel;
+        }
 
-        var later = Managed();
-        later.Clock = () => now().AddMinutes(10);
-        await later.ScanAsync(default);
-        Assert.Equal(RecorderLevel.Minimal, later.Games.Single().RecorderLevel);
+        // two hours, every pipeline created in its first 30 s, no frame of it logged (the file held, capped, no present hook)
+        File.WriteAllText(csv, $"#session,{At(1)},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n30000.0,S,1,1,0.5\n");
+        Assert.Equal(RecorderLevel.Full, await LevelAt(150));
+
+        // its own frames end 3 s in: closed early
+        File.AppendAllText(csv, $"#session,{At(160)},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n3000.0,S,1,1,0.5\n");
+        File.WriteAllBytes(bin, FrameLogTests.Launch(At(160), 50_000, Enumerable.Range(1, 300).Select(i => 50.0 + i * 10)));
+        Assert.Equal(RecorderLevel.Minimal, await LevelAt(170));
         Assert.Contains("\r\nframes=0\r\n", File.ReadAllText(Path.Combine(_exeDir, "scskiller.ini")));
 
         // at Minimal there are no frames to tell: a launch the app didn't watch, without #end, isn't judged
-        File.AppendAllText(csv, $"#session,{now().AddMinutes(20).ToUnixTimeMilliseconds()},{Path.GetFileName(_game.ExePath)}\n#clock,50.0\n500.0,G,0,0,40.0\n");
-        var third = Managed();
-        third.Clock = () => now().AddMinutes(30);
-        await third.ScanAsync(default);
-        Assert.Equal(RecorderLevel.Minimal, third.Games.Single().RecorderLevel);
+        File.AppendAllText(csv, $"#session,{At(180)},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n");
+        Assert.Equal(RecorderLevel.Minimal, await LevelAt(190));
         Assert.True(ScsKiller.IsOurProxy(Path.Combine(_exeDir, "d3d12.dll")));
+    }
+
+    /// <summary>A "Try again" while an evaluation judges a launch from the record it read before: the reset stands.</summary>
+    [Fact]
+    public async Task A_reset_during_an_evaluation_is_never_undone_by_its_guard()
+    {
+        using var _ = new FreshLedger(_root);
+        var (k, running, poll, now) = Guarded();
+        await k.ScanAsync(default);
+        var exe = Path.GetFileName(_game.ExePath);
+        Play(running, now, poll, _exeDir, exe, 5);
+        Assert.Equal(RecorderLevel.Minimal, k.Games.Single().RecorderLevel);
+        // closed early again while the app wasn't watching (the frame log was left by a Full launch's hooks)
+        var at = now().AddMinutes(5).ToUnixTimeMilliseconds();
+        File.AppendAllText(Path.Combine(_exeDir, "scskiller_creates.csv"), $"#session,{at},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n3000.0,S,1,1,0.5\n");
+        File.WriteAllBytes(Path.Combine(_exeDir, FrameLog.FileName), FrameLogTests.Launch(at, 50_000, Enumerable.Range(1, 300).Select(i => 50.0 + i * 10)));
+        k.Clock = () => now().AddMinutes(10);
+
+        var reset = 0;
+        k.ProcessNames = () =>   // the guard asks whether the game runs after judging, outside the recorder lock
+        {
+            if (Interlocked.Exchange(ref reset, 1) == 0)
+                Assert.True(Task.Run(() => k.ResetRecorderHealth(_game.Id)).Wait(TimeSpan.FromSeconds(30)));
+            return new HashSet<string>();
+        };
+        k.RefreshGame(_game.Id);
+        Assert.Equal(1, reset);
+        var s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Full, false, true), (s.RecorderLevel, s.RecorderSteppedDown, s.RecorderInstalled));
+        Assert.Null(k.Store.LoadGame(_game.Id).RecorderLevel);
+        k.RefreshGame(_game.Id);   // the launch is from before the reset: not judged
+        Assert.Equal(RecorderLevel.Full, k.Games.Single().RecorderLevel);
     }
 
     [Fact]

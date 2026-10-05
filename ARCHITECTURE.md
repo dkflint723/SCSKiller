@@ -680,12 +680,15 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   next start for a launch while the app was closed), only once the game no longer runs, and only the csv's last
   `#session` of the game's exe that started after the install (`GameRecord.RecorderInstalledAt`; a recorder from before
   the guard counts from when an evaluation first sees it), after the level's start (`RecorderLevelAt`) and after the
-  last launch judged (`RecorderSessionSeen`): each launch is judged once. Early means no `#end` and under 45 s
+  last launch judged (`RecorderSessionSeen`): each launch is judged once. Judged outside the recorder lock, the result
+  is saved under it onto the record read again, only while its guard fields are still the ones judged: a "Try again",
+  an install or another evaluation meanwhile stands. Early means no `#end` and under 45 s
   (`RecorderHealth.Threshold`): from the `#session` to the watched run's last sighting (`GameRecord.LastPlay`, when it
-  holds the `#session`); without a watched run, to the launch's last frame and last create, but only when the frame log
-  is of this launch, or the frame hooks were on (Full) and it has none of this launch (no frame
-  presented). A launch with `#end`, longer, without creates (and no watched run) or with neither a watched run nor
-  frame evidence (Minimal: an Unreal game ends itself without `#end`, its creates may stop early) is fine. Another
+  holds the `#session`); without a watched run, to the launch's last frame and last create, and only when the frame log
+  is of this launch. A launch with `#end`, longer, without creates (and no watched run) or with neither a watched run nor
+  its own frames is fine: an Unreal game ends itself without `#end`, a game may create every pipeline in its first
+  seconds and play for hours, and a frame log can lack a launch for benign reasons (the file held, its size cap, the
+  present hook not in; Minimal writes none). Another
   build of the game (`Game.Version`, else the exe's size and write time, against `RecorderLevelBuild`) or the game
   page's "Try again" (`IScsKiller.ResetRecorderHealth`, shown only after a step down: `GameState.RecorderSteppedDown`)
   puts it back to its start (Full, or Minimal as above); the judged launches stay judged. Each step

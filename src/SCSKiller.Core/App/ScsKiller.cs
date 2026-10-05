@@ -605,40 +605,59 @@ public sealed partial class ScsKiller : IScsKiller
     /// <paramref name="start"/> (<see cref="StartLevel(string?, bool)"/>); with <paramref name="judge"/> (our proxy in, its csv
     /// in the game folder), the last launch since the install and the level's start, once the game is no longer running, steps
     /// it down when it closed early: Full to Minimal, Minimal to Off. Reconcile acts on the level: the ini's hook switches
-    /// (<see cref="IniText"/>), the removal (<see cref="SkipCrashed"/>).</summary>
+    /// (<see cref="IniText"/>), the removal (<see cref="SkipCrashed"/>). Judged outside the recorder lock (the csv, the process
+    /// list) from Evaluate's record; saved under it onto the record read again, only while its guard fields are the ones
+    /// judged: a "Try again", an install or another evaluation meanwhile stands, and the next evaluation judges again.</summary>
     void GuardRecorder(Game g, GameRecord rec, bool judge, FrameReport? frames, RecorderLevel start)
     {
         var exeDir = Path.GetDirectoryName(g.ExePath)!;
         var build = Build(g, g.ExePath);
-        bool changed = false;
-        if (rec.RecorderLevel != null && rec.RecorderLevelBuild != build)
+        var (was, logs) = (Guarded.Of(rec), new List<string>());
+        var f = was;
+        if (f.Level != null && f.Build != build)
         {
-            RecorderLog($"{g.Name}: the game was updated: the recorder {Records(start)} again");
-            ResetLevel(rec);
-            changed = true;
+            logs.Add($"{g.Name}: the game was updated: the recorder {Records(start)} again");
+            f = f with { Level = null, Reason = null, Build = null, At = Clock() };
         }
         // a recorder from before the guard: only the launches from now on count
-        if (judge && rec.RecorderInstalledAt == null) (rec.RecorderInstalledAt, changed) = (Clock(), true);
-        if (judge && rec.RecorderLevel != RecorderLevel.Off
+        if (judge && f.InstalledAt == null) f = f with { InstalledAt = Clock() };
+        if (judge && f.Level != RecorderLevel.Off
             && RecorderHealth.Judge(Path.Combine(exeDir, "scskiller_creates.csv"), Path.GetFileName(g.ExePath),
-                Math.Max(rec.RecorderInstalledAt!.Value.ToUnixTimeMilliseconds(), rec.RecorderLevelAt?.ToUnixTimeMilliseconds() ?? 0),
-                long.TryParse(rec.RecorderSessionSeen, CultureInfo.InvariantCulture, out var seen) ? seen : 0, rec.LastPlay, frames,
-                framesExpected: (rec.RecorderLevel ?? start) == RecorderLevel.Full) is { } v
+                Math.Max(f.InstalledAt!.Value.ToUnixTimeMilliseconds(), f.At?.ToUnixTimeMilliseconds() ?? 0),
+                long.TryParse(f.Seen, CultureInfo.InvariantCulture, out var seen) ? seen : 0, rec.LastPlay, frames) is { } v
             && !GameRunning(g))   // a launch still running has no #end yet
         {
-            rec.RecorderSessionSeen = v.Session.ToString(CultureInfo.InvariantCulture);
-            changed = true;
+            f = f with { Seen = v.Session.ToString(CultureInfo.InvariantCulture) };
             if (v.EarlyFailure is { } lasted)
             {
-                var level = (rec.RecorderLevel ?? start) == RecorderLevel.Minimal ? RecorderLevel.Off : RecorderLevel.Minimal;
-                (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelAt, rec.RecorderLevelBuild) =
-                    (level, RecorderHealth.Note(g.Name, level, lasted, again: rec.RecorderLevel != null), Clock(), build);
-                RecorderLog(rec.RecorderLevelReason);
+                var level = (f.Level ?? start) == RecorderLevel.Minimal ? RecorderLevel.Off : RecorderLevel.Minimal;
+                var note = RecorderHealth.Note(g.Name, level, lasted, again: f.Level != null);
+                f = f with { Level = level, Reason = note, At = Clock(), Build = build };
+                logs.Add(note);
             }
         }
-        if (!changed) return;
-        try { Store.SaveGame(g.Id, rec); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't save its record: {e.Message}"); }
+        if (f == was) return;
+        lock (_recorderLock)
+        {
+            var now = Store.LoadGame(g.Id);
+            if (Guarded.Of(now) == was)
+            {
+                f.To(now);
+                logs.ForEach(RecorderLog);
+                try { Store.SaveGame(g.Id, now); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't save its record: {e.Message}"); }
+            }
+            Guarded.Of(now).To(rec);   // the state shows what the record holds
+        }
+    }
+
+    /// <summary>A record's crash guard fields (<see cref="GuardRecorder"/>).</summary>
+    readonly record struct Guarded(RecorderLevel? Level, string? Reason, DateTimeOffset? At, string? Build, string? Seen, DateTimeOffset? InstalledAt)
+    {
+        public static Guarded Of(GameRecord r) => new(r.RecorderLevel, r.RecorderLevelReason, r.RecorderLevelAt, r.RecorderLevelBuild, r.RecorderSessionSeen, r.RecorderInstalledAt);
+
+        public void To(GameRecord r) => (r.RecorderLevel, r.RecorderLevelReason, r.RecorderLevelAt, r.RecorderLevelBuild, r.RecorderSessionSeen, r.RecorderInstalledAt) =
+            (Level, Reason, At, Build, Seen, InstalledAt);
     }
 
     void ResetLevel(GameRecord rec) => (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelBuild, rec.RecorderLevelAt) = (null, null, null, Clock());
