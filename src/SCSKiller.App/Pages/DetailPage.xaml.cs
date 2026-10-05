@@ -238,6 +238,8 @@ public sealed partial class DetailPage : Page
 
     void OnUseDefault(object _, RoutedEventArgs __) => SetRecord(null);
 
+    void OnTryRecorderAgain(object _, RoutedEventArgs __) => Set((vm, p) => vm.TryAgainPending = p, true, id => App.Core.ResetRecorderHealth(id));
+
     void SetRecord(bool? on) => Set((vm, p) => vm.RecordPending = p, on ?? App.Core.Settings.RecordAllGames,
         id => App.Core.SetRecorderOverride(id, on switch { true => RecorderOverride.On, false => RecorderOverride.Off, null => RecorderOverride.Default }));
 

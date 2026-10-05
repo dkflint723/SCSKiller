@@ -87,7 +87,10 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
   never take (`AppStore.GameDir`):
   - `state.json`: the game's record (status, learned cache keys, last warm). A save writes only the fields its
     holder changed since loading the record, onto the stored one re-read under a lock across processes (sets merge
-    by what was added and removed), so a long compile never puts back what a game's exit saved meanwhile;
+    by what was added and removed), so a long compile never puts back what a game's exit saved meanwhile. The recorder's
+    crash guard keeps its level there (`RecorderLevel`, null = Full; `RecorderLevelReason`, `RecorderLevelAt`,
+    `RecorderLevelBuild`), the last launch it judged (`RecorderSessionSeen`, its `#session` stamp) and when our proxy
+    went in (`RecorderInstalledAt`; see [Recorder](#recorder), "Crash guard");
   - `*.lock`: the locks the app, the command line and scheduled tasks take turns on, in any session (the file opened
     exclusively), for `state.json` and `recording.db`, and `compile.lock`, held for a whole compile of the game;
   - `plan.bin`: the plan (hash-only); `plan-<hash>.keys`: its planner-made pipelines; `warm-<hash>.keys`: the inputs of
@@ -666,6 +669,29 @@ The recorder is `proxy/`'s `d3d12.dll`, placed next to the game's exe with a `sc
   call NVAPI themselves: with the hooks in, FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver
   (`nvwgf2umx.dll`, a fail-fast) 4 s after launch, every time. Frame generation outside the game's folder (Lossless
   Scaling, the driver's own) isn't seen.
+- **Crash guard** (`RecorderHealth`, `ScsKiller.GuardRecorder`, app only): a recorded launch that closed early steps the
+  recorder down for that game, Full, then Minimal (`ScsKiller.IniText` writes `frames=0` and `nvapi=0`: pipelines
+  only), then Off (`ScsKiller.SkipCrashed`: Reconcile takes it out through the usual removal, and neither "record all"
+  nor the game's switch On puts it back). Judged in every evaluation (a watched exit's refresh, a scan, so also at the
+  next start for a launch while the app was closed), only once the game no longer runs, and only the csv's last
+  `#session` of the game's exe that started after the install (`GameRecord.RecorderInstalledAt`; a recorder from before
+  the guard counts from when an evaluation first sees it), after the level's start (`RecorderLevelAt`) and after the
+  last launch judged (`RecorderSessionSeen`): each launch is judged once. Early means no `#end` and under 45 s
+  (`RecorderHealth.Threshold`): from the `#session` to the watched run's last sighting (`GameRecord.LastPlay`, when it
+  holds the `#session`); without a watched run, to the launch's last frame and last create, but only when the frame log
+  is of this launch, or the frame hooks were on (Full, no frame generation) and it has none of this launch (no frame
+  presented). A launch with `#end`, longer, without creates (and no watched run) or with neither a watched run nor
+  frame evidence (Minimal: an Unreal game ends itself without `#end`, its creates may stop early) is fine. Another
+  build of the game (`Game.Version`, else the exe's size and write time, against `RecorderLevelBuild`) or the game
+  page's "Try again" (`IScsKiller.ResetRecorderHealth`) puts it back to Full; the judged launches stay judged. Each step
+  is a line in `recorders.log` and the game page's note (`GameState.RecorderLevelReason`). Accepted limits: a game quit
+  on purpose within 45 s without `#end` counts, and a crash whose process Windows Error Reporting keeps alive past 45 s
+  doesn't.
+- **Writes into the game folder**: the proxy and `scskiller.ini` are written to `d3d12.dll.scskiller-new` and
+  `scskiller.ini.scskiller-new`, read back (the dll by SHA-256), then renamed over the real name (`ScsKiller.Place`):
+  a write cut off leaves no half file under a name the game loads (REFramework copies only `*.dll`), and an update keeps
+  the old proxy whole until the rename. The temp names are the recorder's own to the install watcher, and every removal
+  deletes them whatever they hold; the offline session journals them too.
 - **One recorder per process**: the first copy of the proxy to load claims the process (a named mutex with its pid, in
   `DllMain`, before any hook); any other copy forwards every export as the first does (the system dll, or `next=`'s)
   and hooks nothing, writes nothing. The recorder logs the other copies at its first device.

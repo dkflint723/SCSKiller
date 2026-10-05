@@ -26,6 +26,10 @@ All notable changes to the SCSKiller app and command line. The format follows
 - FINAL FANTASY XVI: SCSKiller reads the game's pipeline list (`ffxvi.pspc`) with every pipeline's shaders and root
   signature. On NVIDIA it compiles all of them without a recording (about 57,000 pipelines); on AMD it needs a
   recording, since AMD's cache also depends on pipeline state the list doesn't give.
+- The recorder steps back by itself in a game that closes within 45 seconds of starting with it (no clean exit): the
+  first time it records pipelines only (no frame timing or NVAPI hooks), the second time it's taken out of that game.
+  The game page and the log say what happened; "Try again" on the game page, or the game's next update, puts it back
+  in full.
 
 ### Changed
 
@@ -50,6 +54,9 @@ All notable changes to the SCSKiller app and command line. The format follows
 - An Unreal game with one shader library SCSKiller can't read compiles the shaders of its other libraries instead of
   failing; the index's log names the library it skipped.
 - `scskiller index --out` writes a big game's index without running out of memory.
+- An install or update of the recorder cut off midway (a full disk, SCSKiller closed) no longer leaves half a
+  `d3d12.dll` or `scskiller.ini` in the game folder: both are written to a temp name, checked and then renamed into
+  place, and an update keeps the old recorder whole until then.
 - The recorder records in RE Engine games with REFramework installed (RE Requiem, Onimusha: Way of the Sword, PRAGMATA
   and others): REFramework reports the game's DLLs from its `_storage_` folder, where the recorder looked for its files
   and so stayed a pass-through. The first launch after the recorder went in no longer disarms it either. Removing the

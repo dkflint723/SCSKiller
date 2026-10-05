@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -552,6 +553,7 @@ public sealed partial class ScsKiller : IScsKiller
         try { ours = IsOurProxy(dll); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { ours = rec.RecorderFiles.ContainsKey("d3d12.dll"); }   // held by the game
         var recorderUnused = ours && RecorderUnused(rec.LastPlay, session, dll);
+        if (ManageRecorders) GuardRecorder(g, rec, ours && sessionDir == exeDir && antiCheat == AntiCheat.None, frames);   // not an offline session's
         // the recorder is never installed next to anti-cheat, nor in a game the user added before they confirm its folder
         var unconfirmed = Unconfirmed(g);
         var noRecording = antiCheat != AntiCheat.None ? $"which {(antiCheat == AntiCheat.Other ? "its anti-cheat" : antiCheat)} blocks"
@@ -591,8 +593,64 @@ public sealed partial class ScsKiller : IScsKiller
                 ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RecorderUnused = recorderUnused, RootUnconfirmed = unconfirmed,
                 ReFramework = antiCheat == AntiCheat.None && ReFramework.Detect(exeDir),
                 FrameGen = antiCheat == AntiCheat.None ? FrameGen.Detect(exeDir, g.InstallDir) : null,
-                RecordingNotNeeded = RecordingNotNeeded(engine, check, Vendor.Caps) && !NeedsRtRecording(rec.Plan?.Stats) },
+                RecordingNotNeeded = RecordingNotNeeded(engine, check, Vendor.Caps) && !NeedsRtRecording(rec.Plan?.Stats),
+                RecorderLevel = rec.RecorderLevel ?? RecorderLevel.Full, RecorderLevelReason = rec.RecorderLevel != null ? rec.RecorderLevelReason : null },
             rec, ours, exeDir);
+    }
+
+    /// <summary>The crash guard (<see cref="RecorderHealth"/>), app only. Another build of the game puts the recorder back to
+    /// Full; with <paramref name="judge"/> (our proxy in, its csv in the game folder), the last launch since the install and
+    /// the level's start, once the game is no longer running, steps it down when it closed early: Full to Minimal, Minimal to
+    /// Off. Reconcile acts on the level: the ini's hook switches (<see cref="IniText"/>), the removal (<see cref="SkipCrashed"/>).</summary>
+    void GuardRecorder(Game g, GameRecord rec, bool judge, FrameReport? frames)
+    {
+        var exeDir = Path.GetDirectoryName(g.ExePath)!;
+        var build = Build(g, g.ExePath);
+        bool changed = false;
+        if (rec.RecorderLevel != null && rec.RecorderLevelBuild != build)
+        {
+            RecorderLog($"{g.Name}: the game was updated: the recorder records in full again");
+            ResetLevel(rec);
+            changed = true;
+        }
+        // a recorder from before the guard: only the launches from now on count
+        if (judge && rec.RecorderInstalledAt == null) (rec.RecorderInstalledAt, changed) = (Clock(), true);
+        if (judge && rec.RecorderLevel != RecorderLevel.Off
+            && RecorderHealth.Judge(Path.Combine(exeDir, "scskiller_creates.csv"), Path.GetFileName(g.ExePath),
+                Math.Max(rec.RecorderInstalledAt!.Value.ToUnixTimeMilliseconds(), rec.RecorderLevelAt?.ToUnixTimeMilliseconds() ?? 0),
+                long.TryParse(rec.RecorderSessionSeen, CultureInfo.InvariantCulture, out var seen) ? seen : 0, rec.LastPlay, frames,
+                framesExpected: rec.RecorderLevel == null && FrameGen.Detect(exeDir, g.InstallDir) == null) is { } v
+            && !GameRunning(g))   // a launch still running has no #end yet
+        {
+            rec.RecorderSessionSeen = v.Session.ToString(CultureInfo.InvariantCulture);
+            changed = true;
+            if (v.EarlyFailure is { } lasted)
+            {
+                var level = rec.RecorderLevel == RecorderLevel.Minimal ? RecorderLevel.Off : RecorderLevel.Minimal;
+                (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelAt, rec.RecorderLevelBuild) = (level, RecorderHealth.Note(g.Name, level, lasted), Clock(), build);
+                RecorderLog(rec.RecorderLevelReason);
+            }
+        }
+        if (!changed) return;
+        try { Store.SaveGame(g.Id, rec); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't save its record: {e.Message}"); }
+    }
+
+    void ResetLevel(GameRecord rec) => (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelBuild, rec.RecorderLevelAt) = (null, null, null, Clock());
+
+    public void ResetRecorderHealth(string gameId)
+    {
+        lock (_recorderLock)
+        {
+            var s = Find(gameId);
+            var rec = Store.LoadGame(gameId);
+            if (rec.RecorderLevel == null) return;
+            ResetLevel(rec);
+            Store.SaveGame(gameId, rec);
+            RecorderLog($"{s.Game.Name}: the recorder records in full again (Try again)");
+            Refresh(s.Game);   // Reconcile reads the level from the game's state
+            Reconcile(Find(gameId));
+        }
     }
 
     GameState WithRecorder(GameState s, GameRecord rec, bool ours, string exeDir)
@@ -618,6 +676,13 @@ public sealed partial class ScsKiller : IScsKiller
         .. new[] { "recording.all.db", "recording.all.db.key" }.Select(f => Path.Combine(Store.GameDir(g.Id), f))];   // until migrated
 
     static readonly string[] RecorderDataFiles = ["scskiller.db", "scskiller_creates.csv", "scskiller.log", FrameLog.FileName];
+
+    /// <summary>The temp names the proxy and the ini are written to before they're renamed into place (<see cref="Place"/>): a
+    /// write cut off leaves one, never loaded under that name, deleted with the recorder whatever it holds.</summary>
+    static readonly string[] RecorderTempFiles = ["d3d12.dll" + TempSuffix, "scskiller.ini" + TempSuffix];
+
+    /// <summary>What a recorder of ours leaves in the folder once the proxy is gone: its data files, the keys file, temp names.</summary>
+    static IEnumerable<string> LeftFiles => [.. RecorderDataFiles, Recordings.KeysFile, .. RecorderTempFiles];
 
     readonly ConcurrentDictionary<string, (long Bin, DateTime Written, long Csv, PlayWindow? Played, FrameReport? Report)> _frames = new();
 
@@ -2166,7 +2231,8 @@ public sealed partial class ScsKiller : IScsKiller
         SkipVulkanMod = "vkd3d-proton runs the game on Vulkan, whose pipelines a D3D12 warm doesn't compile",
         SkipNeedsAdmin = "the game folder needs administrator", SkipNotDx12 = "not DirectX 12", SkipUnsupported = "not supported yet",
         SkipShaderMod = "an HDR mod outside the exe's folder changes every pipeline",
-        SkipManual = "game folder not confirmed";
+        SkipManual = "game folder not confirmed",
+        SkipCrashed = "the game closed early twice with it";   // RecorderLevel.Off (RecorderHealth)
 
     /// <summary>Why a game whose ReShade add-on adds to every root signature, in a layer a copy can't reproduce
     /// (<see cref="ReShadeInstall.Blocks"/>), isn't compiled.</summary>
@@ -2203,6 +2269,7 @@ public sealed partial class ScsKiller : IScsKiller
         : s.Engine == null || s.Status == GameStatus.Unsupported ? SkipUnsupported
         : !s.Engine.GraphicsApi.Contains("D3D12") ? SkipNotDx12   // the proxy is d3d12.dll; "D3D11 or D3D12" may run on it
         : modSkip != null ? modSkip   // ReShade, OptiScaler, another wrapper: never replaced, chained only when the user asks
+        : s.RecorderLevel == RecorderLevel.Off ? SkipCrashed   // the switch On too, until reset
         : s.Game.ExePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase) ? SkipNeedsAdmin
         : null;
 
@@ -2426,7 +2493,7 @@ public sealed partial class ScsKiller : IScsKiller
             var rec = Store.LoadGame(gameId);
             var dirs = new[] { rec.RecorderExe ?? rec.RecorderMoveFrom, g.ExePath }.OfType<string>().Select(Path.GetDirectoryName).OfType<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
-            bool Left(string dir) => IsOurProxy(Path.Combine(dir, "d3d12.dll")) || RecorderDataFiles.Append(Recordings.KeysFile).Any(f => File.Exists(Path.Combine(dir, f)));
+            bool Left(string dir) => IsOurProxy(Path.Combine(dir, "d3d12.dll")) || LeftFiles.Any(f => File.Exists(Path.Combine(dir, f)));
             if (rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || dirs.Any(Left))
             {
                 if (GameRunning(g)) throw new InvalidOperationException($"{g.Name} is running: close the game first");
@@ -2633,7 +2700,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (clean) Arm(g, gen);
         }
         // no recorder of ours here: what one left (an earlier version's recorder off, a file that was locked) goes
-        else if (!want && !ours && rec.RecorderExe == null && RecorderDataFiles.Append(Recordings.KeysFile).Any(f => File.Exists(Path.Combine(dir, f)))
+        else if (!want && !ours && rec.RecorderExe == null && LeftFiles.Any(f => File.Exists(Path.Combine(dir, f)))
                  && !GameRunning(g))
             try
             {
@@ -2736,7 +2803,14 @@ public sealed partial class ScsKiller : IScsKiller
             }
             throw new InvalidOperationException($"{g.Name} is running");
         }
-        try { File.Copy(src, dll, overwrite: true); }
+        try
+        {
+            Place(dll, temp =>
+            {
+                File.Copy(src, temp, overwrite: true);
+                InstallStep?.Invoke("temp");
+            }, temp => Sha256(temp) == Sha256(src));
+        }
         catch when (chain)
         {
             File.Move(Path.Combine(dir, ChainName), dll);
@@ -2750,12 +2824,13 @@ public sealed partial class ScsKiller : IScsKiller
         try
         {
             rec.RecorderFiles["d3d12.dll"] = Sha256(dll);
+            rec.RecorderInstalledAt = Clock();   // the crash guard judges only the launches after it
             InstallStep?.Invoke("copied");
             antiCheat = GameFiles.DetectAntiCheat(g, quick: true);   // an update may have added one since the check, likely next to the exe
             if (antiCheat == AntiCheat.None && !GameFolderWrite(g)) throw new InvalidOperationException($"{g.Name} started while the recorder was installed");
             if (antiCheat == AntiCheat.None && iniOurs)
             {
-                File.WriteAllText(ini, IniText(g, rec));
+                PlaceText(ini, IniText(g, rec));
                 rec.RecorderFiles["scskiller.ini"] = Sha256(ini);
             }   // else: the user's own scskiller.ini, left alone and not tracked
         }
@@ -2958,7 +3033,8 @@ public sealed partial class ScsKiller : IScsKiller
     readonly ConcurrentDictionary<string, bool> _rollbacks = new();
 
     /// <summary>Called by Install with "chain" (before it saves a mod's rename), "copy" (after its anti-cheat check, before
-    /// it copies the proxy), "copied" and "keys" (after its full checks, before the keys file and the record) (tests).</summary>
+    /// it copies the proxy), "temp" (the proxy at its temp name, not yet renamed into place), "copied" and "keys" (after its
+    /// full checks, before the keys file and the record) (tests).</summary>
     public Action<string>? InstallStep { get; set; }
 
     /// <summary>Called by a scan's evaluation with "checked" (its full anti-cheat check came back clean, before it stores
@@ -2987,7 +3063,9 @@ public sealed partial class ScsKiller : IScsKiller
                 ? $"; the recording limit per game (Settings): no new records once scskiller.db has this many bytes\r\nmax_db_bytes={cap}\r\n" : "")
             + (next == null ? "" : $"; the game's own d3d12.dll (a mod), renamed by SCSKiller and put back when the recorder is removed\r\nnext={next}\r\n")
             + (FrameGen.Detect(dir, g.InstallDir) is { } fg
-                ? $"; {fg} wraps the swap chain and calls NVAPI: no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n" : "");
+                ? $"; {fg} wraps the swap chain and calls NVAPI: no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n"
+                : rec.RecorderLevel == RecorderLevel.Minimal
+                ? "; the game closed early with the recorder (SCSKiller's crash guard): no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n" : "");
     }
 
     /// <summary>Rewrites SCSKiller's own scskiller.ini when its limit line is out of date (the setting changed, an import
@@ -3004,12 +3082,34 @@ public sealed partial class ScsKiller : IScsKiller
             if (File.Exists(ini) ? !rec.RecorderFiles.TryGetValue("scskiller.ini", out var h) || h != Sha256(ini) : !IsOurProxy(Path.Combine(dir, "d3d12.dll"))) return;
             var text = IniText(g, rec);
             if (File.Exists(ini) && File.ReadAllText(ini) == text) return;
-            File.WriteAllText(ini, text);
+            PlaceText(ini, text);
             rec.RecorderFiles["scskiller.ini"] = Sha256(ini);
             Store.SaveGame(g.Id, rec);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecorderLog($"{g.Name}: couldn't update the recording limit: {e.Message}"); }
     }
+
+    /// <summary>Writes a recorder file to its temp name (<see cref="RecorderTempFiles"/>), checks it, then renames it over
+    /// <paramref name="path"/>: a write cut off (a full disk, the app killed) never leaves half a d3d12.dll or ini under the
+    /// name the game loads, and an update leaves the old one whole. A failed write deletes its temp file.</summary>
+    static void Place(string path, Action<string> write, Func<string, bool> check)
+    {
+        var temp = path + TempSuffix;
+        try
+        {
+            write(temp);
+            if (!check(temp)) throw new IOException($"{temp} doesn't read back as written");
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(temp); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // the removal deletes it
+            throw;
+        }
+    }
+
+    static void PlaceText(string path, string text) => Place(path, temp => File.WriteAllText(temp, text), temp => File.ReadAllText(temp) == text);
 
     /// <summary>The recording is imported, then the recorder's data files are deleted. False when the game started before
     /// they were: they're left.</summary>
@@ -3048,6 +3148,8 @@ public sealed partial class ScsKiller : IScsKiller
         // a recorder installed before SCSKiller tracked its files (or by hand) is still ours: the proxy carries our export
         var dll = Path.Combine(dir, "d3d12.dll");
         if (IsOurProxy(dll)) File.Delete(dll);
+        foreach (var temp in RecorderTempFiles.Select(f => Path.Combine(dir, f)))   // a write cut off: ours by its name, whatever it holds
+            if (File.Exists(temp)) File.Delete(temp);
         RemoveStoredCopies(dir, rec.RecorderChained, name, log);
         if (rec.RecorderChained is { } c)
         {
@@ -3150,7 +3252,7 @@ public sealed partial class ScsKiller : IScsKiller
         }
         if (runs()) return false;   // it may have started while the merge waited for the lock
         Exception? first = null;
-        foreach (var f in RecorderDataFiles.Append(Recordings.KeysFile))   // a locked file doesn't keep the others
+        foreach (var f in LeftFiles)   // a locked file doesn't keep the others
             try { File.Delete(Path.Combine(dir, f)); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { first ??= e; }
         if (first != null) throw first;
@@ -4098,7 +4200,7 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>The files the app and the proxy write next to the exe: none is an anti-cheat marker.</summary>
-    static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, Recordings.KeysFile, Recordings.KeysFile + ".tmp", "d3d12.dll", "scskiller.ini", ChainName, ArmedFile],
+    static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, Recordings.KeysFile, Recordings.KeysFile + ".tmp", "d3d12.dll", "scskiller.ini", .. RecorderTempFiles, ChainName, ArmedFile],
         StringComparer.OrdinalIgnoreCase);
     static readonly HashSet<string> StoredOwnFiles = new(["d3d12.dll", ChainName], StringComparer.OrdinalIgnoreCase);
 

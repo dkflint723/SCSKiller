@@ -276,7 +276,9 @@ public sealed record GameState(
     bool RecordingNotNeeded = false,   // its files name every pipeline on this GPU's cache (ScsKiller.RecordingNotNeeded): "record all" leaves it out
     bool OfflineEligible = false,      // an EasyAntiCheat game of Games.OfflineEac on D3D12: an offline session may be offered
     bool OfflineRecord = false,        // the user allowed offline sessions for it (IScsKiller.SetOfflineRecording)
-    bool OfflineRunning = false);      // a session SCSKiller started runs, or its files aren't out of the game folder yet
+    bool OfflineRunning = false,       // a session SCSKiller started runs, or its files aren't out of the game folder yet
+    RecorderLevel RecorderLevel = RecorderLevel.Full,   // the crash guard's step (GameRecord.RecorderLevel); Off: RecorderSkip is ScsKiller.SkipCrashed
+    string? RecorderLevelReason = null);   // why it isn't Full, for the game page; null = Full
 
 /// <summary>A launch's frame times from the recorder (<see cref="App.FrameLog"/>): its length, the startup stretch before
 /// play (the game's own precompile and first load), the 1% low of play, every frame of 50 ms or more, and for a graph
@@ -304,6 +306,10 @@ public sealed record CarefulCompile(bool On, double? LaunchCompiled, TimeSpan? E
 
 /// <summary>A game's recorder choice: Default follows <see cref="Settings.RecordAllGames"/>; On/Off override it.</summary>
 public enum RecorderOverride { Default, On, Off }
+
+/// <summary>The crash guard's step down for a game whose launches with the recorder closed early (<see cref="App.RecorderHealth"/>):
+/// Minimal records pipelines only (no frame-timing or NVAPI hooks); Off takes the recorder out until it is reset.</summary>
+public enum RecorderLevel { Full, Minimal, Off }
 
 /// <summary>A recording downloaded from the community database (docs/plan-db.md): its PSO records, when it came, and
 /// whether this PC's own recording is merged with it.</summary>
@@ -466,4 +472,7 @@ public interface IScsKiller
     /// the recording), never the recorder itself; the next compile plans from the game files. False when there was nothing
     /// to delete. Throws InvalidOperationException while the game runs or a compile of it is in progress.</summary>
     bool ClearRecording(string gameId);
+    /// <summary>The game page's "Try again": the recorder back to <see cref="RecorderLevel.Full"/> for the game, installed again
+    /// by its switch or "record all"; a launch already judged isn't judged again.</summary>
+    void ResetRecorderHealth(string gameId);
 }

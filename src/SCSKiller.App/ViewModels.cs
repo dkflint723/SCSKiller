@@ -952,10 +952,18 @@ public sealed class DetailVm(string id) : Bindable
         : !NoAntiCheat
         ? $"Not available: {Fmt.AntiCheatName(s.AntiCheat)} treats an extra d3d12.dll as tampering, so this game is compiled from its files only."
         : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records."
+        : s.RecorderSkip == ScsKiller.SkipCrashed && s.RecorderLevelReason is { } crashed ? $"{Sentence(crashed)}. It stays out until the game updates or you try again."
         : s.RecorderSkip is { } skip ? $"Not available: {skip}."
+        : s.RecorderLevel == RecorderLevel.Minimal && s.RecorderLevelReason is { } minimal ? $"{Sentence(minimal)}."
+          + (s.RecorderNote is { } pending ? $" ({Sentence(pending)})" : "")
         : s.RecordingNotNeeded && !RecordOn ? ScsKiller.RecordingNotNeededNote
         : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time."
           + (s.RecorderNote is { } note ? $" ({Sentence(note)})" : "");
+
+    // The crash guard stepped the recorder down (RecorderHealth): "Try again" puts it back to full
+    public bool? TryAgainPending { get; set; }
+    public bool ShowTryAgain => s.RecorderLevel != RecorderLevel.Full && NoAntiCheat;
+    public bool CanTryAgain => TryAgainPending == null && RecordPending == null;
 
     // A mod's d3d12.dll where the recorder goes (ReShade, a wrapper): off = the game isn't recorded; on = the recorder chains to it
     public bool HasMod => s.RecorderMod != null && s.RecorderSkip is not (ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipManual or ScsKiller.SkipUnsupported or ScsKiller.SkipNotDx12);
@@ -1283,7 +1291,7 @@ public sealed class SettingsVm : Bindable
         {
             var games = App.Core.Games;
             var skipped = games.Where(g => g.RecorderSkip is ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipForeignDll or ScsKiller.SkipModNotChainable
-                    or ScsKiller.SkipVulkanMod or ScsKiller.SkipNeedsAdmin)
+                    or ScsKiller.SkipVulkanMod or ScsKiller.SkipNeedsAdmin or ScsKiller.SkipCrashed)
                 .GroupBy(g => g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
             int n = games.Count(g => g.RecorderInstalled), unneeded = games.Count(g => g.RecordingNotNeeded && !g.RecorderEffective);
             return $"Recording in {n} game{(n == 1 ? "" : "s")}" + string.Concat(skipped) + (unneeded > 0 ? $" · {unneeded} not needed" : "");

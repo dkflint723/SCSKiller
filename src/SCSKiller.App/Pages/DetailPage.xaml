@@ -318,6 +318,9 @@
                                 <TextBlock Text="{x:Bind Vm.RecordNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                                 <HyperlinkButton Content="{x:Bind Vm.UseDefaultText, Mode=OneWay}" Click="OnUseDefault" Padding="0" Margin="0,2,0,0"
                                                  Visibility="{x:Bind Vm.ShowUseDefault, Mode=OneWay}" />
+                                <HyperlinkButton Content="Try again" Click="OnTryRecorderAgain" Padding="0" Margin="0,2,0,0"
+                                                 Visibility="{x:Bind Vm.ShowTryAgain, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanTryAgain, Mode=OneWay}"
+                                                 ToolTipService.ToolTip="Puts the recorder back in full for this game; if the game closes early again, it steps down again" />
                             </StackPanel>
                             <ToggleSwitch x:Name="RecordSwitch" Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent=""
                                           IsOn="{x:Bind Vm.RecordOn, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanToggleRecord, Mode=OneWay}" Toggled="OnRecordToggled"
