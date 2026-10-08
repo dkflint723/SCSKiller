@@ -67,7 +67,7 @@ public class NorthlightReaderTests
     }
 
     /// <summary>A DXIL library container: a program header (lib_6_3) and an RDAT function table.</summary>
-    static byte[] Library(params (int Kind, string Name, int Payload)[] fns)
+    internal static byte[] Library(params (int Kind, string Name, int Payload)[] fns)
     {
         var rdatOnly = RtCollectionTests.Library(fns);
         var rdat = rdatOnly[36..];

@@ -56,6 +56,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   a compile already covered (the same shaders and root signature under other state on NVIDIA, what an HDR mod's layer
   makes of them while compiles run through the same layer) don't count either.
 - `scskiller index --out` writes a big game's index without running out of memory.
+- **CONTROL Resonant** compiles without a recording on NVIDIA (upstream issue 5): SCSKiller reads the game's effect files
+  (`data\shaders\build\pc_dx12\*.binrfx`), which name each of their about 930 pipelines, and builds the three root
+  signatures the game creates. Measured against a recording of the game: every recorded pipeline whose shaders are in
+  those files is planned, with its root signature. That is about 4 in 5 of the game's pipelines: its material shaders
+  are packed where SCSKiller can't read them, and its ray tracing needs a recording too, so the game page still says a
+  recording improves it. This reader is the fork's own: the game shows as engine "Northlight2", not "Carved". Alan
+  Wake 2's effect files are laid out differently and aren't read yet.
 
 ## [1.2.4] - 2026-10-08
 

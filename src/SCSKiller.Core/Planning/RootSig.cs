@@ -12,7 +12,7 @@ namespace SCSKiller.Core.Planning;
 /// are read from Epic's source (D3D12RootSignature.cpp: FD3D12RootSignatureDesc; D3D12Util.cpp: InitShaderRegisterCounts and
 /// the bound-shader-state quantizer; D3D12RHI.h: MAX_*), for resource binding tier 3 (every NVIDIA GPU SCSKiller supports).
 /// REDengine 3's are one per kind of pipeline (<see cref="BuildRed3"/>), Northlight's one graphics and one compute
-/// (<see cref="BuildNorthlight"/>).</summary>
+/// (<see cref="BuildNorthlight"/>), CONTROL Resonant's one per kind of pipeline (<see cref="BuildNorthlight2"/>).</summary>
 public static unsafe class RootSig
 {
     /// <summary>One construction rule per range of engine versions (each rule holds until the next one's version). 4.20/4.21
@@ -35,6 +35,7 @@ public static unsafe class RootSig
         Northlight, // Northlight (Control, DX12): one graphics and one compute root signature, see BuildNorthlight
         Dagor,  // Dagor Engine (DX12): built from each shader's header, constant buffers as root CBVs, see DagorRootSig
         DagorCbvRanges,   // the same with constant buffers in descriptor tables (War Thunder)
+        Northlight2, // CONTROL Resonant's Northlight (RFX 'O' effect files): one root signature per kind of pipeline, see BuildNorthlight2
     }
 
     /// <summary>The rule a game's engine (an Unreal version, REDengine 3) builds with; null = none known. A fork other than FF7's gets its base
@@ -44,6 +45,7 @@ public static unsafe class RootSig
     {
         if (e.Family == RedEngine.RedEngineReader.Family) return Rule.Red3;
         if (e.Family == Northlight.NorthlightReader.Family) return Rule.Northlight;
+        if (e.Family == Northlight.Northlight2Reader.Family) return Rule.Northlight2;
         if (e.Family == Dagor.DagorReader.Family) return e.Fork == Dagor.DagorReader.CbvRangesFork ? Rule.DagorCbvRanges : Rule.Dagor;
         if (e.Family != "Unreal" || !System.Version.TryParse(e.Version, out var v)) return null;
         if (e.Fork == "GAME_FinalFantasy7Rebirth" && e.Version == "4.26") return Rule.Ff7;
@@ -75,7 +77,7 @@ public static unsafe class RootSig
     public static readonly byte[] Ue426Samplers = UeSamplers(0, 1000);
 
     /// <summary>The static samplers a rule's root signatures carry (4.25: the same six at s1000-s1005 in space 0; before: none).</summary>
-    public static byte[] StaticSamplers(Rule r) => r switch { Rule.Ue420 or Rule.Ue421 or Rule.Ue422 or Rule.Red3 or Rule.Northlight or Rule.Dagor or Rule.DagorCbvRanges => [], Rule.Ue425 => Ue425Samplers, _ => Ue426Samplers };
+    public static byte[] StaticSamplers(Rule r) => r switch { Rule.Ue420 or Rule.Ue421 or Rule.Ue422 or Rule.Red3 or Rule.Northlight or Rule.Northlight2 or Rule.Dagor or Rule.DagorCbvRanges => [], Rule.Ue425 => Ue425Samplers, _ => Ue426Samplers };
 
     static readonly byte[] Ue425Samplers = UeSamplers(1000, 0);
 
@@ -111,7 +113,7 @@ public static unsafe class RootSig
     /// GRHISupportsMeshShadersTier0 on mesh-shader GPUs and so denies the mesh/amplification stages it doesn't use</param>
     /// <param name="maxSrvs">the game's MAX_SRVS when it isn't the rule's (<see cref="MaxSrvsFor"/>); 0 = the rule's</param>
     public static Desc Build(Rule r, IReadOnlyDictionary<Stage, ShaderInfo> stages, bool meshTier, uint maxSrvs = 0) =>
-        r switch { Rule.Ff7 => BuildUe(stages), Rule.Red3 => BuildRed3(stages), Rule.Northlight => BuildNorthlight(stages), Rule.Dagor => Dagor.DagorRootSig.Build(stages), Rule.DagorCbvRanges => Dagor.DagorRootSig.Build(stages, cbvRanges: true), _ => BuildStock(r, stages, meshTier, maxSrvs) };
+        r switch { Rule.Ff7 => BuildUe(stages), Rule.Red3 => BuildRed3(stages), Rule.Northlight => BuildNorthlight(stages), Rule.Northlight2 => BuildNorthlight2(stages), Rule.Dagor => Dagor.DagorRootSig.Build(stages), Rule.DagorCbvRanges => Dagor.DagorRootSig.Build(stages, cbvRanges: true), _ => BuildStock(r, stages, meshTier, maxSrvs) };
 
     /// <summary>The stage sets the recording confirmed <see cref="BuildRed3"/> on: VS, VS+PS, VS+HS+DS, VS+HS+DS+PS,
     /// VS+GS+PS, VS+GS+HS+DS, CS.</summary>
@@ -170,7 +172,34 @@ public static unsafe class RootSig
         .. Enumerable.Range(0, 4).Select(b => new uint[] { 2, 0, (uint)b, 0, 0 }),
         [0, 0, 3, 64, 0, 1, 0], [0, 0, 0, 244000, 0, 1, 0]], AppendRanges: true, Version10: true);
 
-    static readonly Stage[] Ue4Stages = [Stage.Pixel, Stage.Vertex, Stage.Geometry, Stage.Hull, Stage.Domain];
+    /// <summary>CONTROL Resonant's root signatures, version 1.0, one per kind of pipeline: its recording's 1,382 PSOs of the
+    /// game's own (677 VS+PS, 111 MS+PS, 594 CS) create exactly these three. Per stage (VS or MS, and PS) a table of 12 CBVs
+    /// b4, 51 SRVs and 16 UAVs at offsets 0, 12 and 63, a table of 4 samplers and root CBVs b0-b3; for every stage 4 root
+    /// constants b0 space 1, 64 samplers in space 1 and SRV tables of 327680, 16384 and 65536 in spaces 1-3; a UAV u0 space 5
+    /// for the PS. Flags: input layout and HS, DS, GS, AS and MS denied (VS), VS, HS, DS, GS and AS denied (MS). Compute: the
+    /// same once, visible to every stage, no flags.</summary>
+    static Desc BuildNorthlight2(IReadOnlyDictionary<Stage, ShaderInfo> stages)
+    {
+        if (stages.ContainsKey(Stage.Compute)) return Northlight2Compute;
+        if (stages.Keys.Any(s => s is not (Stage.Vertex or Stage.Mesh or Stage.Pixel)) || stages.ContainsKey(Stage.Vertex) == stages.ContainsKey(Stage.Mesh))
+            throw new SerializeException($"CONTROL Resonant has no root signature for {string.Join('+', stages.Keys)}");
+        var mesh = stages.ContainsKey(Stage.Mesh);
+        uint[] vis = [Vis(mesh ? Stage.Mesh : Stage.Vertex), Vis(Stage.Pixel)];
+        return new(mesh ? 0x11Eu : 0x31D, [
+            [1, 0, 0, 1, 4], .. vis.Select(v => new uint[] { 0, v, 3, 4, 0, 0, 0 }),
+            .. vis.SelectMany(v => Enumerable.Range(0, 4).Select(b => new uint[] { 2, v, (uint)b, 0, 0 })),
+            [0, 0, 3, 64, 0, 1, 0], .. vis.Select(Northlight2Table), .. Northlight2Bindless, [0, vis[1], 1, 1, 0, 5, 0]], Version10: true, RangeOffsets: true);
+    }
+
+    static uint[] Northlight2Table(uint vis) => [0, vis, 2, 12, 4, 0, 0, 0, 51, 0, 0, 12, 1, 16, 0, 0, 63];
+    static readonly uint[][] Northlight2Bindless = [[0, 0, 0, 327680, 0, 1, 0], [0, 0, 0, 16384, 0, 2, 0], [0, 0, 0, 65536, 0, 3, 0]];
+
+    /// <summary>CONTROL Resonant's compute root signature (<see cref="BuildNorthlight2"/>).</summary>
+    public static readonly Desc Northlight2Compute = new(0, [
+        Northlight2Table(0), [0, 0, 3, 4, 0, 0, 0], .. Enumerable.Range(0, 4).Select(b => new uint[] { 2, 0, (uint)b, 0, 0 }),
+        [0, 0, 3, 64, 0, 1, 0], [1, 0, 0, 1, 4], .. Northlight2Bindless, [0, 0, 1, 1, 0, 5, 0]], Version10: true, RangeOffsets: true);
+
+    static readonly Stage[] Ue4Stages =[Stage.Pixel, Stage.Vertex, Stage.Geometry, Stage.Hull, Stage.Domain];
     static readonly Stage[] Ue5Stages = [Stage.Pixel, Stage.Vertex, Stage.Geometry, Stage.Mesh, Stage.Amplification];
 
     /// <summary>Stock UE (FD3D12RootSignatureDesc): per stage in priority order an SRV, sampler and UAV table (sizes from
