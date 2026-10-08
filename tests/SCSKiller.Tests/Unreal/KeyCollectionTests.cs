@@ -270,6 +270,69 @@ public class KeyCollectionTests : IDisposable
         Assert.Empty(page.Unnamed);
     }
 
+    /// <summary>A label before a key ("AES Key:", AESDumpster's "[+] Found AES key:", FModel's "mainKey") names no game: the
+    /// key is unnamed, so it is tried on every encrypted game, not on none. A list number before a name isn't part of it.</summary>
+    [Fact]
+    public void A_label_before_a_key_leaves_it_unnamed_and_a_list_number_goes()
+    {
+        var lines = KeyCollection.ParseFile(string.Join("\n", $"AES Key: 0x{K(40)}", $"Key = 0x{K(41)}", $"[+] Found AES key: 0x{K(42)}", $"Main Key {K(47)}",
+            $"1. Hogwarts Legacy: 0x{K(43)}", $"12) Alpha: {K(44)}", $"#3 Bravo 0x{K(45)}", $"7 Days to Die 0x{K(46)}", $"Key: 0x{K(48)} | Key Entropy: 3.56"));
+        Assert.Equal([new("Hogwarts Legacy", K(43)), new("Alpha", K(44)), new("Bravo", K(45)), new("7 Days to Die", K(46))], lines.Named);
+        Assert.Equal([K(40), K(41), K(42), K(47), K(48)], lines.Unnamed);
+        Assert.Equal(K(43), KeyCollection.ImportedCandidates(lines.Named, lines.Unnamed, ["Hogwarts Legacy"]).Tries[0].Key);
+
+        var fmodel = KeyCollection.ParseFile($$"""{"mainKey": "0x{{K(50)}}", "dynamicKeys": [{"guid": "1234", "key": "0x{{K(51)}}"}]}""");
+        Assert.Empty(fmodel.Named);
+        Assert.Equal([K(50), K(51)], fmodel.Unnamed);
+        var api = KeyCollection.ParseFile($$$"""{"status": 200, "data": {"build": "x", "mainKey": "{{{K(52)}}}"}}""");
+        Assert.Equal([K(52)], api.Unnamed);
+        var games = KeyCollection.ParseFile($$"""[{"game": "Hogwarts Legacy", "mainKey": "0x{{K(53)}}"}]""");
+        Assert.Equal([new("Hogwarts Legacy", K(53))], games.Named);   // the object's name column names it
+    }
+
+    /// <summary>A page whose charset .NET doesn't know (or a typo) is read as UTF-8, not failed without a backoff.</summary>
+    [Theory]
+    [InlineData("windows-1251")]
+    [InlineData("utf-99")]
+    [InlineData("iso-8859-1")]
+    public async Task A_page_in_an_unknown_charset_is_read(string charset)
+    {
+        var server = new Server(() => { var m = Html(Page); m.Content.Headers.ContentType!.CharSet = charset; return m; });
+        var (list, problem) = await new KeyCollection(_dir, server, _clock).ListAsync(Url, true);
+        Assert.Equal((9, (string?)null), (list?.Count, problem));
+    }
+
+    /// <summary>A saved page is cached before the imported keys are tried, so it serves the other games' lookups also when
+    /// an imported key unlocks this one.</summary>
+    [Fact]
+    public async Task A_saved_page_is_kept_when_an_imported_key_unlocks_the_game()
+    {
+        var server = new Server(() => Html("<html><script></script></html>", HttpStatusCode.Unauthorized));
+        var keys = new KeyCollection(_dir, server, _clock);
+        Directory.CreateDirectory(_dir);
+        var file = Path.Combine(_dir, "mine.txt");
+        File.WriteAllText(file, $"Wardogs 0x{K(60)}");
+        Assert.Null(keys.ImportFile(file).Problem);
+        var r = await keys.LookUpAsync(Url, ["Wardogs"], k => k == K(60), true, savedPage: Page);
+        Assert.Equal((KeyLookupOutcome.Unlocked, "Wardogs"), (r.Outcome, r.Entry));
+        Assert.Equal(9, (await keys.ListAsync(Url, false)).List!.Count);
+        Assert.Equal(0, server.Requests);
+    }
+
+    /// <summary>A saved page over 4 MB ("Webpage, Complete") says so, instead of passing for a page without keys.</summary>
+    [Fact]
+    public void A_saved_page_too_large_says_so()
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "page.html");
+        File.WriteAllText(path, Page + new string(' ', KeyCollection.MaxBytes));
+        var (page, problem) = KeyCollection.ReadSavedPage(path);
+        Assert.Null(page);
+        Assert.Contains("larger than 4 MB: save it as 'Webpage, HTML only'", problem);
+        File.WriteAllText(path, Page);
+        Assert.Equal((Page, (string?)null), KeyCollection.ReadSavedPage(path));
+    }
+
     static string Many(int i) => Convert.ToHexString(SHA256.HashData(BitConverter.GetBytes(i)));
 
     [Fact]
@@ -305,7 +368,7 @@ public class KeyCollectionTests : IDisposable
         Assert.Equal([K(3), K(4), K(9), K(10)], tried);   // the game's named entries, then the unnamed keys in file order
         Assert.Equal("0x" + K(10), stored.Stored(game)!.KeyString, ignoreCase: true);
         Assert.Contains("checking the key imported for \"Wardogs\"", log);
-        Assert.Contains("checking unnamed key #1", log);
+        Assert.Contains("checking 3 unnamed keys", log);   // one line for them all
         foreach (var text in log.Append(r.Message))
             foreach (var k in Enumerable.Range(0, 30).Select(K))
                 Assert.DoesNotContain(k, text, StringComparison.OrdinalIgnoreCase);
@@ -317,7 +380,7 @@ public class KeyCollectionTests : IDisposable
 
         var other = FakeGame(_dir, "Hotel") with { Id = "test:other" };
         var calls = 0;
-        var none = KeyCollection.TryImported(named, [.. Enumerable.Range(0, 60).Select(Many)], [other.Name], k => { calls++; return stored.Set(other, k, _ => false); });
+        var none = KeyCollection.TryImported(named, [.. Enumerable.Range(0, KeyCollection.MaxUnnamed + 10).Select(Many)], [other.Name], k => { calls++; return stored.Set(other, k, _ => false); });
         Assert.Equal((KeyLookupOutcome.NoWorkingKey, KeyCollection.MaxUnnamed, KeyCollection.MaxUnnamed), (none.Outcome, none.Tried, calls));
         Assert.Equal($"No working key ({KeyCollection.MaxUnnamed} tried).", none.Message);
         Assert.Null(stored.Stored(other));

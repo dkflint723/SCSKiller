@@ -114,10 +114,11 @@ static bool Confirm(string question)
     return false;
 }
 
-static async Task<ScsKiller> Open(bool rescan = false)
+static async Task<ScsKiller> Open(bool rescan = false, bool keyLookups = false)
 {
     var k = ScsKiller.CreateDefault();
     k.Log = new StderrLog();   // synchronous: a message logged just before exit still prints
+    k.KeyLookupsAfterScans = keyLookups;   // the scan command's own, awaited: any other command would exit during them
     await (rescan ? k.RescanAsync(CancellationToken.None) : k.ScanAsync(CancellationToken.None));
     return k;
 }
@@ -168,7 +169,8 @@ void Only(params string[] known)
 
 async Task<int> Scan(bool rescan)
 {
-    var k = await Open(rescan);
+    var k = await Open(rescan, keyLookups: true);
+    await k.KeyLookupPass;   // the encrypted games' key lookups (imported keys; the list with LookUpKeysOnline)
     Console.WriteLine($"GPU: {k.Vendor.Gpu.Name}, driver {k.Vendor.Gpu.DriverVersion} ({k.Vendor.Caps.Profile})");
     foreach (var s in k.Games) Row(s);
     return 0;
@@ -449,8 +451,10 @@ async Task<int> Key()
     if (args.Contains("--lookup"))
     {
         if (k.KeyProblem(g.Game.Id) is { } why && g.Engine?.Encrypted == true) Console.WriteLine(why);
-        var page = Opt("--page") is { } file ? File.ReadAllText(file) : null;
+        var (page, tooLarge) = Opt("--page") is { } file ? KeyCollection.ReadSavedPage(file) : (null, null);
+        if (tooLarge != null) return Fail(tooLarge);
         var r = await k.LookUpKeyAsync(g.Game.Id, page);
+        await k.KeyLookupPass;   // a saved page's: the other encrypted games, before the process exits
         if (r.Outcome != KeyLookupOutcome.Unlocked) return Fail(r.Message);
         await k.RescanAsync(CancellationToken.None);
         Console.WriteLine($"{r.Message} {g.Game.Name}: {k.Games.First(s => s.Game.Id == g.Game.Id).StatusReason}");

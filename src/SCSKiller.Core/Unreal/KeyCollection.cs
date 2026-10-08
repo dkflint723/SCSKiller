@@ -41,8 +41,8 @@ public sealed record KeyImport(int Named, int Unnamed, IReadOnlyList<KeyImportGa
 public sealed class KeyCollection
 {
     public const string DefaultUrl = "https://cs.rin.ru/forum/viewtopic.php?f=10&t=100672";
-    public const int MaxBytes = 4 << 20, MaxEntries = 20_000, MaxCandidates = 20, MaxName = 120, MaxImportBytes = 16 << 20, MaxUnnamed = 50,
-        MaxImportedUnnamed = 500;
+    public const int MaxBytes = 4 << 20, MaxEntries = 20_000, MaxCandidates = 20, MaxName = 120, MaxImportBytes = 16 << 20, MaxUnnamed = 500,
+        MaxImportedUnnamed = MaxUnnamed;   // every unnamed key kept is tried: a key check opens the containers once (KeyTrial)
     public static readonly TimeSpan AutoEvery = TimeSpan.FromHours(24), UserEvery = TimeSpan.FromHours(1), UserRetry = TimeSpan.FromMinutes(5),
         Timeout = TimeSpan.FromSeconds(20);
     public const string SecurityCheck = "the forum answered with a browser security check, which SCSKiller doesn't take: click Open list in browser, save the page (Ctrl+S), then Load saved page… (on the command line: --page <file>)";
@@ -83,6 +83,7 @@ public sealed class KeyCollection
         IProgress<string>? stage = null)
     {
         var known = names.ToList();
+        var saved = savedPage != null ? Import(url, savedPage) : default;   // cached first: the other games' lookups use it, whatever unlocks this one
         var had = ReadImported() ?? ([], []);
         var (mine, byName) = ImportedCandidates(had.Named, had.Unnamed, known);
         var memos = tried is { } t ? Remembered(t.File) : [];
@@ -95,7 +96,8 @@ public sealed class KeyCollection
             for (; local < mine.Count; local++)
             {
                 ct.ThrowIfCancellationRequested();
-                log?.Report($"checking {Mine(local)}");
+                if (local < byName || local == byName && mine.Count - local == 1) log?.Report($"checking {Mine(local)}");
+                else if (local == byName) log?.Report($"checking {mine.Count - local} imported unnamed keys");   // one line, not one per key
                 if (!trySet(mine[local].Key)) continue;
                 if (tried is { } found) Forget(found.File);
                 return new(KeyLookupOutcome.Unlocked, $"Unlocked with {Mine(local)}, from your imported keys.", mine[local].Name, local + 1);
@@ -108,7 +110,7 @@ public sealed class KeyCollection
             return local > 0 ? new(KeyLookupOutcome.NoWorkingKey, mineNote.TrimEnd(), Tried: local)
                 : new(KeyLookupOutcome.AlreadyTried, mine.Count == 0 ? "No imported key for this game." : "The imported keys for this game were already tried.");
         stage?.Report(savedPage != null ? "Checking the saved page…" : "Checking the community's key list…");
-        var (list, problem) = savedPage != null ? Import(url, savedPage) : await ListAsync(url, userRequested, ct);
+        var (list, problem) = savedPage != null ? saved : await ListAsync(url, userRequested, ct);
         if (list == null) return new(KeyLookupOutcome.FetchFailed, $"{mineNote}Couldn't get the key list: {problem}.", Tried: local);
         var stale = problem != null ? $" (the list couldn't be refreshed: {problem}; used the saved copy{(FetchedAt is { } at ? $" from {at.ToLocalTime():d MMM yyyy}" : "")})" : "";
         var imported = mine.Select(e => e.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -209,11 +211,18 @@ public sealed class KeyCollection
         finally { gate.Release(); }
     }
 
+    static readonly string TooLarge = $"the saved page is larger than {MaxBytes >> 20} MB: save it as 'Webpage, HTML only'";
+
+    /// <summary>A saved list page's text for <see cref="LookUpAsync"/>; one over <see cref="MaxBytes"/> isn't read (Problem says
+    /// so). IO errors are the caller's.</summary>
+    public static (string? Page, string? Problem) ReadSavedPage(string path) =>
+        new FileInfo(path).Length > MaxBytes ? (null, $"Couldn't get the key list: {TooLarge}.") : (File.ReadAllText(path), null);
+
     /// <summary>A copy of the list page the user saved from a browser: parsed like a download and cached as fetched now from
     /// <paramref name="url"/>.</summary>
     public (IReadOnlyList<KeyEntry>? List, string? Problem) Import(string url, string html)
     {
-        if (html.Length > MaxBytes) return (null, $"the saved page is larger than {MaxBytes >> 20} MB");
+        if (html.Length > MaxBytes) return (null, TooLarge);
         var list = Parse(html);
         if (list.Count == 0) return (null, "the saved page has no keys in it (not the key list?)");
         gate.Wait();
@@ -306,7 +315,8 @@ public sealed class KeyCollection
         for (var i = 0; i < tries.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            log?.Report($"checking {Label(i)}");
+            if (i < byName || i == byName && tries.Count - i == 1) log?.Report($"checking {Label(i)}");
+            else if (i == byName) log?.Report($"checking {tries.Count - i} unnamed keys");   // one line, not one per key
             if (!trySet(tries[i].Key)) continue;
             if (tried is { } found) Forget(found.File);
             return new(KeyLookupOutcome.Unlocked, $"Unlocked with {Label(i)}.", tries[i].Name, i + 1);
@@ -327,7 +337,7 @@ public sealed class KeyCollection
             request.Headers.Accept.ParseAdd("text/html");
             using var r = await http.SendAsync(request, cts.Token);   // buffered: over MaxResponseContentBufferSize is an HttpRequestException
             if (r.RequestMessage?.RequestUri is { } final && final.Scheme != Uri.UriSchemeHttps) return (null, "the key list's address redirected away from https");
-            var body = await r.Content.ReadAsStringAsync(cts.Token);
+            var body = Text(await r.Content.ReadAsByteArrayAsync(cts.Token), r.Content.Headers.ContentType?.CharSet);
             if (r.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.ServiceUnavailable
                 && body.Contains("<script", StringComparison.OrdinalIgnoreCase)) return (null, SecurityCheck);
             if (!r.IsSuccessStatusCode) return (null, $"the server answered {(int)r.StatusCode} {r.ReasonPhrase}");
@@ -335,7 +345,16 @@ public sealed class KeyCollection
             return list.Count > 0 ? ([.. list], null) : (null, "the page has no keys in it (not the key list?)");
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return (null, $"no answer within {Timeout.TotalSeconds:F0} s"); }
-        catch (HttpRequestException e) { return (null, e.Message.TrimEnd('.')); }
+        catch (Exception e) when (e is HttpRequestException or IOException or InvalidOperationException) { return (null, e.Message.TrimEnd('.')); }   // counted as a failure: backed off
+    }
+
+    // the page's charset if .NET knows it (keys are ASCII, names mostly): an unknown or misspelt one is read as UTF-8
+    static string Text(byte[] body, string? charset)
+    {
+        var encoding = Encoding.UTF8;
+        try { if (!string.IsNullOrWhiteSpace(charset)) encoding = Encoding.GetEncoding(charset.Trim('"', ' ')); }
+        catch (ArgumentException) { }
+        return encoding.GetString(body);
     }
 
     CacheFile? Load()
@@ -404,6 +423,10 @@ public sealed class KeyCollection
     static readonly Regex KeyWord = new(@"(?<![0-9A-Za-z])(?:0[xX])?(?<key>[0-9A-Fa-f]{64})(?![0-9A-Za-z])");
     static readonly Regex NameColumn = new(@"^(?:game|name|title|game ?name)$", RegexOptions.IgnoreCase), KeyColumn = new(@"^(?:key|aes|aes[ _]?key|pak[ _]?key|hex)$", RegexOptions.IgnoreCase);
     static readonly char[] Separators = [' ', '\t', ':', '=', '-', '–', '—', ',', ';', '|', '"', '\''];
+    // a label, not a game: "Key", "AES Key", "Main Key", "mainKey", "[+] Found AES key", "Encryption key"
+    static readonly Regex Label = new(@"^(?:\[[+*!]\]\s*)?(?:found\s+)?(?:(?:the|main|aes|pak|encryption|decryption)\s*)*(?:key|aes)$", RegexOptions.IgnoreCase);
+    // "1. Game", "12) Game", "#3 Game": the place in a list, not part of the name
+    static readonly Regex ListNumber = new(@"^(?:#\s*\d{1,4}\s+|\d{1,4}[.)]\s+)");
 
     /// <summary>The keys of a file the user collected, untrusted: a saved page (its text as <see cref="Parse"/> takes it), lines
     /// of "name key" (space, tab, ':', '=', ',', ';', '-' or '|' between, "0x" optional, "key name" too) or of a key alone, CSV
@@ -417,8 +440,8 @@ public sealed class KeyCollection
         void Add(string? name, string key)
         {
             if (named.Count + unnamed.Count >= MaxEntries) return;
-            name = Regex.Replace(name ?? "", @"\s+", " ").Trim(Separators);
-            if (name.Length == 0) unnamed.Add(key);
+            name = ListNumber.Replace(Regex.Replace(name ?? "", @"\s+", " ").Trim(Separators), "").Trim(Separators);
+            if (name.Length == 0 || Label.IsMatch(name)) unnamed.Add(key);   // "AES Key: 0x...", FModel's "mainKey": a key for no game in particular
             else if (new KeyEntry(name, key) is var e && !LongHex.IsMatch(name) && Valid(e)) named.Add(e);
         }
         var json = false;
@@ -497,7 +520,7 @@ public sealed class KeyCollection
             return;
         }
         foreach (var p in e.EnumerateObject())   // name: key, name: {key}, or a list under any name
-            if (p.Value.ValueKind == JsonValueKind.String) { if (KeyOf(p.Value.GetString()) is { } k) add(p.Name, k); }
+            if (p.Value.ValueKind == JsonValueKind.String) { if (KeyOf(p.Value.GetString()) is { } k) add(Label.IsMatch(p.Name) ? Prop(e, NameColumn) : p.Name, k); }   // {"game": ..., "mainKey": ...}
             else if (p.Value.ValueKind == JsonValueKind.Object && Prop(p.Value, KeyColumn) is { } inner) { if (KeyOf(inner) is { } k) add(Prop(p.Value, NameColumn) ?? p.Name, k); }
             else FromJson(p.Value, add, depth + 1);
     }

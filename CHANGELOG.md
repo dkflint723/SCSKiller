@@ -12,11 +12,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   why SCSKiller couldn't find the key itself. If the forum asks for a browser check, "Open list in browser" and "Load
   saved page…" read the page you save instead. On the command line: `scskiller key <game> --lookup`.
 - **"Import keys…"** in Settings tries a file of encryption keys you collected (lines of a game's name and its key, or a
-  key alone; CSV, JSON or a saved page) on every encrypted Unreal game without a working key, keeps only keys that open
-  a game's files, and lists what each game got. The keys are kept, named and unnamed: every scan tries them on encrypted
-  games (also ones installed later), before and without the online list. Keys that didn't work aren't tried again for
-  the same game build until you import more. The file never leaves your PC. On the command line:
-  `scskiller key --import <file>`.
+  key alone, or after a label like "AES Key:"; CSV, JSON, FModel's key file or a saved page) on every encrypted Unreal
+  game without a working key, keeps only keys that open a game's files, and lists what each game got. The keys are
+  kept, named and unnamed: every scan tries them on encrypted games (also ones installed later), before and without the
+  online list. Keys that didn't work aren't tried again for the same game build until you import more. The file never
+  leaves your PC. On the command line: `scskiller key --import <file>`.
 - **"Hide unsupported games"** (off by default), in Settings and beside the Library's search box, leaves the games
   SCSKiller can't compile out of the Library. They're still checked at every scan and show again once they can be
   compiled; the Library says how many are hidden, with a way to show them.
@@ -99,6 +99,19 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   a compile already covered (the same shaders and root signature under other state on NVIDIA, what an HDR mod's layer
   makes of them while compiles run through the same layer) don't count either.
 - `scskiller index --out` writes a big game's index without running out of memory.
+- **Dead by Daylight**: its right AES key is taken instead of "That key didn't work" (upstream issue 83, found by
+  finacrum). SCSKiller now decrypts the extra layer some games put on their files (Dead by Daylight, Marvel Rivals,
+  3on3 FreeStyle: Rebound) when it checks a key, as it already did when reading them. Keys from the exe scan, a key list
+  or an import that failed only because of this are tried again once.
+- An encrypted Unreal game whose exe isn't a program SCSKiller can read no longer falls back to the generic shader
+  carver ("Carved DXIL"): the key search skips the exe and asks for the key.
+- **Dragon's Dogma 2** is read instead of "unknown package features 0x68" (upstream issue 56): its packages have an
+  entry remap table, which SCSKiller now skips, as a proposed change to ree-pak-rs (a community RE Engine tool) reads
+  it. Like other RE Engine games it needs a recording. Not checked on the game itself.
+- A game taken for another engine because SCSKiller's reader for its own engine failed on its files (FINAL FANTASY VII
+  Rebirth showed as "Carved DXIL" on 1.2.3, upstream issue 63) is now named in the log with the error. When the files
+  were in use, as during a game update, the next scan reads the game again instead of keeping that result. Any other
+  failure, such as access denied to an Xbox app game's files, keeps the result until the game's files change.
 
 ## [1.2.4] - 2026-10-08
 

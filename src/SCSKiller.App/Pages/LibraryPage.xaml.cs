@@ -195,7 +195,10 @@ public sealed partial class LibraryPage : Page
                 picker.FileTypeFilter.Add(".htm");
                 picker.FileTypeFilter.Add("*");
                 if ((await picker.PickSingleFileAsync())?.Path is { } path)
-                    page = await Task.Run(() => new FileInfo(path).Length <= KeyCollection.MaxBytes ? File.ReadAllText(path) : "");
+                {
+                    (page, var tooLarge) = await Task.Run(() => KeyCollection.ReadSavedPage(path));
+                    if (tooLarge != null) { (status.Text, status.Visibility) = (tooLarge, Visibility.Visible); return; }
+                }
             }
             catch (Exception ex) { (status.Text, status.Visibility) = ($"Couldn't read that page: {ex.Message}", Visibility.Visible); return; }
             if (page != null) await LookUp(page);

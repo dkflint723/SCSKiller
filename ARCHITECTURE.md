@@ -48,7 +48,9 @@ session), plans which pipelines to create, and replays them in a separate proces
    A scan reads again only what changed since an earlier one, at background I/O priority unless the user asked for it:
    a Steam or Xbox game keeps its exe while its build is the same (`discovered.json`); each game keeps its engine and
    anti-cheat verdict while its exe, store build and SCSKiller build are the same (`scan.json`; another SCSKiller
-   build's is shown at once and the game detected again in the background); the DLLs beside the exe are known by their
+   build's is shown at once and the game detected again in the background; a verdict another engine reader gave only
+   because one before it threw is logged, and not kept when that was a file in use (a sharing or lock violation), as in
+   a game update; access denied or a missing file is kept: `EngineReaders.Detect`'s out skip, per call); the DLLs beside the exe are known by their
    size, write time, NTFS change time and file id (`middleware.json`, `reshade.json`; a DLL's hash also by its first
    and last 4 KB), which a refresh the user asks for doesn't trust. An install is walked for anti-cheat in full when the
    entries of its root or exe folder changed since its last clean walk (the recorder's own files and data files aside),
@@ -371,19 +373,23 @@ open game files read-only and never launch or attach to the game.
 - **Unreal Engine** (`Unreal/`): shader libraries and shader maps through CUE4Parse, including the version-1 archives of
   UE 4.20/4.21 (`UnrealReader.OpenV1`) and games that keep shaders inline in their packages. Encrypted paks need the
   game's AES key (`aes.key`): found in the exe by a static scan (`UnrealKeys`; never an anti-cheat game's exe), given by
-  the user, or looked up in the community's key list (`KeyCollection`: the first post of a forum topic, a plain HTTPS GET
-  at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
+  the user, or looked up in the community's key list (`KeyCollection`: the first post of a forum topic, a plain HTTPS
+  GET at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
   matched to the game's names locally, and at most 20 candidates are tried), or imported from a file of keys the user
   collected (`KeyCollection.ImportFile`: text lines, CSV, JSON or a saved page, at most 16 MB; per encrypted game the
-  entries matched to its names as a lookup matches them, then at most 50 unnamed keys). After every scan, a background
-  pass tries the imported keys on the encrypted games (always: no network; the same named entries and unnamed keys) and,
-  only if none works and the online lookup is on, the list's other candidates; the Why? dialog's lookup goes in the same
-  order and says which stage it is in. An import waits for that pass, and the next pass for it (`KeyLookupPass`). Every
-  key is stored only if it opens one of the game's encrypted containers (`UnrealReader.KeyCheck`, as the exe scan's
-  keys). A shipped pipeline cache (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30,
-  `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact shader
-  map, so the planner pairs those shaders as the game does (global and post-process passes that no signature match
-  pairs). They are left out of the index's content hash.
+  entries matched to its names as a lookup matches them, then every unnamed key kept; a name that is only a label, "AES
+  Key" or FModel's "mainKey", leaves its key unnamed, and a list number before a name is dropped). After every scan, a
+  background pass (on the command line only its `scan`, which waits for it) tries the imported keys on the encrypted
+  games (always: no network; the same named entries and unnamed keys) and, only if none works and the online lookup is
+  on, the list's other candidates; the Why? dialog's lookup goes in the same order and says which stage it is in. An
+  import waits for that pass, and the next pass for it (`KeyLookupPass`). Every key is stored only if it opens one of
+  the game's encrypted containers (`UnrealReader.KeyCheck`, as the exe scan's keys; a lookup or import opens each
+  container once for all the keys it tries, `KeyTrial`). Every container reader SCSKiller makes itself gets the game's
+  own encryption on top of AES (Dead by Daylight XORs its index; `UnrealReader.Custom`), as CUE4Parse's file providers
+  give it to theirs, Marvel Rivals' IoStore containers excepted as there. A shipped pipeline cache
+  (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30, `StablePipelineCache`) names each PSO's shaders by
+  their library hash; every graphics PSO becomes one exact shader map, so the planner pairs those shaders as the game
+  does (global and post-process passes that no signature match pairs). They are left out of the index's content hash.
 - **Unity** (`Unity/`): Shader objects in serialized files and UnityFS bundles. Their compiled programs are one LZ4 blob
   per platform; the reader finds the blob by its shape and carves it, which avoids depending on each Unity version's
   serialized layout. Windows builds ship DXBC for the `d3d11` platform, which both the D3D11 and D3D12 players
@@ -398,8 +404,9 @@ open game files read-only and never launch or attach to the game.
   shaders byte for byte). Nightreign is taken to do the same, unverified.
 - **RE Engine** (`ReEngine/`): KPKA packages with encrypted entry tables. The table key needs the game's public RSA
   modulus, which isn't on disk in the clear; it's downloaded from a pinned commit of ree-pak-rs, or given by hand in
-  `pak.modulus`. Shaders are in master material files, found by their magic since file names are hashes. RE Engine
-  builds root signatures at run time, so D3D12 games need a recording.
+  `pak.modulus`. An entry remap table (feature 0x40, Dragon's Dogma 2) is skipped unread, as ree-pak-rs's open pull
+  request 16 does; its meaning isn't known. Shaders are in master material files, found by their magic since file
+  names are hashes. RE Engine builds root signatures at run time, so D3D12 games need a recording.
 - **REDengine 3** (`RedEngine/`): The Witcher 3's DX12 caches in `content\content0`. `shaderdx12_0.cache` holds the
   material shaders (zlib) and the techniques, each naming one pipeline's shaders by key: every distinct technique is an
   exact shader map (438,220 techniques, 60,674 distinct pipelines). `staticshaderDx12_0.cache` holds the engine's own

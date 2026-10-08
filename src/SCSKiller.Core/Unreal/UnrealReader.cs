@@ -29,6 +29,13 @@ using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.Unreal;
 
+/// <summary>A game's names and key check for a key list lookup (<see cref="UnrealReader.KeyLookupCheck"/>): TrySet stores a
+/// key only if it opens the game's files; <paramref name="Close"/> releases what the checks opened.</summary>
+public sealed record KeyTrial(string[] Names, Func<string, bool> TrySet, Action? Close = null) : IDisposable
+{
+    public void Dispose() => Close?.Invoke();
+}
+
 /// <summary>Cooked UE 4.2x/5.x games: every shader in the shader code libraries (ShaderArchive-*.ushaderbytecode), via
 /// CUE4Parse, or, for games without libraries (bShareMaterialShaderCode=False), carved out of the packages that own them
 /// (<see cref="InlineShaders"/>). Engine version, fork EGame and paks dir are auto-detected; encrypted containers are
@@ -109,15 +116,18 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     /// <summary>For a key list lookup (<see cref="KeyCollection"/>): the names the game may be listed under (store name,
     /// install folder, project, exe) and a check that stores a key as <see cref="SetKey"/> does, only if it opens the game's
-    /// encrypted containers. The containers are surveyed at the first check, once. Null: not a cooked Unreal game.</summary>
-    public (string[] Names, Func<string, bool> TrySet)? KeyLookupCheck(Game game)
+    /// encrypted containers. The containers are surveyed at the first check, once, and each opened once for all the keys
+    /// tried (<see cref="KeyCheck"/>) until the trial is disposed. Null: not a cooked Unreal game.</summary>
+    public KeyTrial? KeyLookupCheck(Game game)
     {
         if (Locate(game) is not { } where) return null;
         var (paks, baseGame, fork, project, _) = where;
         var eg = fork ?? baseGame;
         List<string>? encrypted = null;
-        return ([game.Name, GameFiles.FolderName(game.InstallDir), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
-            key => (encrypted ??= Survey(paks, eg, project, null).Encrypted).Count > 0 && keys.Set(game, key, k => OpensAny(encrypted, eg, k)));
+        KeyCheck? check = null;
+        return new([game.Name, GameFiles.FolderName(game.InstallDir), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
+            key => (encrypted ??= Survey(paks, eg, project, null).Encrypted).Count > 0 && keys.Set(game, key, (check ??= new KeyCheck(encrypted, eg)).Opens),
+            () => check?.Dispose());
     }
 
     /// <summary>Why the automatic key search has no key for an encrypted game (<see cref="UnrealKeys.Miss"/>).</summary>
@@ -221,9 +231,9 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         try
         {
             toc = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            if (!utoc) return new PakFileReader(path, toc, versions);
+            if (!utoc) return Custom(new PakFileReader(path, toc, versions));
             cas = File.Open(casPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            return new IoStoreReader(path, toc, cas, EIoStoreTocReadOptions.ReadDirectoryIndex, versions);
+            return Custom(new IoStoreReader(path, toc, cas, EIoStoreTocReadOptions.ReadDirectoryIndex, versions));
         }
         catch
         {
@@ -233,8 +243,24 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         }
     }
 
-    static AbstractAesVfsReader OpenContainer(string path, VersionContainer versions) => path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase)
-        ? new IoStoreReader(path, EIoStoreTocReadOptions.ReadDirectoryIndex, versions) : new PakFileReader(path, versions);
+    static AbstractAesVfsReader OpenContainer(string path, VersionContainer versions) => Custom<AbstractAesVfsReader>(path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase)
+        ? new IoStoreReader(path, EIoStoreTocReadOptions.ReadDirectoryIndex, versions) : new PakFileReader(path, versions));
+
+    /// <summary>A reader with its game's own encryption on top of AES (Dead by Daylight XORs its indexes), as a CUE4Parse file
+    /// provider gives it to the readers it registers: a reader made directly has none, and a right key then fails.</summary>
+    internal static T Custom<T>(T r) where T : AbstractAesVfsReader
+    {
+        if (!(r.Game == EGame.GAME_MarvelRivals && r is IoStoreReader)) r.CustomEncryption = CustomEncryption(r.Game);   // as CUE4Parse's PostLoadReader
+        return r;
+    }
+
+    internal static IAesVfsReader.CustomEncryptionDelegate? CustomEncryption(EGame game) => customEncryption.GetOrAdd(game, g =>
+    {
+        using var p = new StreamedFileProvider("", new VersionContainer(g), StringComparer.OrdinalIgnoreCase);   // its constructor picks the game's
+        return p.CustomEncryption;
+    });
+
+    static readonly ConcurrentDictionary<EGame, IAesVfsReader.CustomEncryptionDelegate?> customEncryption = new();
 
     /// <summary>Shader library and global shader cache platforms, the containers we can't read (encrypted), and the RHI
     /// config files: .utoc by header and name scan, .pak one index at a time (a full mount of a big game is ~1 GB; this peaks
@@ -1089,7 +1115,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         {
             var toc = Directory.EnumerateFiles(paks, "*.utoc").Where(p => (TocHeader(p)[80] & 8) != 0).MinBy(p => new FileInfo(p).Length);
             if (toc == null) return false;
-            using var r = new IoStoreReader(toc, EIoStoreTocReadOptions.ReadDirectoryIndex, new VersionContainer(EGame.GAME_UE5_5));
+            using var r = Custom(new IoStoreReader(toc, EIoStoreTocReadOptions.ReadDirectoryIndex, new VersionContainer(EGame.GAME_UE5_5)));
             if (r.IsEncrypted) r.AesKey = key ?? throw new InvalidDataException("encrypted");
             r.Mount(StringComparer.OrdinalIgnoreCase);
             var head = r.Files.Values.First(f => f.Extension == "uasset").Read(new FByteBulkDataHeader(default, 0, 76, 0, default));

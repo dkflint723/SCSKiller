@@ -18,8 +18,9 @@ public sealed class UnrealKeys(string dataDir)
     string KeyFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.key");
     string ScanFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.scan");
     string LookupFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.lookup");
-    /// <summary>Bump when <see cref="Scan"/> finds keys it missed before: a remembered failure is then scanned again.</summary>
-    const int ScanVersion = 3;
+    /// <summary>Bump when <see cref="Scan"/> or the key check takes keys it missed before: a remembered failure (the scan's,
+    /// or a lookup's candidates) is then tried again. 4: the check decrypts a game's own encryption (Dead by Daylight).</summary>
+    internal const int ScanVersion = 4;
     static string Stamp(string exe) => new FileInfo(exe) is { Exists: true } f ? $"{ScanVersion}:{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
 
     /// <summary>A key that <paramref name="opens"/> the game's encrypted containers: the stored one, else a static scan of
@@ -42,6 +43,11 @@ public sealed class UnrealKeys(string dataDir)
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) // Xbox app games: the exe is encrypted at rest
         {
             why = "encrypted; the game's exe can't be read, so it isn't scanned for the key: give the key by hand";
+            return null;
+        }
+        catch (BadImageFormatException) // not a PE file: Detect would throw, and the game fall to the next reader
+        {
+            why = "encrypted; the game's exe isn't a program SCSKiller can read, so it isn't scanned for the key: give the key by hand";
             return null;
         }
         why = $"{how} ({sw.Elapsed.TotalSeconds:F1} s)";

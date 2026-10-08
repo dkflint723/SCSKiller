@@ -146,9 +146,45 @@ public class CarvedReaderTests
         var packed = ue with { Unsupported = "shaders stored inside materials" };
         Assert.Equal(carved, new EngineReaders(("Unreal", new Stub(packed)), (CarvedReader.Family, c)).Detect(game)); // Unreal can't: the carver can
         Assert.Equal(packed, new EngineReaders(("Unreal", new Stub(packed)), (CarvedReader.Family, new Stub(carved with { Unsupported = "packed" }))).Detect(game)); // neither: the first reason
-        Assert.Equal(carved, new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, c)).Detect(game));
+        var failed = new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, c));
+        Assert.Equal(carved, failed.Detect(game, out var skipped));
+        Assert.Equal(("Unreal", "unreadable"), skipped is { } s ? (s.Family, s.Error.Message) : default);   // the carver had it only because Unreal threw
+        Assert.Equal(ue, chain.Detect(game, out skipped));
+        Assert.Null(skipped);
+        Assert.Equal(packed, new EngineReaders(("Unreal", new Stub(packed)), (CarvedReader.Family, new Stub(null, throws: true))).Detect(game, out skipped));
+        Assert.Null(skipped);   // a reader after the one that recognized the game doesn't count
         Assert.Throws<IOException>(() => new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, new Stub(null))).Detect(game));
         Assert.Null(new EngineReaders(("Unreal", new Stub(null)), (CarvedReader.Family, new Stub(null))).Detect(game));
+    }
+
+    sealed class Calls(Func<EngineInfo?> detect) : IEngineReader
+    {
+        public EngineInfo? Detect(Game game) => detect();
+        public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct) => throw new NotSupportedException();
+        public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct) { }
+    }
+
+    /// <summary>The skip is the call's own: one game detected on two threads at once (a background redetect beside a scan)
+    /// doesn't hand one call's failed reader to the other.</summary>
+    [Fact]
+    public async Task ASkipBelongsToItsOwnDetect()
+    {
+        var game = Data.Value.Game;
+        var ue = new EngineInfo("Unreal", "5.5", null, "D3D12", false, null);
+        var carved = new EngineInfo(CarvedReader.Family, "DXIL", null, "D3D12", false, null);
+        using var fails = new ThreadLocal<bool>();
+        using var inCarver = new ManualResetEventSlim();
+        using var otherDone = new ManualResetEventSlim();
+        var chain = new EngineReaders(("Unreal", new Calls(() => fails.Value ? throw new IOException("in use") : ue)),
+            (CarvedReader.Family, new Calls(() => { inCarver.Set(); Assert.True(otherDone.Wait(TimeSpan.FromSeconds(30))); return carved; })));
+        var failing = Task.Run(() => { fails.Value = true; return (chain.Detect(game, out var x), x); });
+        Assert.True(inCarver.Wait(TimeSpan.FromSeconds(30)));   // the failing Detect is between its Unreal error and its result
+        Assert.Equal(ue, chain.Detect(game, out var mine));
+        Assert.Null(mine);
+        otherDone.Set();
+        var (engine, skipped) = await failing;
+        Assert.Equal(carved, engine);
+        Assert.Equal(("Unreal", "in use"), skipped is { } s ? (s.Family, s.Error.Message) : default);
     }
 
     /// <summary>Planner: embedded root signatures without a recording, pairs only within one root signature, IsPipeline

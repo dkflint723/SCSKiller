@@ -236,6 +236,8 @@ public partial class AppTests
         Assert.NotNull(rec.WarmedLayer);
         Assert.Contains(plan.Key, KeyFiles.Set(Path.Combine(k.Store.GameDir(_game.Id), rec.WarmKeysFile!))!);   // whole: R comes from the install
         Assert.Equal([rs], Sharing.ShippedRootSignatures(k.Store.GameDir(_game.Id), index.ContentHash));
+        Assert.Equal((true, false), (Sharing.HasShipped(k.Store.GameDir(_game.Id), index.ContentHash), Sharing.HasShipped(k.Store.GameDir(_game.Id), new string('d', 40))));   // by the header only (the pending count's cache key)
+        Assert.False(Sharing.HasShipped(Path.Combine(_root, "no such game"), index.ContentHash));
 
         var state = PsoDb.Compute(rs, cs);
         state[^4] = 1;   // other flags: another record, the same compile on NVIDIA

@@ -29,7 +29,7 @@ public partial class AppTests
         var k = Killer(reader);
         var tries = 0;
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
-        k.KeyCheck = g => ([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
+        k.KeyCheck = g => new([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
         Assert.False(k.Settings.LookUpKeysOnline);
         await k.ScanAsync(default);
         await k.KeyLookupPass;
@@ -42,11 +42,32 @@ public partial class AppTests
         await k.KeyLookupPass;
         Assert.Equal((1, 1), (page.Requests, tries));   // the same candidates for the same exe: not again, and the list is fresh
 
-        k.KeyCheck = g => ([g.Name], _ => { Interlocked.Increment(ref tries); return true; });
+        k.KeyCheck = g => new([g.Name], _ => { Interlocked.Increment(ref tries); return true; });
         var detects = reader.Detects;
         var r = await k.LookUpKeyAsync(_game.Id);   // the user's button tries again
         Assert.Equal((KeyLookupOutcome.Unlocked, "Fake Game", 2), (r.Outcome, r.Entry, tries));
         Assert.Equal(detects, reader.Detects);   // the caller rescans (as after a pasted key)
+    }
+
+    /// <summary>The command line's commands but scan don't start the lookups (the process would exit during them, and an
+    /// online fetch it started never be recorded); a lookup turned on in Settings or asked for still runs.</summary>
+    [Fact]
+    public async Task A_scan_without_key_lookups_starts_none()
+    {
+        var page = new KeyPage();
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        var tries = 0;
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k.KeyCheck = g => new([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
+        k.Settings = k.Settings with { LookUpKeysOnline = true };
+        await k.KeyLookupPass;
+        var before = (page.Requests, tries);
+        k.KeyLookupsAfterScans = false;
+        await k.RescanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(before, (page.Requests, tries));
+        Assert.Equal(KeyLookupOutcome.NoWorkingKey, (await k.LookUpKeyAsync(_game.Id)).Outcome);   // asked for: tried
+        Assert.Equal(before.tries + 1, tries);
     }
 
     [Fact]
@@ -59,7 +80,7 @@ public partial class AppTests
         var k = Killer(new FakeReader(EncryptedUnreal), games: [_game, other]);
         var tried = new List<string>();
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
-        k.KeyCheck = g => ([g.Name], key => { lock (tried) tried.Add(g.Name); return false; });
+        k.KeyCheck = g => new([g.Name], key => { lock (tried) tried.Add(g.Name); return false; });
         await k.ScanAsync(default);
         k.Settings = k.Settings with { LookUpKeysOnline = true };
         await k.KeyLookupPass;   // the fetched list has only this game's old key
@@ -114,7 +135,7 @@ public partial class AppTests
         k.Log = new Lines(log);
         string Key(int i) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData([(byte)i]));
         var tried = new List<(string, string)>();
-        k.KeyCheck = g => ([g.Name], key => { lock (tried) tried.Add((g.Name, key)); return g == other && key == Key(4); });
+        k.KeyCheck = g => new([g.Name], key => { lock (tried) tried.Add((g.Name, key)); return g == other && key == Key(4); });
         await k.ScanAsync(default);
         var dir = new SCSKiller.Core.App.AppStore(Path.Combine(_root, "data")).GameDir(keyed.Id);
         Directory.CreateDirectory(dir);
@@ -136,7 +157,7 @@ public partial class AppTests
         foreach (var text in log.Concat(r.Games.Select(g => g.Message)))
             foreach (var key in Enumerable.Range(1, 9).Select(Key))
                 Assert.DoesNotContain(key, text, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(log, l => l.Contains("unnamed key #1"));
+        Assert.Contains(log, l => l.Contains("checking 3 unnamed keys"));
         Assert.Equal(["Fake Game", "Fake Game (demo)"], k.KeyList.Imported().Select(e => e.Name));   // kept for later lookups
 
         var missing = await k.ImportKeysAsync(Path.Combine(_root, "none.txt"));
@@ -153,7 +174,7 @@ public partial class AppTests
         var page = new KeyPage();
         var tried = new List<(string Game, string Key)>();
         var reader = new Keyed();
-        Func<Game, (string[], Func<string, bool>)?> check = g => ([g.Name], key =>
+        Func<Game, KeyTrial?> check = g => new([g.Name], key =>
         {
             lock (tried) tried.Add((g.Name, key));
             if (g.Name != "Other Game" || key != Hex(7)) return false;
@@ -209,7 +230,7 @@ public partial class AppTests
         var k = Killer(reader);
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
         var (tries, opens) = (0, true);
-        k.KeyCheck = g => ([g.Name], key =>
+        k.KeyCheck = g => new([g.Name], key =>
         {
             Interlocked.Increment(ref tries);
             if (key != Hex(1) || !opens) return false;
@@ -263,7 +284,7 @@ public partial class AppTests
     {
         var reader = new Keyed();
         var tried = new List<(string Game, string Key)>();
-        Func<Game, (string[], Func<string, bool>)?> check = g => ([g.Name], key =>
+        Func<Game, KeyTrial?> check = g => new([g.Name], key =>
         {
             lock (tried) tried.Add((g.Name, key));
             if (g.Name != "Other Game" || key != Hex(5)) return false;
@@ -300,7 +321,7 @@ public partial class AppTests
         var page = new KeyPage();
         var k = Killer(new FakeReader(EncryptedUnreal));
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
-        k.KeyCheck = g => ([g.Name], _ => false);
+        k.KeyCheck = g => new([g.Name], _ => false);
         var file = Path.Combine(_root, "keys.txt");
         File.WriteAllText(file, $"Fake Game 0x{Hex(1)}");
         k.KeyList.ImportFile(file);
@@ -326,7 +347,7 @@ public partial class AppTests
         using var go = new ManualResetEventSlim();
         using var entered = new SemaphoreSlim(0);
         var (inside, most) = (0, 0);
-        k.KeyCheck = g => ([g.Name], _ =>
+        k.KeyCheck = g => new([g.Name], _ =>
         {
             var n = Interlocked.Increment(ref inside);
             lock (entered) most = Math.Max(most, n);
@@ -357,7 +378,7 @@ public partial class AppTests
         var k = Killer(new FakeReader(EncryptedUnreal));
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), new KeyPage());
         var tries = 0;
-        k.KeyCheck = g => ([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
+        k.KeyCheck = g => new([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
         await k.ScanAsync(default);
         var file = Path.Combine(_root, "keys.txt");
         File.WriteAllText(file, $"Fake Game 0x{Hex(1)}");
@@ -385,7 +406,7 @@ public partial class AppTests
         var works = "";
         var k = Killer(new FakeReader(EncryptedUnreal));
         k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
-        k.KeyCheck = g => ([g.Name], key => { lock (tried) tried.Add(key); return key == works; });
+        k.KeyCheck = g => new([g.Name], key => { lock (tried) tried.Add(key); return key == works; });
         var file = Path.Combine(_root, "keys.txt");
         File.WriteAllText(file, $"Fake Game 0x{Hex(1)}\nFake Game (old) 0x{PageKey}");
         k.KeyList.ImportFile(file);

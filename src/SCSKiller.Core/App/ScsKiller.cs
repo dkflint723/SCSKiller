@@ -492,7 +492,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (userRequested) ServerRefresh = fetch ? Fetched(lists, CommunitySync) : ServerRefresh.IsCompleted ? Task.FromResult(ServerCheck.TooSoon) : ServerRefresh;
         }
         StartSharing(states.Select(s => s.Game));
-        StartKeyLookups(states);
+        if (KeyLookupsAfterScans) StartKeyLookups(states);
         StartMigration(states);
         if (ActiveCheck is { } active) ActiveCheckSent = Task.Run(() => active.SendAsync());
         RedetectInBackground();
@@ -1476,14 +1476,19 @@ public sealed partial class ScsKiller : IScsKiller
         }
         var (gen, folders) = (InstallGen(g), FolderStamp(g));   // before Detect and the check, as the key
         EngineInfo? engine = null;
+        (string Family, Exception Error)? skipped = null;
         PlanCheck check;
         try
         {
-            engine = _reader.Detect(g);
+            engine = _reader is EngineReaders readers ? readers.Detect(g, out skipped) : _reader.Detect(g);
             check = engine == null ? new(Readiness.Unsupported, "engine not supported yet")
                 : CheckRecordings(g, engine);
         }
         catch (Exception e) { check = new(Readiness.Unsupported, e.Message); }
+        // a reader that threw handed the game to the next one: said, and a file in use (a game update) not kept as the verdict.
+        // Only a sharing or lock violation: access denied (an Xbox app install's files) or a missing file stays so, kept
+        if (skipped is { } s) Log?.Report($"{g.Name}: the {s.Family} reader failed ({s.Error.GetType().Name}: {s.Error.Message}), so it was read as {engine?.Family}");
+        var transient = skipped?.Error is IOException { HResult: var hr } && (hr & 0xFFFF) is 32 or 33;   // ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
         var ev = Streamline(g, new Evaluation(key, engine, GameFiles.DetectAntiCheat(g), check));   // last: anti-cheat that appeared during Detect counts
         if (ev.AntiCheat != AntiCheat.None) AntiCheatFound(g, ev.AntiCheat, ev);
         else
@@ -1494,7 +1499,8 @@ public sealed partial class ScsKiller : IScsKiller
                 {
                     _verdicts.TryRemove(g.Id, out _);   // a full scan that started after any finding found none: clean again
                     _scanStarted[g.Id] = started;
-                    _scan[g.Id] = ev with { Clean = InstallGen(g) == gen ? folders : null };   // an install change meanwhile: walked again
+                    if (transient) _scan.Remove(g.Id);   // detected again at the next scan
+                    else _scan[g.Id] = ev with { Clean = InstallGen(g) == gen ? folders : null };   // an install change meanwhile: walked again
                     Store.SaveScan(_scan);
                 }
         }
@@ -2123,7 +2129,10 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>The community's key list (keys\collection.json in the data folder). Replaceable for tests.</summary>
     public KeyCollection KeyList { get => field ??= new(Store.DataDir); set; }
     /// <summary>A game's names and key check for a lookup (<see cref="UnrealReader.KeyLookupCheck"/>). Replaceable for tests.</summary>
-    internal Func<Game, (string[] Names, Func<string, bool> TrySet)?> KeyCheck { get => field ??= g => UnrealFiles?.KeyLookupCheck(g); set; }
+    internal Func<Game, KeyTrial?> KeyCheck { get => field ??= g => UnrealFiles?.KeyLookupCheck(g); set; }
+    /// <summary>Whether a scan starts the key lookups of its encrypted games (<see cref="StartKeyLookups"/>). The command
+    /// line turns it off but for its scan command, which waits for them: a process that exits drops the pass midway.</summary>
+    public bool KeyLookupsAfterScans { get; set; } = true;
     /// <summary>The queued key lookups of scans (<see cref="StartKeyLookups"/>) and key imports (<see cref="ImportKeysAsync"/>),
     /// one at a time: never two trying the same game.</summary>
     public Task KeyLookupPass { get; private set; } = Task.CompletedTask;
@@ -2141,7 +2150,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         // the checks open the game's containers: off the caller's thread
         if (await Task.Run(() => KeyCheck(g), ct) is not { } check) return new(KeyLookupOutcome.NoWorkingKey, $"{g.Name} isn't an Unreal game SCSKiller can read.");
-        return await Task.Run(() => KeyList.LookUpAsync(KeyListUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online, stage), ct);
+        using (check) return await Task.Run(() => KeyList.LookUpAsync(KeyListUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online, stage), ct);
     }
 
     // for an encrypted game; reads files: off the caller's thread
@@ -2149,7 +2158,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         var file = Path.Combine(Store.GameDir(g.Id), "aes.lookup");
         if (File.Exists(Path.Combine(Store.GameDir(g.Id), "aes.key"))) KeyCollection.ForgetLegacy(file);   // the stored key no longer opens its files
-        return (file, ExeStamp(g));
+        return (file, $"{UnrealKeys.ScanVersion}:{ExeStamp(g)}");   // a new key check tries the same candidates again
     }
 
     public string? KeyProblem(string gameId) => UnrealFiles is { } u ? UnrealKeys.Advice(u.KeyMiss(Find(gameId).Game)) : null;
@@ -2193,7 +2202,7 @@ public sealed partial class ScsKiller : IScsKiller
                 r = await Task.Run(() =>
                 {
                     if (KeyCheck(g) is not { } check) return null;
-                    return KeyCollection.TryImported(named, unnamed, check.Names, check.TrySet, Log, ct, LookupMemo(g));
+                    using (check) return KeyCollection.TryImported(named, unnamed, check.Names, check.TrySet, Log, ct, LookupMemo(g));
                 }, ct);
             }
             catch (Exception e) when (e is not OperationCanceledException) { r = new(KeyLookupOutcome.NoWorkingKey, $"Trying the keys failed: {e.Message}"); }
@@ -2742,14 +2751,17 @@ public sealed partial class ScsKiller : IScsKiller
         var dir = Store.GameDir(g.Id);
         var community = CommunityInUse(g.Id) != null ? Path.Combine(dir, "community.db") : null;
         var (stateIndependent, sameLayer) = (Vendor.Caps.StateIndependentCache, r.WarmedLayer != null && r.WarmedLayer == LayerNow(g));
-        var shipped = Shipped(g, r);
-        var shippedRs = shipped != null && r.IndexContentHash is { } hash ? Sharing.ShippedRootSignatures(dir, hash) : null;
-        Func<string, bool>? installed = shippedRs == null ? null : h => shipped!.Contains(h) || shippedRs.Contains(h);
-        if (!stateIndependent && !sameLayer && installed == null) return [];
+        // the shipped lists are read only on a miss: a big game's are megabytes (by their headers in the key)
+        var hash = IndexIsInstalled(g, r) && r.IndexContentHash is { } h0 && Sharing.HasShipped(dir, h0) ? h0 : null;
+        if (!stateIndependent && !sameLayer && hash == null) return [];
         string?[] recordings = [RecordingPath(g.Id), community];
         string?[] inputs = [.. recordings, r.Plan?.FilePath, warmKeys, Path.Combine(dir, Sharing.ShippedFile), Path.Combine(dir, Sharing.ShippedRootSignaturesFile)];
-        return KeyFiles.Derived(dir + "|covered", inputs, $"{stateIndependent}|{sameLayer}|{installed != null}", () =>
-            WarmInputs.Covered([.. recordings.OfType<string>()], r.Plan?.FilePath, warmed, stateIndependent, sameLayer, installed));
+        return KeyFiles.Derived(dir + "|covered", inputs, $"{stateIndependent}|{sameLayer}|{hash != null}", () =>
+        {
+            var (shipped, shippedRs) = hash != null ? (Sharing.Shipped(dir, hash), Sharing.ShippedRootSignatures(dir, hash)) : (null, null);
+            Func<string, bool>? installed = shipped == null || shippedRs == null ? null : h => shipped.Contains(h) || shippedRs.Contains(h);
+            return WarmInputs.Covered([.. recordings.OfType<string>()], r.Plan?.FilePath, warmed, stateIndependent, sameLayer, installed);
+        });
     }
 
     /// <summary>The plan's records the planner made: neither a pack entry nor in the recording prepared for it in <paramref name="work"/>.</summary>

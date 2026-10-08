@@ -12,13 +12,14 @@ namespace SCSKiller.Core.ReEngine;
 ///   - header, 16 bytes: "KPKA", u8 major, u8 minor, u16 features, u32 entry count, u32 fingerprint;
 ///   - entries: v4 48 bytes (u32 name hash lower, upper, u64 offset, u64 packed size, u64 size, u64 attributes, u64
 ///     checksum); v2.0 24 bytes (u64 offset, u64 size, u32 hash lower, upper; stored);
-///   - then, by feature bit: 0x10 a u32, 0x04 9 bytes, 0x08 128 bytes the table key is made from (the entry table is
-///     XOR-encrypted, see <see cref="Key"/>), 0x20 a chunk table (u32 block size, u32 count, count x (u32 start low, u32 meta = packed
-///     length &lt;&lt; 10 | flags));
+///   - then, by feature bit: 0x10 a u32, 0x04 9 bytes, 0x40 an entry remap table (u64 count, count x 16 bytes; skipped,
+///     as ree-pak-rs's pull request 16 reads Dragon's Dogma 2's 0x68 packages), 0x08 128 bytes the table key is made from
+///     (the entry table is XOR-encrypted, see <see cref="Key"/>), 0x20 a chunk table (u32 block size, u32 count, count x
+///     (u32 start low, u32 meta = packed length &lt;&lt; 10 | flags));
 ///   - attributes: bits 0-3 compression (0 stored, 1 raw deflate, 2 zstd), 16-23 resource encryption, 24 the offset is
 ///     the first chunk's index (fixed-size chunks, each zstd or stored when its packed length is the block size).
 /// Names are murmur3 hashes of paths; nothing here needs them. Verified on PRAGMATA (v4.2, features 0x28 and 0x08);
-/// v2.0 and resource encryption (other titles) are not verified: the latter is refused per entry.</summary>
+/// v2.0, the remap table and resource encryption (other titles) are not verified: the latter is refused per entry.</summary>
 public sealed class RePak : IDisposable
 {
     public readonly record struct Entry(ulong Hash, long Offset, long Packed, long Size, ulong Attr)
@@ -28,7 +29,7 @@ public sealed class RePak : IDisposable
         public bool Chunked => (Attr & 1UL << 24) != 0;
     }
 
-    public const ushort ExtraU32 = 0x10, ExtraData = 0x04, EncryptedTable = 0x08, ChunkTable = 0x20;
+    public const ushort ExtraU32 = 0x10, ExtraData = 0x04, EncryptedTable = 0x08, ChunkTable = 0x20, RemapTable = 0x40;
 
     public string Path { get; }
     public int Major { get; }
@@ -52,12 +53,18 @@ public sealed class RePak : IDisposable
             (Major, Minor, Features) = (hd[4], hd[5], BinaryPrimitives.ReadUInt16LittleEndian(hd.AsSpan(6)));
             var count = BinaryPrimitives.ReadInt32LittleEndian(hd.AsSpan(8));
             if (Major is not (2 or 4) || Minor > 2) throw new InvalidDataException($"package version {Major}.{Minor} is not supported");
-            if ((Features & ~(ExtraU32 | ExtraData | EncryptedTable | ChunkTable)) != 0) throw new InvalidDataException($"unknown package features 0x{Features:x}");
+            if ((Features & ~(ExtraU32 | ExtraData | EncryptedTable | ChunkTable | RemapTable)) != 0) throw new InvalidDataException($"unknown package features 0x{Features:x}");
             var size = Major == 2 && Minor == 0 ? 24 : 48;
             if (count < 0 || 16L + (long)count * size > len) throw new InvalidDataException("entry table past the end of the file");
             var stored = Bytes(16, count * size);
             var table = stored;
             long at = 16 + stored.Length + ((Features & ExtraU32) != 0 ? 4 : 0) + ((Features & ExtraData) != 0 ? 9 : 0);
+            if ((Features & RemapTable) != 0)
+            {
+                var n = at + 8 <= len ? BinaryPrimitives.ReadUInt64LittleEndian(Bytes(at, 8)) : ulong.MaxValue;
+                if (n > (ulong)(len - at - 8) / 16) throw new InvalidDataException("bad entry remap table");
+                at += 8 + 16 * (long)n;
+            }
             if ((Features & EncryptedTable) != 0)
             {
                 var raw = Bytes(at, 128);
