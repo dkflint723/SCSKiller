@@ -473,7 +473,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (userRequested) ServerRefresh = fetch ? Fetched(lists, CommunitySync) : ServerRefresh.IsCompleted ? Task.FromResult(ServerCheck.TooSoon) : ServerRefresh;
         }
         StartSharing(states.Select(s => s.Game));
-        StartKeyLookups(states);
+        if (KeyLookupsAfterScans) StartKeyLookups(states);
         StartMigration(states);
         if (ActiveCheck is { } active) ActiveCheckSent = Task.Run(() => active.SendAsync());
         RedetectInBackground();
@@ -2065,6 +2065,9 @@ public sealed partial class ScsKiller : IScsKiller
     public KeyCollection KeyList { get => field ??= new(Store.DataDir); set; }
     /// <summary>A game's names and key check for a lookup (<see cref="UnrealReader.KeyLookupCheck"/>). Replaceable for tests.</summary>
     internal Func<Game, KeyTrial?> KeyCheck { get => field ??= g => UnrealFiles?.KeyLookupCheck(g); set; }
+    /// <summary>Whether a scan starts the key lookups of its encrypted games (<see cref="StartKeyLookups"/>). The command
+    /// line turns it off but for its scan command, which waits for them: a process that exits drops the pass midway.</summary>
+    public bool KeyLookupsAfterScans { get; set; } = true;
     /// <summary>The queued key lookups of scans (<see cref="StartKeyLookups"/>) and key imports (<see cref="ImportKeysAsync"/>),
     /// one at a time: never two trying the same game.</summary>
     public Task KeyLookupPass { get; private set; } = Task.CompletedTask;

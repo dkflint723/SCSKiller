@@ -338,22 +338,23 @@ open game files read-only and never launch or attach to the game.
 - **Unreal Engine** (`Unreal/`): shader libraries and shader maps through CUE4Parse, including the version-1 archives of
   UE 4.20/4.21 (`UnrealReader.OpenV1`) and games that keep shaders inline in their packages. Encrypted paks need the
   game's AES key (`aes.key`): found in the exe by a static scan (`UnrealKeys`; never an anti-cheat game's exe), given by
-  the user, or looked up in the community's key list (`KeyCollection`: the first post of a forum topic, a plain HTTPS GET
-  at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
+  the user, or looked up in the community's key list (`KeyCollection`: the first post of a forum topic, a plain HTTPS
+  GET at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
   matched to the game's names locally, and at most 20 candidates are tried), or imported from a file of keys the user
   collected (`KeyCollection.ImportFile`: text lines, CSV, JSON or a saved page, at most 16 MB; per encrypted game the
-  entries matched to its names as a lookup matches them, then every unnamed key kept; a name that is only a label,
-  "AES Key" or FModel's "mainKey", leaves its key unnamed, and a list number before a name is dropped). After every scan, a background
-  pass tries the imported keys on the encrypted games (always: no network; the same named entries and unnamed keys) and,
-  only if none works and the online lookup is on, the list's other candidates; the Why? dialog's lookup goes in the same
-  order and says which stage it is in. An import waits for that pass, and the next pass for it (`KeyLookupPass`). Every
-  key is stored only if it opens one of the game's encrypted containers (`UnrealReader.KeyCheck`, as the exe scan's
-  keys; a lookup or import opens each container once for all the keys it tries, `KeyTrial`). Every container reader SCSKiller makes itself gets the game's own encryption on top of AES (Dead by Daylight
-  XORs its index; `UnrealReader.Custom`), as CUE4Parse's file providers give it to theirs, Marvel Rivals' IoStore
-  containers excepted as there. A shipped pipeline cache (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30,
-  `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact shader
-  map, so the planner pairs those shaders as the game does (global and post-process passes that no signature match
-  pairs). They are left out of the index's content hash.
+  entries matched to its names as a lookup matches them, then every unnamed key kept; a name that is only a label, "AES
+  Key" or FModel's "mainKey", leaves its key unnamed, and a list number before a name is dropped). After every scan, a
+  background pass (on the command line only its `scan`, which waits for it) tries the imported keys on the encrypted
+  games (always: no network; the same named entries and unnamed keys) and, only if none works and the online lookup is
+  on, the list's other candidates; the Why? dialog's lookup goes in the same order and says which stage it is in. An
+  import waits for that pass, and the next pass for it (`KeyLookupPass`). Every key is stored only if it opens one of
+  the game's encrypted containers (`UnrealReader.KeyCheck`, as the exe scan's keys; a lookup or import opens each
+  container once for all the keys it tries, `KeyTrial`). Every container reader SCSKiller makes itself gets the game's
+  own encryption on top of AES (Dead by Daylight XORs its index; `UnrealReader.Custom`), as CUE4Parse's file providers
+  give it to theirs, Marvel Rivals' IoStore containers excepted as there. A shipped pipeline cache
+  (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30, `StablePipelineCache`) names each PSO's shaders by
+  their library hash; every graphics PSO becomes one exact shader map, so the planner pairs those shaders as the game
+  does (global and post-process passes that no signature match pairs). They are left out of the index's content hash.
 - **Unity** (`Unity/`): Shader objects in serialized files and UnityFS bundles. Their compiled programs are one LZ4 blob
   per platform; the reader finds the blob by its shape and carves it, which avoids depending on each Unity version's
   serialized layout. Windows builds ship DXBC for the `d3d11` platform, which both the D3D11 and D3D12 players

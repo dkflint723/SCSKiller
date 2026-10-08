@@ -49,6 +49,27 @@ public partial class AppTests
         Assert.Equal(detects, reader.Detects);   // the caller rescans (as after a pasted key)
     }
 
+    /// <summary>The command line's commands but scan don't start the lookups (the process would exit during them, and an
+    /// online fetch it started never be recorded); a lookup turned on in Settings or asked for still runs.</summary>
+    [Fact]
+    public async Task A_scan_without_key_lookups_starts_none()
+    {
+        var page = new KeyPage();
+        var k = Killer(new FakeReader(EncryptedUnreal));
+        var tries = 0;
+        k.KeyList = new KeyCollection(Path.Combine(_root, "data"), page);
+        k.KeyCheck = g => new([g.Name], _ => { Interlocked.Increment(ref tries); return false; });
+        k.Settings = k.Settings with { LookUpKeysOnline = true };
+        await k.KeyLookupPass;
+        var before = (page.Requests, tries);
+        k.KeyLookupsAfterScans = false;
+        await k.RescanAsync(default);
+        await k.KeyLookupPass;
+        Assert.Equal(before, (page.Requests, tries));
+        Assert.Equal(KeyLookupOutcome.NoWorkingKey, (await k.LookUpKeyAsync(_game.Id)).Outcome);   // asked for: tried
+        Assert.Equal(before.tries + 1, tries);
+    }
+
     [Fact]
     public async Task A_saved_page_loaded_for_one_game_serves_the_other_encrypted_games()
     {
