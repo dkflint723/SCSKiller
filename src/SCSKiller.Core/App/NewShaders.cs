@@ -73,4 +73,34 @@ public static class NewShaders
         }
         return (due, keep);
     }
+
+    /// <summary>Settings.CompileNewShadersWhenIdle (upstream issue 98): the games to queue "when idle" now, and the queued store
+    /// to keep (game id -> the <see cref="Key"/> it was queued for). A game qualifies as one would be told about, by
+    /// <see cref="Enough"/> new pipelines or a rebuilt plan, but at any time of day; none while a game runs; not one
+    /// queued already, nor one queued before since its last compile (one that failed or was removed) unless <see cref="Enough"/>
+    /// more are new since, nor one whose compile adds more than <see cref="ScsKiller.LargeCompile"/> to the
+    /// cache (its notification asks).</summary>
+    public static (IReadOnlyList<GameState> Queue, Dictionary<string, string> Queued) WhenIdle(IEnumerable<GameState> games,
+        IEnumerable<QueueItem> queue, IReadOnlyDictionary<string, string> queuedBefore, IReadOnlySet<string> driverStale)
+    {
+        var list = games.ToList();
+        var active = queue.Where(q => !q.PlanCheck && q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped))   // queued, a plan check becomes the compile
+            .Select(q => q.GameId).ToHashSet();
+        var playing = list.Any(s => s.Playing);
+        var due = new List<GameState>();
+        var keep = new Dictionary<string, string>();
+        foreach (var s in list)
+        {
+            if (Key(s, driverStale) is not { } key) continue;   // compiled since, or nothing new: forgotten
+            var before = queuedBefore.GetValueOrDefault(s.Game.Id);
+            if (before != null) keep[s.Game.Id] = before;
+            // queued for this compile before: again only for as many more again
+            var since = before?.Split('|') is [var w, var n] && w == $"{s.WarmedAt!.Value.UtcTicks}" && long.TryParse(n, out var was) ? was : (long?)null;
+            if (playing || active.Contains(s.Game.Id) || ScsKiller.CacheGrowth(s) > ScsKiller.LargeCompile
+                || (since is { } m ? Count(s) - m < Enough(s) : Count(s) < Enough(s) && !PlannerChanged(s))) continue;
+            due.Add(s);
+            keep[s.Game.Id] = key;
+        }
+        return (due, keep);
+    }
 }

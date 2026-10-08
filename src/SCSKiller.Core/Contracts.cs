@@ -363,7 +363,8 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool TrayNoticeShown = false,    // the "still running" notification was shown (App.HideToTray): never again
     bool LookUpKeysOnline = false,   // a scan that finds an encrypted Unreal game without a key looks it up in the key list (Unreal.KeyCollection)
     string? KeyListUrl = null,       // the key list's page; null = KeyCollection.DefaultUrl
-    bool HideUnsupported = false);   // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
+    bool HideUnsupported = false,   // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
+    bool CompileNewShadersWhenIdle = false);   // compiled games with enough new pipelines queue "when idle" by themselves (NewShaders.WhenIdle)
 
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Paused, Done, Failed, Stopped }
 public sealed record QueueItem(string GameId, QueueStage Stage, WarmProgress? Progress, string? Error,

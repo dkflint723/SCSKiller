@@ -26,6 +26,10 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **The notification area's menu** shows what SCSKiller is doing ("Compiling Cyberpunk 2077, 45%"), and has "Compile
   all ready", which compiles what the Library's "Add all ready" would add without opening the window, and "Open queue"
   (upstream issue 45, the first step).
+- **"Compile new shaders when the PC is idle"** (Settings, off by default): a compiled game that gains enough new
+  pipelines (from its recording, the community's or an SCSKiller update) goes into the queue to compile in the
+  background once you're away, instead of a notification. A compile that adds more than 16 GB is still asked about,
+  and one that failed isn't queued again until as many more are new (upstream issue 98).
 
 ### Recorder and anti-cheat
 

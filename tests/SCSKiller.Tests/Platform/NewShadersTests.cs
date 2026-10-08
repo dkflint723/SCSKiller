@@ -194,4 +194,31 @@ public class NewShadersTests
         Assert.Equal(["plan-check", "done"], due.Select(s => s.Game.Id));
         Assert.Equal(["plan-check", "done"], notified.Keys);
     }
+
+    static (IReadOnlyList<string> Queue, Dictionary<string, string> Queued) WhenIdle(Dictionary<string, string> before, GameState[] games, params QueueItem[] queue)
+    {
+        var (due, queued) = NewShaders.WhenIdle(games, queue, before, DriverStale(games));
+        return ([.. due.Select(s => s.Game.Id)], queued);
+    }
+
+    /// <summary>Upstream issue 98: "Compile new shaders when the PC is idle" queues what a notification would tell about, at
+    /// any time of day, and a compile that failed only once as many again are new.</summary>
+    [Fact]
+    public void Games_with_enough_new_shaders_queue_when_idle_and_a_failed_one_only_for_as_many_more()
+    {
+        GameState[] games = [S("new", recorded: 150), S("few", recorded: 99), S("ac", recorded: 500, antiCheat: AntiCheat.EasyAntiCheat),
+            S("old-driver", recorded: 500, driver: "99.00"), S("big", recorded: 500) with { EstimatedCacheBytes = 20L << 30 },
+            S("queued", recorded: 500), S("check", recorded: 500), S("planner", reason: "SCSKiller can now compile 20 more pipelines of this game.", planNew: 20)];
+        var (queue, queued) = WhenIdle([], games, new("queued", QueueStage.Waiting, null, null), new("check", QueueStage.Waiting, null, null, PlanCheck: true));
+        Assert.Equal(["new", "check", "planner"], queue);
+        Assert.Equal(["new", "check", "planner"], queued.Keys);
+
+        // the compile failed: the same count isn't queued again, 100 more are; and none while a game runs
+        (queue, queued) = WhenIdle(queued, [S("new", recorded: 249)]);
+        Assert.Empty(queue);
+        Assert.Equal(["new"], queued.Keys);   // compiled since or nothing new: forgotten
+        Assert.Empty(WhenIdle(queued, [S("new", recorded: 250), S("game", playing: true)]).Queue);
+        Assert.Equal(["new"], WhenIdle(queued, [S("new", recorded: 250)]).Queue);
+        Assert.Equal(["new"], WhenIdle(queued, [S("new", recorded: 150, warmedAt: At.AddDays(1))]).Queue);   // compiled again since
+    }
 }

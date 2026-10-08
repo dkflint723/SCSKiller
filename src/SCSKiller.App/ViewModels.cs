@@ -1363,6 +1363,7 @@ public sealed class SettingsVm : Bindable
         }
     }
     public bool? NotifyNewShaders { get => S.NotifyNewShaders; set { if (value is { } v && v != S.NotifyNewShaders) S = S with { NotifyNewShaders = v }; } }
+    public bool? CompileNewShadersWhenIdle { get => S.CompileNewShadersWhenIdle; set { if (value is { } v && v != S.CompileNewShadersWhenIdle) S = S with { CompileNewShadersWhenIdle = v }; } }
     public bool? ScanAtStart { get => S.ScanAtStart; set { if (value is { } v && v != S.ScanAtStart) S = S with { ScanAtStart = v }; } }
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) S = S with { CloseQuits = v }; } }
 

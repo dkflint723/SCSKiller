@@ -260,6 +260,13 @@
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <CheckBox IsChecked="{x:Bind Vm.CompileNewShadersWhenIdle, Mode=TwoWay}" AutomationProperties.Name="Compile new shaders when the PC is idle">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Compile new shaders when the PC is idle" TextWrapping="Wrap" />
+                                <TextBlock Text="Instead of telling you, SCSKiller queues such a game to compile in the background once you're away from the PC, as after a driver update. A compile that adds more than 16 GB is still asked about, and one that failed isn't tried again until there's more to compile."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
                         <CheckBox IsChecked="{x:Bind Vm.ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="Send an anonymous daily check">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Send an anonymous daily check" TextWrapping="Wrap" />

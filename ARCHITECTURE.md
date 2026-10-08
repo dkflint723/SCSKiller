@@ -648,7 +648,11 @@ After a build:
   file) are, after a newer planner rebuilt the plan, "SCSKiller can now compile N more pipelines"; otherwise they add to
   "N new pipelines; compile again to include them" ("recorded" when all are); their sum is the new-shaders
   notification's count (`NewShaders`). That notification needs 1% of the plan, at least 100 and at most 1,000, and
-  comes at most once a day per game; "can now compile more" is told whatever its count. The result is cached on every input (each by size, write time and a hash of its first and last
+  comes at most once a day per game; "can now compile more" is told whatever its count. With "Compile new shaders when
+  the PC is idle" (`Settings.CompileNewShadersWhenIdle`, off by default) the app queues such a game "when idle" instead,
+  at any time of day but not while a game runs, and so tells nothing about it (`NewShaders.WhenIdle`); a compile that
+  adds more than 16 GB is still told about. `auto-queued.json` in the data folder keeps the compile and count each game
+  was queued for, so one that failed is queued again only when as many again are new. The result is cached on every input (each by size, write time and a hash of its first and last
   4 KB), in memory and in the game's record for the next start. A key file is read only when its contents hash to its name; one damaged, missing or unreadable, or none (a
   warm from before warms kept one), is an unknown baseline, under which everything counts and the game
   is Stale ("compile again: what the last compile replayed is no longer known"). Key files are written, and the plan and

@@ -31,6 +31,7 @@ public partial class App : Application
     static bool notifications, quitting, checkingDriver, checkAgain;
     static string? toldDriver;   // the driver and games the last driver-update notification was about
     static Dictionary<string, string>? told;   // NewShaders' notified store
+    static Dictionary<string, string>? autoQueued;   // NewShaders.WhenIdle's queued store
     static TaskCompletionSource? quitNow;   // set while quitting waits for the compile to finish: the tray's Quit again ends it
     static readonly CancellationTokenSource stopWatching = new();
     static Task watcher = Task.CompletedTask;
@@ -144,7 +145,7 @@ public partial class App : Application
             if (activation.Kind == ExtendedActivationKind.Launch) _ = Updater.ApplyAtStartAsync(args[1..]);
             if (Core is ScsKiller k && !driverUpdated)
             {
-                var check = new Coalesced(Main.DispatcherQueue, () => NotifyNewShaders(k.Store));
+                var check = new Coalesced(Main.DispatcherQueue, () => { QueueNewShaders(k.Store); NotifyNewShaders(k.Store); });   // a game queued isn't told about
                 Core.GameChanged += _ => check.Request();
             }
             if (Updater.HasResume)   // restarted by "Restart to update": the queue goes on once the games are known
@@ -441,6 +442,18 @@ public partial class App : Application
         if (due.Count == 0 && notified.Count == told.Count && notified.All(e => told.GetValueOrDefault(e.Key) == e.Value)) return;
         store.SaveNotified(told = notified);   // before showing: never twice
         if (due.Count > 0) AppNotificationManager.Default.Show(NewShadersToast(due));
+    }
+
+    /// <summary>Settings' "Compile new shaders when idle": the games <see cref="NewShaders.WhenIdle"/> picks go into the queue
+    /// "when idle", with no notification (one queued isn't told about).</summary>
+    static void QueueNewShaders(AppStore store)
+    {
+        if (!Core.Settings.CompileNewShadersWhenIdle) return;
+        autoQueued ??= store.LoadAutoQueued();
+        var (due, queued) = NewShaders.WhenIdle(Core.Games, Core.Queue, autoQueued, Core.DriverStaleGames().Select(s => s.Game.Id).ToHashSet());
+        if (due.Count == 0 && queued.Count == autoQueued.Count && queued.All(e => autoQueued.GetValueOrDefault(e.Key) == e.Value)) return;
+        store.SaveAutoQueued(autoQueued = queued);   // before queueing: a failed compile isn't queued again
+        foreach (var s in due) Core.EnqueueWhenIdle(s.Game.Id);
     }
 
     static AppNotification NewShadersToast(IReadOnlyList<GameState> games)
