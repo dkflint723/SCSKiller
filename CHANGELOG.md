@@ -12,11 +12,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   why SCSKiller couldn't find the key itself. If the forum asks for a browser check, "Open list in browser" and "Load
   saved page…" read the page you save instead. On the command line: `scskiller key <game> --lookup`.
 - **"Import keys…"** in Settings tries a file of encryption keys you collected (lines of a game's name and its key, or a
-  key alone; CSV, JSON or a saved page) on every encrypted Unreal game without a working key, keeps only keys that open
-  a game's files, and lists what each game got. The keys are kept, named and unnamed: every scan tries them on encrypted
-  games (also ones installed later), before and without the online list. Keys that didn't work aren't tried again for
-  the same game build until you import more. The file never leaves your PC. On the command line:
-  `scskiller key --import <file>`.
+  key alone, or after a label like "AES Key:"; CSV, JSON, FModel's key file or a saved page) on every encrypted Unreal
+  game without a working key, keeps only keys that open a game's files, and lists what each game got. The keys are
+  kept, named and unnamed: every scan tries them on encrypted games (also ones installed later), before and without the
+  online list. Keys that didn't work aren't tried again for the same game build until you import more. The file never
+  leaves your PC. On the command line: `scskiller key --import <file>`.
 - **"Hide unsupported games"** (off by default), in Settings and beside the Library's search box, leaves the games
   SCSKiller can't compile out of the Library. They're still checked at every scan and show again once they can be
   compiled; the Library says how many are hidden, with a way to show them.

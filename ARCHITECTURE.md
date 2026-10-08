@@ -342,7 +342,8 @@ open game files read-only and never launch or attach to the game.
   at most daily, or hourly on the user's request, with backoff; only "name 0x<64 hex>" lines are read from the page,
   matched to the game's names locally, and at most 20 candidates are tried), or imported from a file of keys the user
   collected (`KeyCollection.ImportFile`: text lines, CSV, JSON or a saved page, at most 16 MB; per encrypted game the
-  entries matched to its names as a lookup matches them, then at most 50 unnamed keys). After every scan, a background
+  entries matched to its names as a lookup matches them, then every unnamed key kept; a name that is only a label,
+  "AES Key" or FModel's "mainKey", leaves its key unnamed, and a list number before a name is dropped). After every scan, a background
   pass tries the imported keys on the encrypted games (always: no network; the same named entries and unnamed keys) and,
   only if none works and the online lookup is on, the list's other candidates; the Why? dialog's lookup goes in the same
   order and says which stage it is in. An import waits for that pass, and the next pass for it (`KeyLookupPass`). Every

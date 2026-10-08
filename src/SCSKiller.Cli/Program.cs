@@ -449,7 +449,8 @@ async Task<int> Key()
     if (args.Contains("--lookup"))
     {
         if (k.KeyProblem(g.Game.Id) is { } why && g.Engine?.Encrypted == true) Console.WriteLine(why);
-        var page = Opt("--page") is { } file ? File.ReadAllText(file) : null;
+        var (page, tooLarge) = Opt("--page") is { } file ? KeyCollection.ReadSavedPage(file) : (null, null);
+        if (tooLarge != null) return Fail(tooLarge);
         var r = await k.LookUpKeyAsync(g.Game.Id, page);
         if (r.Outcome != KeyLookupOutcome.Unlocked) return Fail(r.Message);
         await k.RescanAsync(CancellationToken.None);

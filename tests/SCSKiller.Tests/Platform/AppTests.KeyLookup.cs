@@ -136,7 +136,7 @@ public partial class AppTests
         foreach (var text in log.Concat(r.Games.Select(g => g.Message)))
             foreach (var key in Enumerable.Range(1, 9).Select(Key))
                 Assert.DoesNotContain(key, text, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(log, l => l.Contains("unnamed key #1"));
+        Assert.Contains(log, l => l.Contains("checking 3 unnamed keys"));
         Assert.Equal(["Fake Game", "Fake Game (demo)"], k.KeyList.Imported().Select(e => e.Name));   // kept for later lookups
 
         var missing = await k.ImportKeysAsync(Path.Combine(_root, "none.txt"));
