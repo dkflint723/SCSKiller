@@ -1381,6 +1381,77 @@ public sealed class SettingsVm : Bindable
     public string MaxCompileMemoryNote => $"Auto picks the best limit for this PC's memory ({ScsKiller.AutoCompileMemoryGB()} GB here, with {Math.Round(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30))} GB of RAM). Set it lower to keep more memory free while compiling.";
     public string MaxCompileMemoryText => S.MaxCompileMemoryGB > 0 ? $"{S.MaxCompileMemoryGB} GB" : $"Auto ({ScsKiller.AutoCompileMemoryGB()} GB)";
     public string PriorityNote => (S.Priority == WarmPriority.BelowNormal ? "Below-normal priority." : "Idle priority.") + " Fewer threads = slower compile, quieter PC.";
+
+    public bool? ClearOldDriverCache { get => S.ClearOldDriverCache; set { if (value is { } v && v != S.ClearOldDriverCache) S = S with { ClearOldDriverCache = v }; } }
+
+    // Storage (upstream issues 80 and 35): the whole driver cache and what nothing installed uses, read off the UI thread.
+    (long Bytes, int Apps)? total;
+    IReadOnlyList<CleanupRow> cleanup = [];
+    bool storageRead;
+    BackgroundRead<((long, int)?, IReadOnlyList<CleanupItem>)>? storage;
+
+    /// <summary>Settings shows the section: reads the cache and the clean-up list again.</summary>
+    public void ReadStorage()
+    {
+        storage ??= new(() =>
+        {
+            try { return (App.Core.DriverCacheTotal(), App.Core.CleanupItems()); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (null, []); }
+        }, r =>
+        {
+            (total, cleanup, storageRead) = (r.Item1, r.Item2.Select(i => new CleanupRow(i)).ToList(), true);
+            Changed();
+        });
+        storage.Request();
+    }
+
+    public bool CanClearCache => total is { Apps: > 0 };
+    public string DriverCacheText => !storageRead ? Format.Dash : total switch
+    {
+        null => $"SCSKiller can't clear the {Fmt.Vendor(V.Vendor)} driver's shader cache: it isn't split per game.",
+        { Apps: 0 } => "The driver shader cache is empty.",
+        var (bytes, apps) => $"{Format.Bytes(bytes)} in the caches of {apps:N0} games and apps.",
+    };
+    /// <summary>The confirmation's text, with what is there now.</summary>
+    public string ClearCacheQuestion => $"This deletes the driver's shader cache of every game and app on this PC ({Format.Bytes(total?.Bytes ?? 0)}), not only the games SCSKiller compiles. "
+        + "Every game compiles its shaders again and stutters until it does: compile your games again in SCSKiller afterwards.\n\n"
+        + "The caches of apps that are running now (a game, a browser, Steam, Discord) are in use and are kept.";
+    public IReadOnlyList<CleanupRow> Cleanup => cleanup;
+    public bool HasCleanup => cleanup.Count > 0;
+    public string CleanupText => !storageRead ? Format.Dash : cleanup.Count == 0 ? "Nothing to clean up: every cache here belongs to an installed game."
+        : $"{Format.Bytes(cleanup.Sum(c => c.Item.Bytes))} that no installed game uses.";
+    public string? StorageMessage { get; set; }
+    public Microsoft.UI.Xaml.Controls.InfoBarSeverity StorageSeverity { get; set; }
+    public bool HasStorageMessage => StorageMessage != null;
+
+    /// <summary>What a delete did, in one line.</summary>
+    public static string Deleted(CacheDeletion d) => $"Deleted {Format.Bytes(d.Bytes)}."
+        + (d.Kept.Count > 0 ? $" {Format.Bytes(d.KeptBytes)} is in use by {string.Join(", ", d.InUseBy)} and was kept: close {(d.InUseBy.Count == 1 ? "it" : "them")} and try again to delete it too." : "");
+
+    // The GPU compiles target (upstream issue 43): offered when the PC has more than one of the vendor's GPUs.
+    IReadOnlyList<(string Id, DxgiAdapter Adapter)>? gpus;
+    IReadOnlyList<(string Id, DxgiAdapter Adapter)> Gpus => gpus ??= GpuBackends.Choices(GpuBackends.Adapters());
+    public bool HasGpuChoice => Gpus.Count > 1;
+    public IReadOnlyList<string> GpuLabels => ["Automatic: " + (GpuBackends.Chosen([.. Gpus.Select(g => g.Adapter)], null)?.Gpu.Name ?? "the GPU with the most video memory"),
+        .. Gpus.Select(g => $"{g.Adapter.Gpu.Name} ({Format.Bytes((long)g.Adapter.Gpu.DedicatedVideoMemory)})")];
+    public int GpuIndex
+    {
+        get => S.GpuAdapter is { } id && Gpus.ToList().FindIndex(g => g.Id.Equals(id, StringComparison.OrdinalIgnoreCase)) is >= 0 and var i ? i + 1 : 0;
+        set { if (value >= 0 && value != GpuIndex) S = S with { GpuAdapter = value == 0 ? null : Gpus[value - 1].Id }; }
+    }
+    public string GpuNote => GpuBackends.Chosen([.. Gpus.Select(g => g.Adapter)], S.GpuAdapter) is { } pick && pick.Gpu.AdapterLuid != V.Gpu.AdapterLuid
+        ? $"Restart SCSKiller to compile on {pick.Gpu.Name}." : $"Compiles target {V.Gpu.Name}. Pick the GPU your games run on: the driver cache is per GPU."
+        + (Gpus.Any(g => g.Id.Contains('#')) ? " Identical cards are listed in Windows' order, the one with the main display first: moving the monitor to the other card swaps them." : "");
+}
+
+/// <summary>A row of Settings' clean-up list; ticked as <see cref="CleanupItem.Suggested"/>.</summary>
+public sealed class CleanupRow(CleanupItem item)
+{
+    public CleanupItem Item { get; } = item;
+    public string Name => Item.Name;
+    public string Size => Format.Bytes(Item.Bytes);
+    public string Note => Item.Note;
+    public bool? Checked { get; set; } = item.Suggested;
 }
 
 /// <summary>Settings' Account card: a view over <see cref="App.Account"/>, which changes on worker threads.</summary>

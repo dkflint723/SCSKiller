@@ -288,6 +288,26 @@ public sealed class FakeScsKiller : IScsKiller
         return true;
     }
 
+    public (long Bytes, int Apps)? DriverCacheTotal() => (Interlocked.Read(ref vendor.Used), 42);
+
+    // the design data: everything cleared but a browser's cache, which it holds open
+    public CacheDeletion ClearDriverCache()
+    {
+        foreach (var s in Games.Where(s => s.CacheOnDisk != null)) ClearGameCache(s.Game.Id);
+        var left = Interlocked.Exchange(ref vendor.Used, 300L << 20);
+        return new(new HashSet<string> { "fake" }, 120, left, new HashSet<string> { "browser" }, 300L << 20, ["msedge.exe"]);
+    }
+
+    public IReadOnlyList<CleanupItem> CleanupItems() =>
+    [
+        new("cache|steam:1", "Gears of War: E-Day: driver cache", CleanupKind.GoneGameCache, 48L << 30, true, "The game isn't installed any more."),
+        new("data|steam:1", "Gears of War: E-Day: SCSKiller's data", CleanupKind.GoneGameData, 640L << 20, false, "Its plan and recording. A reinstall plans again and records from the start."),
+        new("vendor|amd", "AMD driver cache", CleanupKind.OtherVendorCache, 2L << 30, false, "Not this GPU's. Another GPU or an app set to one may use it: what it compiled is compiled again."),
+    ];
+
+    public CacheDeletion CleanUp(string itemId) =>
+        new(new HashSet<string>(), 3, CleanupItems().First(i => i.Id == itemId).Bytes, new HashSet<string>(), 0, []);
+
     public void PauseQueue() => Update(() => { paused = true; return SetCurrent(q => q.Stage == QueueStage.Warming ? q with { Stage = QueueStage.Paused } : q); });
     public void ResumeQueue() => Update(() => { paused = false; return SetCurrent(q => q.Stage == QueueStage.Paused ? q with { Stage = QueueStage.Warming } : q); });
     public void StopQueue() => Update(() => { paused = running = false; return SetCurrent(q => q with { Stage = QueueStage.Stopped }); });

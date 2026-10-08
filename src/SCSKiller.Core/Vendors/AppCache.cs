@@ -42,6 +42,35 @@ public static class AppCacheFiles
         finally { foreach (var h in held) h.Dispose(); }
     }
 
+    /// <summary>Deletes <paramref name="files"/> (file, key) key by key, each key's all or none (<see cref="DeleteAll"/>): a
+    /// key a process holds open (a running game, a browser, Steam, Discord: the driver keeps their files open) is left
+    /// whole and its holders are named. Files already gone are skipped.</summary>
+    public static CacheDeletion DeleteByKey(IEnumerable<(FileInfo File, string Key)> files)
+    {
+        var (deleted, kept, users) = (new HashSet<string>(StringComparer.OrdinalIgnoreCase), new HashSet<string>(StringComparer.OrdinalIgnoreCase), new SortedSet<string>(StringComparer.OrdinalIgnoreCase));
+        long bytes = 0, keptBytes = 0;
+        int count = 0;
+        foreach (var key in files.GroupBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var list = key.Select(f => f.File).Where(f => { f.Refresh(); return f.Exists; }).ToList();
+            var size = list.Sum(f => f.Length);
+            try
+            {
+                count += DeleteAll(list);
+                bytes += size;
+                deleted.Add(key.Key);
+            }
+            catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                keptBytes += size;
+                kept.Add(key.Key);
+                var by = list.SelectMany(f => ProcessesUsing(f.FullName)).Distinct().Select(Describe).ToList();
+                users.UnionWith(by.Count > 0 ? by.Select(d => d.Split(" (pid ")[0]) : [e is InvalidOperationException ? "another process" : e.Message]);
+            }
+        }
+        return new(deleted, count, bytes, kept, keptBytes, [.. users]);
+    }
+
     static string Describe(nuint pid) =>
         Warming.ProcessTree.Snapshot().FirstOrDefault(p => (nuint)p.Pid == pid).Exe is { } exe ? $"{exe} (pid {pid})" : $"pid {pid}";   // exited meanwhile
 

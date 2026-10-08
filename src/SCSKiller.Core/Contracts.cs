@@ -147,7 +147,20 @@ public interface IAppCache
     /// <summary>Deletes every file of these keys, or none: InvalidOperationException ("files in use by ...") when one is
     /// open. Returns how many were deleted.</summary>
     int Delete(IEnumerable<string> keys);
+    /// <summary>Every cache file with its key, every application's (no content read).</summary>
+    IEnumerable<(string Path, string Key)> AllFiles() => [];
 }
+
+/// <summary>A key-by-key delete of driver-cache files (<see cref="Vendors.AppCacheFiles.DeleteByKey"/>): the keys deleted,
+/// their files and bytes; the keys left whole because a running process holds them, their bytes and who holds them.</summary>
+public sealed record CacheDeletion(IReadOnlySet<string> Deleted, int Files, long Bytes, IReadOnlySet<string> Kept, long KeptBytes, IReadOnlyList<string> InUseBy);
+
+/// <summary>Something Settings' clean-up list offers to delete (<see cref="IScsKiller.CleanupItems"/>). Suggested: ticked by
+/// default; Note: what deleting it costs, or why it isn't suggested.</summary>
+public sealed record CleanupItem(string Id, string Name, CleanupKind Kind, long Bytes, bool Suggested, string Note);
+/// <summary>GoneGameCache: the driver-cache keys of a game no longer installed; GoneGameData: SCSKiller's own folder for it
+/// (plan, recordings); OtherVendorCache: the other GPU vendor's driver caches.</summary>
+public enum CleanupKind { GoneGameCache, GoneGameData, OtherVendorCache }
 
 /// <summary>One kind of a game's shader cache on disk (<see cref="IScsKiller.GameCaches"/>).</summary>
 public sealed record CachePart(string Name, IReadOnlyList<string> Files, long Bytes);
@@ -364,7 +377,9 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool TrayNoticeShown = false,    // the "still running" notification was shown (App.HideToTray): never again
     bool LookUpKeysOnline = false,   // a scan that finds an encrypted Unreal game without a key looks it up in the key list (Unreal.KeyCollection)
     string? KeyListUrl = null,       // the key list's page; null = KeyCollection.DefaultUrl
-    bool HideUnsupported = false)    // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
+    bool HideUnsupported = false,    // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
+    bool ClearOldDriverCache = true,   // a compile for a new driver first deletes the game's cache files from before it (ScsKiller.ClearOldDriverFiles)
+    string? GpuAdapter = null)       // the GPU compiles target (GpuBackends.AdapterId: PCI ids, not the LUID); null = the one with the most VRAM
 {
     /// <summary>settings.json's keys this build doesn't know (another build's sharing the data folder, such as an upstream
     /// release's): written back as they were, so switching builds loses no setting. Null = none.</summary>
@@ -452,6 +467,23 @@ public interface IScsKiller
     /// running, a compile of it is in progress, or a file is in use. <paramref name="gamePrecache"/>: also the shader and
     /// pipeline caches the game writes itself (it rebuilds them at its next start).</summary>
     bool ClearGameCache(string gameId, bool gamePrecache = false);
+
+    /// <summary>The whole driver shader cache SCSKiller can clear: its bytes and how many applications' caches it holds;
+    /// null when the vendor's cache isn't split per application. Reads the folder: not on the UI thread.</summary>
+    (long Bytes, int Apps)? DriverCacheTotal();
+
+    /// <summary>Deletes every application's driver-cache files, key by key: keys a running process holds (a game, a browser,
+    /// Steam) are left whole and reported. The games whose keys went show as not compiled. InvalidOperationException
+    /// during a compile, or when the vendor's cache isn't split per application.</summary>
+    CacheDeletion ClearDriverCache();
+
+    /// <summary>Caches nothing installed uses: the driver caches of games no longer installed, SCSKiller's data for them,
+    /// the other GPU vendor's driver caches. Empty before the first scan. Reads folders: not on the UI thread.</summary>
+    IReadOnlyList<CleanupItem> CleanupItems();
+
+    /// <summary>Deletes one of <see cref="CleanupItems"/> (as listed now, by its Id): a driver cache key by key, as
+    /// <see cref="ClearDriverCache"/>. InvalidOperationException when it is no longer listed, or during a compile.</summary>
+    CacheDeletion CleanUp(string itemId);
 
     /// <summary>AMD: the game's compiles run careful (<see cref="CarefulCompile"/>) or fast; InvalidOperationException on
     /// another vendor.</summary>

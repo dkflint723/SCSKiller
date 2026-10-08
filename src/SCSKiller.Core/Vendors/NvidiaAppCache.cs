@@ -31,8 +31,10 @@ public sealed class NvidiaAppCache(string dir) : IAppCache
     public long UsedOf(IEnumerable<string> keys) => FilesOf(keys).Sum(f => UsedBytes(f) ?? f.Length);
 
     public IReadOnlySet<string> KeysOpenBy(string exeFileName) => !Directory.Exists(Dir) ? new HashSet<string>()
-        : AppCacheFiles.KeysOpenBy(exeFileName, Directory.EnumerateFiles(Dir, "*.nvph")
-            .Select(f => (Path: f, Key: Key(Path.GetFileName(f))!)).Where(f => f.Key != null));
+        : AppCacheFiles.KeysOpenBy(exeFileName, AllFiles());
+
+    public IEnumerable<(string Path, string Key)> AllFiles() => !Directory.Exists(Dir) ? []
+        : Directory.EnumerateFiles(Dir, "*.nvph").Select(f => (Path: f, Key: Key(Path.GetFileName(f))!)).Where(f => f.Key != null);
 
     public int Delete(IEnumerable<string> keys) => AppCacheFiles.DeleteAll(FilesOf(keys));
 

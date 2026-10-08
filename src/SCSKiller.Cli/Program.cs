@@ -23,6 +23,10 @@ const string Usage = """
       cache clear <game> [--game-precache]        delete the game's shader caches: driver, Windows (D3DSCache) (asks first);
                                                   --game-precache: also the caches the game writes itself (Unreal's user pipeline
                                                   cache, *.ushaderprecache), which it rebuilds at its next start
+      cache clear --all                           delete every app's driver shader cache (asks first); what running apps hold is kept
+      cache cleanup [<n>...]                      list the caches no installed game uses (games no longer installed, SCSKiller's
+                                                  data for them, the other GPU vendor's driver cache); with numbers, delete those (asks first)
+      gpu [<id>|auto]                             the GPUs compiles may target, or pick one (takes effect at the next start)
       nvidia-snapshot                             read-only: every global DRS setting, Auto Shader Compilation, its idle task
       nvidia-auto-shader off|low|medium|high      switch NVIDIA's Auto Shader Compilation (admin, asks first)
         (cache set / nvidia-auto-shader, as the app runs them elevated: --yes skips the question, --result <file>
@@ -71,7 +75,8 @@ try
         "compile" => await Compile(),
         "queue" => await QueueShell(),
         "rewarm-stale" => await RewarmStale(args.Contains("--if-driver-changed")),
-        "cache" => args.ElementAtOrDefault(1) == "clear" ? await CacheClear() : Cache(),
+        "cache" => args.ElementAtOrDefault(1) switch { "clear" when args.ElementAtOrDefault(2) == "--all" => await CacheClearAll(), "clear" => await CacheClear(), "cleanup" => await CacheCleanup(), _ => Cache() },
+        "gpu" => Gpu(),
         "record" => await Record(),
         "index" => await Index(),
         "rehydrate" => await RehydrateCommand(),
@@ -325,6 +330,56 @@ async Task<int> CacheClear()
     return 0;
 }
 
+async Task<int> CacheClearAll()
+{
+    var k = await Open();
+    if (k.DriverCacheTotal() is not { } total) return Fail($"the {k.Vendor.Gpu.Name} driver's shader cache isn't split per application: SCSKiller can't clear it");
+    var (bytes, apps) = total;
+    if (!Confirm($"Delete the driver shader cache of every game and app on this PC ({Format.Bytes(bytes)} in {apps:N0} caches)? " +
+                 "Every game compiles its shaders again; the caches of running apps are kept.")) return 1;
+    Console.WriteLine(Deleted(k.ClearDriverCache()));
+    return 0;
+}
+
+static string Deleted(CacheDeletion d) => $"deleted {Format.Bytes(d.Bytes)} ({d.Files:N0} files)"
+    + (d.Kept.Count > 0 ? $"; {Format.Bytes(d.KeptBytes)} in use by {string.Join(", ", d.InUseBy)} kept" : "");
+
+async Task<int> CacheCleanup()
+{
+    var k = await Open();
+    var items = k.CleanupItems();
+    if (items.Count == 0) { Console.WriteLine("nothing to clean up: every cache belongs to an installed game"); return 0; }
+    for (int i = 0; i < items.Count; i++)
+        Console.WriteLine($"{i + 1,3} {Format.Bytes(items[i].Bytes),10}  {items[i].Name}{(items[i].Suggested ? "" : " (not suggested)")} - {items[i].Note}");
+    var picked = args.Skip(2).Select(a => int.TryParse(a, out var n) && n >= 1 && n <= items.Count ? items[n - 1] : throw new ArgumentException($"'{a}' isn't a number of the list")).Distinct().ToList();
+    if (picked.Count == 0) return 0;
+    if (!Confirm($"Delete {string.Join(", ", picked.Select(p => p.Name))} ({Format.Bytes(picked.Sum(p => p.Bytes))})?")) return 1;
+    foreach (var p in picked) Console.WriteLine($"{p.Name}: {Deleted(k.CleanUp(p.Id))}");
+    return 0;
+}
+
+int Gpu()
+{
+    var store = new AppStore(AppStore.DefaultDir);
+    var settings = store.LoadSettings();
+    var choices = GpuBackends.Choices(GpuBackends.Adapters());
+    if (args.ElementAtOrDefault(1) is { } pick)
+    {
+        var id = pick == "auto" ? null : choices.FirstOrDefault(c => c.Id.Equals(pick, StringComparison.OrdinalIgnoreCase)).Id
+                                          ?? throw new ArgumentException($"no GPU {pick} here: one of {string.Join(", ", choices.Select(c => c.Id))}, or auto");
+        store.SaveSettings(settings with { GpuAdapter = id });
+        Console.WriteLine($"compiles target {GpuBackends.Chosen([.. choices.Select(c => c.Adapter)], id)?.Gpu.Name ?? "no GPU"} from the next start (the app: restart it)");
+        return 0;
+    }
+    var chosen = GpuBackends.Chosen([.. choices.Select(c => c.Adapter)], settings.GpuAdapter);
+    foreach (var (id, a) in choices)
+        Console.WriteLine($"{(a == chosen ? "*" : " ")} {id,-22} {a.Gpu.Name} ({Format.Bytes((long)a.Gpu.DedicatedVideoMemory)})");
+    Console.WriteLine(settings.GpuAdapter == null ? "auto: the GPU with the most video memory" : $"picked: {settings.GpuAdapter}");
+    if (choices.Any(c => c.Id.Contains('#')))
+        Console.WriteLine("identical cards (#1...) are numbered in Windows' order, the main display's first: moving the monitor swaps them");
+    return 0;
+}
+
 async Task<int> Compile()
 {
     if (args.Length < 2) return Fail("compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast]");
@@ -375,9 +430,12 @@ async Task<int> RewarmStale(bool ifDriverChanged)
     }
 }
 
+// The GPU compiles target: the one picked in Settings (upstream issue 43), else the one with the most VRAM
+static IGpuVendorBackend PickedGpu() => GpuBackends.Detect(new AppStore(AppStore.DefaultDir).LoadSettings().GpuAdapter);
+
 int Cache()
 {
-    var v = GpuBackends.Detect();
+    var v = PickedGpu();
     Console.WriteLine($"GPU: {v.Gpu.Name} ({v.Vendor}), driver {v.Gpu.DriverVersion}, profile {v.Caps.Profile}");
     if (args.Length > 1 && args[1] == "set")
     {
@@ -538,7 +596,7 @@ async Task<int> ReferenceExport()
 // Read-only. Run it before and after switching something in the NVIDIA App and diff the two outputs.
 static int NvidiaSnapshot()
 {
-    if (GpuBackends.Detect() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
+    if (PickedGpu() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
     Console.WriteLine($"driver {nv.Gpu.DriverVersion}");
     Console.WriteLine($"Auto Shader Compilation: {nv.GetAutoShaderCompilation()?.ToString() ?? "not readable"} (setting 0x{NvidiaBackend.AutoShaderCompilationId:X8})");
     Console.WriteLine($"NvOSC.exe: {NvidiaBackend.NvOscPath() ?? "not found"}");
@@ -563,7 +621,7 @@ int NvidiaAutoShader()
 {
     if (!Enum.TryParse<AutoShaderCompilation>(args.ElementAtOrDefault(1), true, out var level) || !Enum.IsDefined(level) || int.TryParse(args[1], out _))
         return Fail("nvidia-auto-shader off|low|medium|high");
-    if (GpuBackends.Detect() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
+    if (PickedGpu() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
     if (!Elevated.IsAdmin) return Fail("switching NVIDIA Auto Shader Compilation needs an elevated (administrator) prompt");
     // NvOSC.exe -register registers the idle task for the account running it: refuse when UAC elevated a different
     // administrator (over-the-shoulder), whose DXCache it would compile into. Same account + elevated token is fine.

@@ -59,6 +59,51 @@
                 </StackPanel>
             </Border>
 
+            <Border x:Name="StorageCard" Style="{StaticResource Card}" Padding="20">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Clean up shader caches" Style="{StaticResource Section}" />
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="The whole driver shader cache" />
+                            <TextBlock Text="{x:Bind Vm.DriverCacheText, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button x:Name="ClearAllButton" Grid.Column="1" Content="Clear all…" Click="OnClearDriverCache" IsEnabled="{x:Bind Vm.CanClearCache, Mode=OneWay}"
+                                VerticalAlignment="Center" AutomationProperties.Name="Clear the whole driver shader cache" />
+                    </Grid>
+                    <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Not used by an installed game" />
+                        <TextBlock Text="{x:Bind Vm.CleanupText, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ItemsRepeater ItemsSource="{x:Bind Vm.Cleanup, Mode=OneWay}" Visibility="{x:Bind Vm.HasCleanup, Mode=OneWay}">
+                        <ItemsRepeater.Layout><StackLayout Spacing="8" /></ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="local:CleanupRow">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{x:Bind Checked, Mode=TwoWay}" AutomationProperties.Name="{x:Bind Name}">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{x:Bind Name}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Note}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </CheckBox>
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Size}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                    <Button x:Name="CleanUpButton" Content="Delete the ticked caches…" Click="OnCleanUp" Visibility="{x:Bind Vm.HasCleanup, Mode=OneWay}" />
+                    <TextBlock Text="A game's older compiles can't be told apart inside its driver cache. To start a game's cache over, use Clear cache on its page and compile it again."
+                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                    <InfoBar IsOpen="{x:Bind Vm.HasStorageMessage, Mode=OneWay}" Visibility="{x:Bind Vm.HasStorageMessage, Mode=OneWay}" Message="{x:Bind Vm.StorageMessage, Mode=OneWay}"
+                             Severity="{x:Bind Vm.StorageSeverity, Mode=OneWay}" IsClosable="False" />
+                </StackPanel>
+            </Border>
+
             <Grid ColumnSpacing="12" RowSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
@@ -103,6 +148,13 @@
                         </Grid>
                         <Slider Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.BackgroundThreads, Mode=TwoWay}"
                                 AutomationProperties.Name="Threads for background rebuilds" />
+                        <CheckBox IsChecked="{x:Bind Vm.ClearOldDriverCache, Mode=TwoWay}" AutomationProperties.Name="Delete a game's cache from the old driver before rebuilding it">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Delete a game's cache from the old driver before rebuilding it" TextWrapping="Wrap" />
+                                <TextBlock Text="The driver keeps the old driver's files, so a rebuild would add to them and the cache would double. What the game compiled itself since the new driver came is kept."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
                         <StackPanel Spacing="12" Visibility="{x:Bind Vm.IsNvidia}">
                             <StackPanel Spacing="8">
                                 <CheckBox x:Name="AutoBox" Content="Auto Shader Compilation (NVIDIA beta)" IsChecked="{x:Bind Vm.AutoOn, Mode=TwoWay}" />
@@ -211,6 +263,11 @@
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
                         <StackPanel Spacing="12">
                             <TextBlock Text="Compile speed when you run the queue" Style="{StaticResource Section}" />
+                            <StackPanel Spacing="4" Visibility="{x:Bind Vm.HasGpuChoice}">
+                                <ComboBox Header="Compile for" ItemsSource="{x:Bind Vm.GpuLabels}" SelectedIndex="{x:Bind Vm.GpuIndex, Mode=TwoWay}" MinWidth="260"
+                                          AutomationProperties.Name="The GPU compiles target" />
+                                <TextBlock Text="{x:Bind Vm.GpuNote, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
                             <Grid>
                                 <TextBlock Text="Compile threads" />
                                 <TextBlock Text="{x:Bind Vm.ThreadsText, Mode=OneWay}" HorizontalAlignment="Right" />
