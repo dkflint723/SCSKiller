@@ -56,6 +56,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   a compile already covered (the same shaders and root signature under other state on NVIDIA, what an HDR mod's layer
   makes of them while compiles run through the same layer) don't count either.
 - `scskiller index --out` writes a big game's index without running out of memory.
+- **Cyberpunk 2077** from Steam is listed with its game, `bin\x64\Cyberpunk2077.exe`, instead of CD PROJEKT RED's
+  launcher when the launcher's configuration doesn't name it, so the recorder goes where the game loads it and the
+  checks beside the exe look at the game's folder (upstream issue 102). A recorder already beside the launcher moves once the
+  game exits.
+- **Special K** as `dxgi.dll` is no longer taken for ReShade because it looks ReShade up: a compile through it never
+  finished ("scskiller_warm exited without a done event"). A DLL counts as ReShade by its contents only when its
+  version resource names no other product (upstream issue 78).
 
 ## [1.2.4] - 2026-10-08
 

@@ -36,7 +36,7 @@ public static class GameFiles
         if (launcherExe != null)
         {
             var p = Path.GetFullPath(Path.Combine(installDir, launcherExe));
-            if (File.Exists(p)) return RedLauncherTarget(installDir, p) ?? p;
+            if (File.Exists(p)) return RedLauncherTarget(installDir, p) ?? RedBinExe(installDir, p) ?? p;
         }
         // ponytail: non-Unreal games get a guess; Steam's real launch target lives in the binary appinfo.vdf, parse it if this misfires
         var exes = Directory.EnumerateFiles(installDir, "*.exe", Deep)
@@ -153,11 +153,11 @@ public static class GameFiles
     }
 
     /// <summary>The game a launcher (<paramref name="guess"/>) starts: the target of CD PROJEKT RED's launcher-configuration.json
-    /// next to it, else, when the guess imports no graphics API, the one larger exe of <paramref name="exes"/> that does (no
+    /// next to it or its bin folder's game (<see cref="RedBinExe"/>), else, when the guess imports no graphics API, the one larger exe of <paramref name="exes"/> that does (no
     /// binary read in an install with anti-cheat). Anything else (one unreadable, several, none) keeps the guess.</summary>
     static string LaunchedExe(string installDir, FileInfo guess, IReadOnlyList<FileInfo> exes)
     {
-        if (RedLauncherTarget(installDir, guess.FullName) is { } red) return red;
+        if ((RedLauncherTarget(installDir, guess.FullName) ?? RedBinExe(installDir, guess.FullName)) is { } red) return red;
         var larger = exes.Where(f => f.Length > guess.Length).ToList();
         if (larger.Count == 0 || ImportsGraphics(guess.FullName) != false
             || DetectAntiCheat(new Game("", "", Store.Other, installDir, guess.FullName)) != AntiCheat.None) return guess.FullName;
@@ -220,6 +220,21 @@ public static class GameFiles
             return InsideNoLinks(installDir, target) ? target : null;
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+    }
+
+    public const string RedLauncher = "REDprelauncher.exe";
+
+    /// <summary>CD PROJEKT RED's launcher (<see cref="RedLauncher"/>) whose launcher-configuration.json names no target (missing,
+    /// or another schema: upstream issue 102's Cyberpunk 2077): the largest exe in bin\x64_dx12, else bin\x64, beside it, where
+    /// REDengine games keep theirs; null for any other exe, or when neither folder holds one.</summary>
+    static string? RedBinExe(string installDir, string launcher)
+    {
+        if (!Path.GetFileName(launcher).Equals(RedLauncher, StringComparison.OrdinalIgnoreCase)) return null;
+        var excluded = XboxSource.NotTheGame(installDir);
+        foreach (var bin in new[] { @"bin\x64_dx12", @"bin\x64" }.Select(b => Path.Combine(Path.GetDirectoryName(launcher)!, b)).Where(Directory.Exists))
+            if (Directory.EnumerateFiles(bin, "*.exe", Flat).Where(f => !NotTheGameExe(installDir, f, excluded) && InsideNoLinks(installDir, f))
+                    .Select(f => new FileInfo(f)).MaxBy(f => f.Length) is { } exe) return exe.FullName;
+        return null;
     }
 
     // Streamline's interposer stands in for dxgi and d3d12 in games that ship it: witcher3.exe imports neither

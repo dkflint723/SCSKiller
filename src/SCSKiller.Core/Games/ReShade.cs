@@ -347,7 +347,14 @@ public static class ReShade
 
     static bool IsReShade(FileInfo f) =>
         Cached(f, "product", () => FileVersionInfo.GetVersionInfo(f.FullName).ProductName == "ReShade") is true
-        || Names.Contains(f.Name, StringComparer.OrdinalIgnoreCase) && Find(f, "identity", Identity) >= 0;
+        || Names.Contains(f.Name, StringComparer.OrdinalIgnoreCase) && Cached(f, "otherproduct", () => NamesOtherProduct(f.FullName)) is false
+            && Find(f, "identity", Identity) >= 0;
+
+    /// <summary>Its version resource names a product, and not ReShade: a host that looks ReShade up or names it (Special K's
+    /// dxgi.dll) carries <see cref="Identity"/>'s bytes too, so only a DLL without one is taken by them.</summary>
+    static bool NamesOtherProduct(string path) => FileVersionInfo.GetVersionInfo(path) is var v
+        && new[] { v.ProductName, v.FileDescription }.Where(n => !string.IsNullOrWhiteSpace(n)).ToList() is { Count: > 0 } named
+        && !named.Any(n => n!.Contains("ReShade", StringComparison.OrdinalIgnoreCase));
 
     static ReShadeAddon Classify(FileInfo f, IReadOnlyDictionary<string, AddonKind>? verdicts, string? log)
     {

@@ -2328,6 +2328,21 @@ public partial class AppTests : IDisposable
         Assert.Equal((false, null), (Detect()!.LoadsAddons, Detect()!.ShaderMod));   // the standard build loads no add-on files
     }
 
+    /// <summary>Upstream issue 78: Special K's dxgi.dll, which looks ReShade up and names it, was taken for ReShade and copied
+    /// into the warm, which then never finished. ReShade's bytes count only in a DLL whose version resource names no other product.</summary>
+    [Fact]
+    public void A_dll_whose_version_resource_names_another_product_is_not_reshade_for_its_bytes()
+    {
+        var g = FakeGame("test:sk", "Sk");
+        string In(string name) => Path.Combine(g.InstallDir, name);
+        var host = File.ReadAllBytes(Path.Combine(Environment.SystemDirectory, "version.dll"));   // a version resource naming Windows
+        File.WriteAllBytes(In("renodx-newgame.addon64"), RenoDxAddon);
+        File.WriteAllBytes(In("dxgi.dll"), [.. host, .. "ReShadeRegisterAddon"u8, .. Encoding.Unicode.GetBytes("ReShade post-processing injector")]);
+        Assert.Null(Core.Games.ReShade.Detect(g));
+        File.WriteAllBytes(In("dxgi.dll"), ReShadeDll);   // no version resource: its bytes still tell
+        Assert.Equal(In("dxgi.dll"), Core.Games.ReShade.Detect(g)!.Dll);
+    }
+
     /// <summary>The log speaks for the add-on file it names, and only when it was written after that file: a verdict
     /// left by an add-on since removed or replaced doesn't carry over.</summary>
     [Fact]

@@ -27,6 +27,9 @@ session), plans which pipelines to create, and replays them in a separate proces
    WinGRTS) in an install with an `Engine` folder, never a bootstrap stub or launcher: the one such build there is, else
    the one the named exe's name ties; tools and servers never (`GameFiles.GameExe`, applied to every game discovery lists,
    its pick kept in `discovered.json` while the store's build and the install root's entries are unchanged).
+   CD PROJEKT RED's `REDprelauncher.exe` is replaced by the game its `launcher-configuration.json` names, else, with
+   no usable configuration, by the largest exe in `bin\x64_dx12`, then `bin\x64` (`GameFiles.RedBinExe`); Steam looks
+   again rather than keep that launcher from an earlier scan of the same build.
    `ManualSource` lists the games the user added by their exe (`manual-games.json` in the data folder): the pick is resolved like a store's install
    (a launcher stub to its Shipping exe) and a game folder is suggested from its layout (above `Engine\` or `bin\`, else
    the exe's folder; nothing above it is read, since the folders beside it may be other games). The user confirms or
@@ -864,7 +867,8 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   switch allows offline sessions for such a game, and while it is on the card has the ban-risk warning and the button.
 - **Shader mods** (`Games.ReShade.Detect`): ReShade in the exe's folder, else the install root: any DLL there whose
   version resource names ReShade, or one of its usual names (dxgi.dll, d3d12.dll, ...) holding its description or its
-  add-on export. Only the build with full add-on support loads add-on files; the standard one is known by its "only
+  add-on export while its version resource names no other product (Special K's dxgi.dll looks ReShade up and names
+  it, and isn't ReShade). Only the build with full add-on support loads add-on files; the standard one is known by its "only
   limited add-on functionality" warning, and its add-ons never count. Its add-ons (`*.addon`, `*.addon64`) are the ones
   in ReShade.ini's `[ADDON] AddonPath`, else its folder, less `DisabledAddons`; each is classed by what it does to the
   game's pipelines. One that replaces shaders is known by a string its release builds always log where they register
