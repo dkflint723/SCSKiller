@@ -324,6 +324,10 @@ public partial class App : Application
         var t = new Tray(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))
         {
             Open = ShowWindow,
+            Status = StatusText,
+            ReadyCount = () => Format.ReadyToAdd(Core.Games, Core.Queue).Count,
+            CompileAllReady = CompileAllReady,
+            OpenQueue = () => { Main.Navigate(typeof(QueuePage)); ShowWindow(); },
             PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? "Resume" : "Pause compiling",
             PauseOrResume = () => Fmt.PauseOrResume(Running()),
             Quit = () => _ = QuitAsync(),
@@ -351,14 +355,20 @@ public partial class App : Application
     static void UpdateTip()
     {
         if (tray == null) return;
+        tray.Tip = StatusText();
+    }
+
+    static string StatusText()
+    {
         var q = Running();
-        var name = q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId;
-        tray.Tip = quitting ? "SCSKiller: finishing, the driver is saving the shader cache"
-            : q == null ? "SCSKiller: idle"
-            : q.PlanCheck ? "SCSKiller: checking games for more to compile"
-            : q.Stage == QueueStage.Paused ? $"SCSKiller: paused ({name})"
-            : q is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? $"Compiling {name}, {100.0 * p.Done / p.Total:0}%"
-            : $"Compiling {name}";
+        return Format.TrayStatus(q, q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quitting);
+    }
+
+    /// <summary>The notification area's "Compile all ready": what the Library's "Add all ready" queues, started without the window.</summary>
+    static void CompileAllReady()
+    {
+        foreach (var id in Format.ReadyToAdd(Core.Games, Core.Queue)) Core.Enqueue(id);
+        Core.StartQueue();   // "when idle" items keep waiting
     }
 
     static QueueItem? Running() => Core.Queue.FirstOrDefault(Format.Running);

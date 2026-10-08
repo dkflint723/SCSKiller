@@ -23,6 +23,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **FINAL FANTASY XVI**: SCSKiller reads the game's pipeline list (`ffxvi.pspc`) with every pipeline's shaders and root
   signature. On NVIDIA it compiles all of them without a recording (about 57,000 pipelines); on AMD it needs a
   recording, since AMD's cache also depends on pipeline state the list doesn't give.
+- **The notification area's menu** shows what SCSKiller is doing ("Compiling Cyberpunk 2077, 45%"), and has "Compile
+  all ready", which compiles what the Library's "Add all ready" would add without opening the window, and "Open queue"
+  (upstream issue 45, the first step).
 
 ### Recorder and anti-cheat
 

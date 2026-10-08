@@ -25,6 +25,25 @@ public static class Format
     public static bool Running(QueueItem q) => q.Stage is QueueStage.Indexing or QueueStage.Planning or QueueStage.Materializing
         or QueueStage.Warming or QueueStage.Paused;
 
+    /// <summary>The notification-area icon's tooltip and its menu's first line: what the queue does now (<paramref name="running"/>,
+    /// the first <see cref="Running"/> item, of the game <paramref name="name"/>).</summary>
+    public static string TrayStatus(QueueItem? running, string? name, bool quitting) =>
+        quitting ? "SCSKiller: finishing, the driver is saving the shader cache"
+        : running == null ? "SCSKiller: idle"
+        : running.PlanCheck ? "SCSKiller: checking games for more to compile"
+        : running.Stage == QueueStage.Paused ? $"SCSKiller: paused ({name})"
+        : running is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? $"Compiling {name}, {100.0 * p.Done / p.Total:0}%"
+        : $"Compiling {name}";
+
+    /// <summary>The games "Add all ready" queues (the Library's button, the notification area's "Compile all ready"): ready or
+    /// stale and within reach, not in the queue, not a game without shader stutter.</summary>
+    public static IReadOnlyList<string> ReadyToAdd(IEnumerable<GameState> games, IEnumerable<QueueItem> queue)
+    {
+        var queued = queue.Where(q => q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped)).Select(q => q.GameId).ToHashSet();
+        return [.. games.Where(s => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached && s.NoStutter == null && !queued.Contains(s.Game.Id))
+            .Select(s => s.Game.Id)];
+    }
+
     /// <summary>"FSR4: 80 known pipelines, compiled with the game", "DLSS: compiled by the NVIDIA driver itself",
     /// "XeSS: detected; added after a recording sees them".</summary>
     public static string Middleware(MiddlewareTag t) => t.Label + (t.Pipelines > 0 ? $": {t.Pipelines:N0} known pipelines, compiled with the game"

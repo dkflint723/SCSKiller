@@ -9,7 +9,7 @@ namespace SCSKiller.App;
 sealed class Tray : IDisposable
 {
     const int CallbackMessage = 0x8000 + 1;   // WM_APP + 1
-    const uint IdOpen = 1, IdPause = 2, IdQuit = 3;
+    const uint IdOpen = 1, IdPause = 2, IdQuit = 3, IdCompileReady = 4, IdQueue = 5, IdStatus = 6;
 
     static readonly WndProc Proc = Dispatch;   // kept alive: Windows calls it for the process's lifetime
     static readonly Dictionary<nint, Tray> ByWindow = [];
@@ -20,7 +20,13 @@ sealed class Tray : IDisposable
 
     /// <summary>Left-click or double-click.</summary>
     public required Action Open { get; init; }
-    /// <summary>The menu's middle item: "Pause compiling" or "Resume", null = nothing to pause (shown disabled).</summary>
+    /// <summary>The menu's first line, shown disabled: what the queue does now.</summary>
+    public required Func<string> Status { get; init; }
+    /// <summary>How many games "Compile all ready" queues; 0 shows it disabled.</summary>
+    public required Func<int> ReadyCount { get; init; }
+    public required Action CompileAllReady { get; init; }
+    public required Action OpenQueue { get; init; }
+    /// <summary>The menu's pause item: "Pause compiling" or "Resume", null = nothing to pause (shown disabled).</summary>
     public required Func<string?> PauseLabel { get; init; }
     public required Action PauseOrResume { get; init; }
     public required Action Quit { get; init; }
@@ -69,7 +75,12 @@ sealed class Tray : IDisposable
     void ShowMenu()
     {
         var menu = CreatePopupMenu();
+        AppendMenuW(menu, 0x1 /* MF_GRAYED */, IdStatus, Status().Replace("&", "&&"));   // a game's name isn't a mnemonic
+        AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
         AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open SCSKiller");
+        var ready = ReadyCount();
+        AppendMenuW(menu, ready == 0 ? 0x1u : 0, IdCompileReady, ready == 0 ? "Compile all ready" : $"Compile all ready ({ready})");
+        AppendMenuW(menu, 0, IdQueue, "Open queue");
         var pause = PauseLabel();
         AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? "Pause compiling");
         AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
@@ -82,6 +93,8 @@ sealed class Tray : IDisposable
         switch ((uint)id)
         {
             case IdOpen: Open(); break;
+            case IdCompileReady: CompileAllReady(); break;
+            case IdQueue: OpenQueue(); break;
             case IdPause: PauseOrResume(); break;
             case IdQuit: Quit(); break;
         }
