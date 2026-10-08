@@ -167,7 +167,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             AbstractAesVfsReader? r = null;
             try
             {
-                r = OpenContainer(paths[i], new VersionContainer(game));
+                r = OpenOwned(paths[i], new VersionContainer(game));
                 if (r.IsEncrypted) return opened[i] = (r, null);
                 r.Mount(StringComparer.OrdinalIgnoreCase);
                 // the smallest encrypted package, else shader library: a wrong key decrypts it into noise
@@ -207,6 +207,29 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         public void Dispose()
         {
             foreach (var c in opened) c?.Reader.Dispose();
+        }
+    }
+
+    /// <summary><see cref="OpenContainer"/> on our own streams: CUE4Parse's path constructors leave the file open when they
+    /// throw (a damaged container) until a GC. The reader owns the streams once made.</summary>
+    static AbstractAesVfsReader OpenOwned(string path, VersionContainer versions)
+    {
+        var utoc = path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase);
+        var casPath = Path.ChangeExtension(path, ".ucas");
+        if (utoc && !File.Exists(casPath)) return OpenContainer(path, versions);
+        FileStream? toc = null, cas = null;
+        try
+        {
+            toc = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (!utoc) return new PakFileReader(path, toc, versions);
+            cas = File.Open(casPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return new IoStoreReader(path, toc, cas, EIoStoreTocReadOptions.ReadDirectoryIndex, versions);
+        }
+        catch
+        {
+            toc?.Dispose();
+            cas?.Dispose();
+            throw;
         }
     }
 

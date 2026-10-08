@@ -34,6 +34,12 @@ public partial class AppTests
         Assert.Null(Detect(["OptiScaler.dll"], "[FrameGen]\r\nFGType=nofg\r\n"));
         Assert.Null(Detect(["OptiScaler.dll"], "[FrameGen]\r\nFGType=auto\r\n"));
         Assert.Equal("OptiScaler frame generation", Detect(["OptiScaler.dll", "libxess_fg.dll"], "[FrameGen]\r\nFGType=auto\r\n"));
+        // a newer ini: FGOutput with Enabled decides, FGType aside; an older one's FGType=optifg is present without [OptiFG] Enabled
+        Assert.Equal("OptiScaler frame generation", Detect(["OptiScaler.dll"], "[FrameGen]\r\nEnabled=true\r\nFGOutput=fsrfg\r\n"));
+        Assert.Null(Detect(["OptiScaler.dll"], "[FrameGen]\r\nEnabled=false\r\nFGOutput=fsrfg\r\nFGType=optifg\r\n"));
+        Assert.Null(Detect(["OptiScaler.dll"], "[FrameGen]\r\nEnabled=true\r\nFGOutput=nofg\r\n"));
+        Assert.Equal("OptiScaler frame generation", Detect(["OptiScaler.dll"], "[FrameGen]\r\nFGType=optifg\r\n[OptiFG]\r\nEnabled=false\r\n"));
+        Assert.Equal("OptiScaler frame generation", Detect(["OptiScaler.dll"], "[FrameGen]\r\nFGType=auto\r\n[OptiFG]\r\nEnabled=true\r\n"));
         Assert.Null(Detect(["libxess_fg.dll", "amd_fidelityfx_framegeneration_dx12.dll"]));   // the libraries alone: the game's own, behind its swap chain
         Assert.Null(Detect([]));
         // the install root, a level above the exe
@@ -73,8 +79,8 @@ public partial class AppTests
         var nvapi = !on.Out.Contains("nvapi_hooked -1");   // no NVIDIA driver here: nothing to hook either way
         if (nvapi) Assert.Contains("nvapi_hooked 1", on.Out);
 
-        foreach (var (name, ini, env, line) in new[] { ("ini", "frames=0\r\nnvapi=0\r\n", false, "hooks off: frame timing (scskiller.ini frames=0), NVAPI (scskiller.ini nvapi=0)"),
-                     ("env", "", true, "hooks off: frame timing (SCSKILLER_FRAMES=0), NVAPI (SCSKILLER_NVAPI=0)") })
+        foreach (var (name, ini, env, line) in new[] { ("ini", "frames=0\r\nnvapi=0\r\n", false, "hooks off: frame timing (scskiller.ini frames=0), NVAPI and Aftermath (scskiller.ini nvapi=0)"),
+                     ("env", "", true, "hooks off: frame timing (SCSKILLER_FRAMES=0), NVAPI and Aftermath (SCSKILLER_NVAPI=0)") })
         {
             var off = Run(name, ini, env);
             Assert.Contains("present_hooked 0\r\nfactory_hooked 0", off.Out.ReplaceLineEndings("\r\n"));

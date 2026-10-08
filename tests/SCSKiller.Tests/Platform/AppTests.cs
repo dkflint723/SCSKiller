@@ -3030,6 +3030,34 @@ public partial class AppTests : IDisposable
         Assert.Null(k.Store.LoadGame(_game.Id).RecorderChained);
     }
 
+    /// <summary>A leftover temp write that can't be deleted (read-only) never keeps a chained mod from coming back: the proxy
+    /// goes and the mod is back first, the temp file is only logged.</summary>
+    [Fact]
+    public async Task A_temp_file_that_cant_be_deleted_still_puts_a_chained_mod_back()
+    {
+        var mod = Path.Combine(_exeDir, "d3d12.dll");
+        var bytes = Planning.MiddlewarePackTests.Pe("d3d12.dll", Guid.NewGuid().ToByteArray());
+        File.WriteAllBytes(mod, bytes);
+        var k = Killer(new FakeReader(Unreal));
+        k.ProcessNames = () => new HashSet<string>();
+        await k.ScanAsync(default);
+        k.SetRecordAlongsideMod(_game.Id, true);
+        k.InstallRecorder(_game.Id);
+        var temp = mod + ".scskiller-new";
+        File.WriteAllBytes(temp, [1, 2, 3]);
+        File.SetAttributes(temp, FileAttributes.ReadOnly);
+        try
+        {
+            k.UninstallRecorder(_game.Id);
+            Assert.Equal(bytes, File.ReadAllBytes(mod));
+            Assert.False(File.Exists(Path.Combine(_exeDir, ScsKiller.ChainName)));
+            Assert.False(File.Exists(Path.Combine(_exeDir, "scskiller.ini")));
+            Assert.Null(k.Store.LoadGame(_game.Id).RecorderChained);
+            Assert.True(File.Exists(temp));
+        }
+        finally { File.SetAttributes(temp, FileAttributes.Normal); }
+    }
+
     [Fact]
     public async Task Reconcile_records_where_a_recorder_is_for_uninstall()
     {
@@ -3223,10 +3251,12 @@ public partial class AppTests : IDisposable
             Assert.Contains("after 0", o);
             Assert.Contains("frames 3", o);
             Assert.Contains("frames: off (frame generation swap chain)", log);
+            Assert.NotNull(SessionLog.Launches(Path.Combine(_root, "framesfg-" + name, "scskiller_creates.csv")).Last().FramesOffT);   // the crash guard's cue
         }
         var game = Run("game", "Game Queue");
         Assert.Contains("after 1", game.Out);
         Assert.Contains("frames 9", game.Out);
+        Assert.DoesNotContain("#frames_off", File.ReadAllText(Path.Combine(_root, "framesfg-game", "scskiller_creates.csv")));
         // an overlay hooked Present after the proxy: that slot stays the overlay's, Present1 goes back to dxgi's
         var ov = Run("overlay", "AMD FSR PresentQueue", extra: " overlay");
         Assert.Contains("slot8 overlay 1", ov.Out);

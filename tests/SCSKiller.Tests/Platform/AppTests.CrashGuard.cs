@@ -44,6 +44,10 @@ public partial class AppTests
         Assert.Equal(new RecorderVerdict(T0, null), Judge(frames: FramesOf(T0 - 600_000, 3)));
         Assert.Null(Judge(frames: FramesOf(T0, 7200))!.EarlyFailure);
         Assert.Equal(TimeSpan.FromSeconds(30), Judge(frames: FramesOf(T0, 20))!.EarlyFailure);   // its own frames end early: the last create counts
+        // frame generation's swap chain took the Present hook off at 20 s: the frame log ends there, the launch may not have
+        File.AppendAllText(csv, $"#frames_off,{T0 + 20_000},20100.0\n");
+        Assert.Equal(new RecorderVerdict(T0, null), Judge(frames: FramesOf(T0, 20)));
+        Assert.Equal(TimeSpan.FromSeconds(4), Judge(Ran(4), FramesOf(T0, 3))!.EarlyFailure);   // the watched run still tells
 
         File.WriteAllText(csv, $"#session,{T0},Fake.exe\n#clock,100.0\n");                     // no create at all
         Assert.Equal(new RecorderVerdict(T0, null), Judge(frames: FramesOf(T0, 3)));

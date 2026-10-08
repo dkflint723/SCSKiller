@@ -157,6 +157,7 @@ public static class SessionLog
     {
         public long? Start, End;   // the #session and #end stamps (unix ms)
         public double? StartT, EndT;   // the same instants on the recorder's clock (t_ms); null from an older proxy
+        public double? FramesOffT;   // #frames_off: frame generation's swap chain took the Present hook off, the frame log ends there
         public string Exe = "";
         public readonly List<(double T, char Kind, double Ms, string? Key, long? Tid, bool Presents)> Creates = [];   // Tid null: an older proxy
     }
@@ -183,6 +184,8 @@ public static class SessionLog
                 }
                 else if (f[0] == "#clock" && cur is { Start: not null, Creates.Count: 0 } && double.TryParse(f.Length > 1 ? f[1] : "", CultureInfo.InvariantCulture, out var st))
                     cur.StartT = st;
+                else if (f[0] == "#frames_off" && cur is { Start: not null, End: null } && double.TryParse(f.Length > 2 ? f[2] : "", CultureInfo.InvariantCulture, out var ft))
+                    cur.FramesOffT ??= ft;
                 else if (f[0] == "#end" && cur != null)
                 {
                     cur.End = ms;

@@ -5,7 +5,7 @@
 // Config:  scskiller.ini [scskiller] mode=record|warm threads=N next=<a mod's d3d12.dll, renamed>  (next to the dll), or env
 //          SCSKILLER_MODE / SCSKILLER_THREADS (Steam launch options: SCSKILLER_MODE=warm %command%).
 //          max_db_bytes=N (ini only; missing = no limit): once scskiller.db has N bytes, no record is appended.
-//          frames=0 / nvapi=0 (or env SCSKILLER_FRAMES / SCSKILLER_NVAPI): none of the frame-timing / NVAPI hooks
+//          frames=0 / nvapi=0 (or env SCSKILLER_FRAMES / SCSKILLER_NVAPI): none of the frame-timing / NVAPI and Aftermath hooks
 //          (frame generation interposers, the app's frame-gen rule): no frame times / no 'N' records.
 // Output:  scskiller.db (append-only), scskiller.log, scskiller_creates.csv (t_ms,kind,known,tuple_known,ms,key,proxy_ms,tid,presents),
 //          scskiller_frames.bin (frame_hooks).
@@ -2318,6 +2318,7 @@ static int hk_am_dumps(int version, uint32_t apis, uint32_t flags, void* dump, v
     return r;
 }
 static void hook_aftermath() {
+    if (!g_nvapi_on) return;  // nvapi=0: no NVIDIA-side hook at all
     HMODULE m = GetModuleHandleW(L"GFSDK_Aftermath_Lib.x64.dll");
     std::lock_guard l(g_hook_mx);   // a second device's thread waits until the first has installed (or failed) these
     static bool done;
@@ -2664,6 +2665,8 @@ static void frames_fg(IUnknown* dev) {
             if (was != hook) logf("frames: swap chain vtable %p slot %d is another hook's, left as it is", (void*)vt, slot);
         }
     g_frames_off = true;
+    // the frame log ends here, not with the launch: the app's crash guard must not read it as the launch's length
+    if (g_wrote_session && g_csv) fprintf(g_csv, "#frames_off,%lld,%.1f\n", unix_ms(), now_ms()), fflush(g_csv);
 }
 static void hook_swapchain(HRESULT hr, void* p) {
     if (FAILED(hr) || !p) return;
@@ -3166,7 +3169,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     // Before any hook. The app writes both as 0 where a frame generation interposer (Streamline's DLSS-G, an FSR3 FG mod)
     // wraps the swap chain and calls NVAPI: hooks there crashed NVIDIA's driver (FINAL FANTASY XVI, frame generation on).
     std::string off;
-    for (auto [on, env, key, what] : {std::tuple{&g_frames_on, L"SCSKILLER_FRAMES", L"frames", "frame timing"}, {&g_nvapi_on, L"SCSKILLER_NVAPI", L"nvapi", "NVAPI"}})
+    for (auto [on, env, key, what] : {std::tuple{&g_frames_on, L"SCSKILLER_FRAMES", L"frames", "frame timing"}, {&g_nvapi_on, L"SCSKILLER_NVAPI", L"nvapi", "NVAPI and Aftermath"}})
         if (!(*on = cfg(env, key, L"1") != L"0")) {
             char b[96];
             const bool from_env = GetEnvironmentVariableW(env, nullptr, 0) > 0;

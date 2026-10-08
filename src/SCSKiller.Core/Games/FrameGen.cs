@@ -39,8 +39,10 @@ public static class FrameGen
         return null;
     }
 
-    /// <summary>As the proxy's opti_fg reads OptiScaler.ini: a newer one's [FrameGen] FGOutput (with Enabled=true) names the
-    /// output, else FGType names the kind; [OptiFG] Enabled=true is an older one's switch.</summary>
+    /// <summary>OptiScaler.ini sets frame generation up: a newer one's [FrameGen] FGOutput (with Enabled=true) names the
+    /// output, else FGType names the kind (auto or none: an FG library there), or an older one's [OptiFG] Enabled=true. Wider
+    /// than the proxy's opti_fg, which takes its hooks off only for frame generation on: an older ini's FGType=optifg counts
+    /// here without [OptiFG] Enabled, as frame generation that is present.</summary>
     internal static bool OptiScalerGenerates(string dir, bool library)
     {
         var ini = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);   // "section.key" -> the last value

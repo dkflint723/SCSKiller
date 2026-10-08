@@ -680,6 +680,32 @@ public class UnrealReaderTests(ITestOutputHelper output)
         Assert.True(reader.SetKey(game, Key(1)));
     }
 
+    /// <summary>A user's key is tried on every encrypted container: one that can't be read at all (junk, empty, gone) is not
+    /// a wrong key and throws nothing; none opening is false.</summary>
+    [Fact]
+    public void OpensAnyIsFalseForContainersItCantRead()
+    {
+        var dir = Directory.CreateTempSubdirectory("scskiller-opens-").FullName;
+        try
+        {
+            var junk = Enumerable.Range(0, 4096).Select(i => (byte)(i * 31)).ToArray();
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk0-Windows.utoc"), junk);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk0-Windows.ucas"), junk);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk1-Windows.pak"), junk);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk2-Windows.pak"), []);
+            File.WriteAllBytes(Path.Combine(dir, "pakchunk3-Windows.utoc"), new byte[64]);
+            string[] paths = [.. new[] { "pakchunk0-Windows.utoc", "pakchunk1-Windows.pak", "pakchunk2-Windows.pak", "pakchunk3-Windows.utoc", "gone.pak", "gone.utoc" }
+                .Select(f => Path.Combine(dir, f))];
+            var key = new CUE4Parse.Encryption.Aes.FAesKey("0x" + new string('7', 64));
+            foreach (var game in new[] { CUE4Parse.UE4.Versions.EGame.GAME_UE4_27, CUE4Parse.UE4.Versions.EGame.GAME_UE5_5, CUE4Parse.UE4.Versions.EGame.GAME_NevernessToEverness })
+            {
+                Assert.False(UnrealReader.OpensAny(paths, game, key));
+                Assert.False(UnrealReader.OpensAny([], game, key));
+            }
+        }
+        finally { Directory.Delete(dir, true); }   // no GC needed: the key check closes the files itself when CUE4Parse throws
+    }
+
     static byte[] KeyBytes(int from) => [.. Enumerable.Range(from, 32).Select(i => (byte)i)];
     static string Key(int from) => "0x" + Convert.ToHexString(KeyBytes(from));
 

@@ -11,7 +11,7 @@ public sealed record RecorderVerdict(long Session, TimeSpan? EarlyFailure);
 /// <see cref="Threshold"/>. Some engines end their own process without <c>#end</c> (Unreal), and a game may create all its
 /// pipelines in its first seconds, so a launch is never judged from its creates alone: it needs the watched run, or its own
 /// frame log ending within the threshold. A frame log without the launch tells nothing (held, capped, the present hook not
-/// in).</summary>
+/// in), nor one frame generation's swap chain cut short (<c>#frames_off</c>).</summary>
 public static class RecorderHealth
 {
     /// <summary>FINAL FANTASY XVI with DLSS-G and the frame hooks crashed 4 s after launch; a game quit on purpose before
@@ -39,7 +39,8 @@ public static class RecorderHealth
             var ran = TimeSpan.FromMilliseconds(p.To.ToUnixTimeMilliseconds() - start);
             return new(start, ran < threshold ? ran : null);
         }
-        if (last.Creates.Count == 0 || frames == null || frames.LaunchUnixMs != start) return new(start, null);
+        // frame generation's swap chain ended the frame log, not the launch (#frames_off)
+        if (last.Creates.Count == 0 || frames == null || frames.LaunchUnixMs != start || last.FramesOffT != null) return new(start, null);
         // both on the recorder's clock, from its load: a little longer than from the #session
         var lasted = TimeSpan.FromMilliseconds(Math.Max(last.Creates[^1].T, frames.Duration.TotalMilliseconds));
         return new(start, lasted < threshold ? lasted : null);

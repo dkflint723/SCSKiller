@@ -770,13 +770,14 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   first device.
 - **Hook switches** (`scskiller.ini` `frames=0` / `nvapi=0`, or `SCSKILLER_FRAMES=0` / `SCSKILLER_NVAPI=0`, read in
   `DllMain` before any hook): `frames=0` installs none of the frame-timing hooks (no DXGI factory or swap chain vtable
-  patch, no frame log); `nvapi=0` none of the NVAPI ones (no inline patch of nvapi64.dll, so no `'N'` records). Both
+  patch, no frame log); `nvapi=0` none of the NVAPI ones (no inline patch of nvapi64.dll, so no `'N'` records, nor of
+  the Aftermath exports the log reads). Both
   are on by default, and the log's `hooks off:` line names what is off and where it was set. With them on, the frame
   hooks still stand down for frame generation by themselves (see the frame log). Pipelines, root signatures and state
   objects are recorded either way; the game page then has the session's counts without frame times.
   **Frame generation** (`Games.FrameGen`): where the exe's folder or the install root holds NVIDIA Streamline with
   DLSS-G (`sl.interposer.dll` with `sl.dlss_g.dll`, or `nvngx_dlssg.dll`), the DLSS-G to FSR3 mod
-  (`dlssg_to_fsr3*.dll`) or OptiScaler set to generate frames (`OptiScaler.ini` read as the proxy reads it, or `FGType`
+  (`dlssg_to_fsr3*.dll`) or OptiScaler set to generate frames (`OptiScaler.ini` set up for it, wider than the proxy's check: an older `FGType=optifg` counts without `[OptiFG]` `Enabled`, or `FGType`
   auto with its FG library there), the game page notes it (`ScsKiller.FrameGenNote`: if the game closes early with the
   recorder, it switches to pipelines only). The files alone take no hook off: they ship whether frame generation is on
   or not (Onimusha, PRAGMATA, RE Requiem, CONTROL Resonant), so the recorder starts in full and the crash guard steps it
@@ -796,8 +797,9 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   onto the record read again, only while its guard fields are still the ones judged: a "Try again", an install or
   another evaluation meanwhile stands. Early means no `#end` and under 45 s (`RecorderHealth.Threshold`): from the
   `#session` to the watched run's last sighting (`GameRecord.LastPlay`, when it holds the `#session`); without a
-  watched run, to the launch's last frame and last create, and only when the frame log is of this launch. A launch with
-  `#end`, longer, without creates (and no watched run) or with neither a watched run nor its own frames is fine. Another
+  watched run, to the launch's last frame and last create, and only when the frame log is of this launch and frame
+  generation didn't cut it short (the csv's `#frames_off`, see the frame log). A launch with `#end`, longer, without
+  creates (and no watched run) or with neither a watched run nor its own whole frames is fine. Another
   build of the game (`Game.Version`, else the exe's size and write time, against `RecorderLevelBuild`) or the game
   page's "Try again" (`IScsKiller.ResetRecorderHealth`, shown only after a step down: `GameState.RecorderSteppedDown`)
   puts it back to its start (Full, or Minimal as above); the judged launches stay judged. Each step is a line in
@@ -985,7 +987,8 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   hook call each other until the stack overflows. FSR 3's (also under OptiScaler and dlssg-to-fsr3) and XeSS's are made on
   a present queue named before the create (`AMD FSR PresentQueue`, `XefgInterpolationSwapChain::present_queue_`): a
   `CreateSwapChain*` on such a queue puts the original `Present` / `Present1` back before the swap chain is made (by
-  compare-exchange: a slot another hook took after ours is left), and hooks nothing more. `OptiScaler.ini` beside the exe
+  compare-exchange: a slot another hook took after ours is left), hooks nothing more and writes `#frames_off,<unix_ms>,<t_ms>`
+  to the creates csv (the crash guard then can't take the frame log's end as the launch's). `OptiScaler.ini` beside the exe
   with its frame generation on hooks nothing at all, since OptiScaler as `dxgi.dll` can make that swap chain through a
   factory the recorder doesn't hook: `[FrameGen]` `Enabled=true` with `FGOutput` other than `auto` / `nofg`, or in older
   versions `FGType` `nukems`, or `FGType` `optifg` (its default) with `[OptiFG]` `Enabled=true`. Each `CreateSwapChain*` logs its queue's name. The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the

@@ -2616,7 +2616,7 @@ public sealed partial class ScsKiller : IScsKiller
             var covered = CoveredNow(g, r, Path.Combine(dir, wk), warmed);
             fresh.RemoveAll(covered.Contains);
         }
-        var packs =SeedsNow(g).SelectMany(x => x.Entries).Select(e => e.Key)
+        var packs = SeedsNow(g).SelectMany(x => x.Entries).Select(e => e.Key)
             .Concat(Planner.PlanBody(r.Plan?.FilePath).Where(x => x.Tag == 'M').Select(x => MiddlewarePacks.Unwrap(x).Entry.Key)).ToHashSet();
         var one = fresh.Count > 0 ? PipelineKeys(g, r) : [];
         string P(string k) => one.GetValueOrDefault(k, k);   // a pipeline at two texture filtering settings is one
@@ -4102,10 +4102,8 @@ public sealed partial class ScsKiller : IScsKiller
         if (IsOurProxy(dll)) File.Delete(dll);
         else if (File.Exists(dll) && rec.RecorderFiles.ContainsKey("d3d12.dll")) log($"{name}: left {dll}: not SCSKiller's");
         rec.RecorderFiles.Remove("d3d12.dll");
-        foreach (var temp in RecorderTempFiles.Select(f => Path.Combine(dir, f)))   // a write cut off: ours by its name, whatever it holds
-            if (File.Exists(temp)) File.Delete(temp);
-        RemoveStoredCopies(dir, rec.RecorderChained, name, log);
-        if (rec.RecorderChained is { } c)
+        var chained = rec.RecorderChained;
+        if (chained is { } c)
         {
             var from = Path.Combine(dir, c.Name);
             if (!File.Exists(from)) log($"{name}: {from} (the mod's d3d12.dll SCSKiller renamed) is gone");
@@ -4128,6 +4126,10 @@ public sealed partial class ScsKiller : IScsKiller
             catch (Exception e) { log($"{name}: left {path}: {e.Message}"); }
             rec.RecorderFiles.Remove(file);
         }
+        foreach (var temp in RecorderTempFiles.Select(f => Path.Combine(dir, f)))   // a write cut off: ours by its name, whatever it holds
+            try { if (File.Exists(temp)) File.Delete(temp); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"{name}: couldn't delete {temp}: {e.Message}"); }
+        RemoveStoredCopies(dir, chained, name, log);
         (rec.RecorderExe, rec.RecorderInstallDir) = (null, rec.RecorderMoveFrom != null ? rec.RecorderInstallDir : null);   // a pending move's root: the hook's running check
     }
 
