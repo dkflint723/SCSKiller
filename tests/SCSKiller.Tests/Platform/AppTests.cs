@@ -3322,6 +3322,34 @@ public partial class AppTests : IDisposable
         Assert.Contains("frames 3", shallow.Out);
         Assert.Null(shallow.Launch.FramesOffT);
         Assert.DoesNotContain("re-entered", shallow.Log);
+        Assert.DoesNotContain("one after another", shallow.Log);
+
+        // a frame generation mod's hook makes its swap chain from inside the proxy's, on its present queue: frame timing off,
+        // the swap chain made unhooked, the factory's hooks kept
+        var fg = ProxyRun(warmExe, "screenter-fg", "screenter 1 \"AMD FSR PresentQueue\"");
+        Assert.Contains("calls 2", fg.Out);
+        Assert.Contains("slot15 ours", fg.Out);
+        Assert.Contains("hooked 0", fg.Out);
+        Assert.Contains("frames -1", fg.Out);
+        Assert.Contains("frames: off (frame generation swap chain)", fg.Log);
+        Assert.False(fg.Launch.FramesReentry);
+        Assert.NotNull(fg.Launch.FramesOffT);
+        Assert.DoesNotContain("re-entered", fg.Log);
+        // ...and called back 8 deep after: the factory's hooks out too, reentry written after frame generation's #frames_off
+        var both = ProxyRun(warmExe, "screenter-fg-deep", "screenter 20 \"AMD FSR PresentQueue\"");
+        Assert.Contains("slot15 overlay", both.Out);
+        Assert.Contains("hooked 0", both.Out);
+        Assert.Contains("frames: off (frame generation swap chain)", both.Log);
+        Assert.Contains("frames: CreateSwapChain hooks off (CreateSwapChain re-entered: another hook calls it back)", both.Log);
+        Assert.True(both.Launch.FramesReentry);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(Path.Combine(_root, "screenter-fg-deep", "scskiller_creates.csv")), "#frames_off,").Count);
+
+        // creates one after another, not nested: logged once, frame timing stays on
+        var burst = ProxyRun(warmExe, "scburst", "scburst 300");
+        Assert.Contains("failed 300", burst.Out);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(burst.Log, "CreateSwapChain called 100 times in 0.1 s on one thread, one after another"));
+        Assert.DoesNotContain("re-entered", burst.Log);
+        Assert.Null(burst.Launch.FramesOffT);
     }
 
     /// <summary>A device removed while recording (`selftest removed`: ID3D12Device5::RemoveDevice on WARP, as a TDR would;
@@ -3342,6 +3370,21 @@ public partial class AppTests : IDisposable
         Assert.True(r.Launch.HooksOn);   // nvapi=1
         Assert.Contains($"removed ({reason}): written to the csv for the app's crash guard", r.Log);
         Assert.True(RecorderHealth.Judge(new[] { r.Launch }, null, 0, 0, null, null, RecorderHealth.Threshold)!.Failed);
+    }
+
+    /// <summary>A device the game releases (`selftest released`: a probe, a renderer restart) goes with it: the proxy's watch
+    /// holds it only while the game does, and writes no #removed for it.</summary>
+    [Fact]
+    public void The_proxy_lets_a_device_go_with_the_game()
+    {
+        UseLiveLedger();
+        if (OwnWarmExe() is not { } warmExe) return;
+        var r = ProxyRun(warmExe, "released", "released");
+        Assert.Contains("freed 1", r.Out);
+        Assert.Contains("again 0x00000000", r.Out);
+        Assert.Matches(@"device [0-9A-Fa-f]+ let go by the game: no longer watched", r.Log);
+        Assert.Null(r.Launch.Removed);
+        Assert.DoesNotContain("#removed", File.ReadAllText(Path.Combine(_root, "released", "scskiller_creates.csv")));
     }
 
     /// <summary>The proxy's frame file held open by another handle at first (`selftest framesheld`): the frames presented

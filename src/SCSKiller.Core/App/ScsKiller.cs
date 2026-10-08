@@ -922,7 +922,7 @@ public sealed partial class ScsKiller : IScsKiller
         if ((f.Level != null || f.FramesOff != null) && f.Build != build)
         {
             logs.Add($"{g.Name}: the game was updated: the recorder {Records(start)} again");
-            f = f with { Level = null, Reason = null, Build = null, At = Clock(), FramesOff = null };
+            f = f with { Level = null, Reason = null, Build = null, At = Clock(), FramesOff = null, HooksExcused = null };
         }
         // a recorder from before the guard: only the launches from now on count
         if (judge && f.InstalledAt == null) f = f with { InstalledAt = Clock() };
@@ -933,15 +933,19 @@ public sealed partial class ScsKiller : IScsKiller
             && !GameRunning(g))   // a launch still running has no #end yet
         {
             f = f with { Seen = v.Session.ToString(CultureInfo.InvariantCulture) };
-            // at pipelines only, a launch that still ran the hooks (#hooks) failed at Full: the frames=0 ini, ours, was written
-            // after it started (Reconcile waits for the game to exit). An ini that isn't ours can't take the level: Off.
-            if (v.Failed && (f.Level ?? start) == RecorderLevel.Minimal && v.HooksOn == true && IniOurs(exeDir, rec))
+            // at pipelines only, a launch that still ran the hooks (#hooks) failed at Full: it started before the frames=0 ini,
+            // ours, was written (Reconcile waits for the game to exit). Once per level: a switch that never reaches the game (a
+            // rewrite that keeps failing, an ini gone) can't excuse the next one too. An ini that isn't ours can't take it: Off.
+            if (v.Failed && (f.Level ?? start) == RecorderLevel.Minimal && v.HooksOn == true && f.HooksExcused == null && IniOurs(exeDir, rec))
+            {
+                f = f with { HooksExcused = Clock() };
                 logs.Add($"{g.Name} closed early with the recorder's hooks still in (it started before they were switched off): judged at pipelines only from its next launch");
+            }
             else if (v.Failed)
             {
                 var level = (f.Level ?? start) == RecorderLevel.Minimal ? RecorderLevel.Off : RecorderLevel.Minimal;
                 var note = v.Removed is { } removed ? RecorderHealth.RemovedNote(g.Name, level, removed) : RecorderHealth.Note(g.Name, level, v.EarlyFailure!.Value, again: f.Level != null);
-                f = f with { Level = level, Reason = note, At = Clock(), Build = build };
+                f = f with { Level = level, Reason = note, At = Clock(), Build = build, HooksExcused = null };
                 logs.Add(note);
             }
             if (v.Reentry && f.FramesOff == null)
@@ -967,16 +971,18 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>A record's crash guard fields (<see cref="GuardRecorder"/>).</summary>
-    readonly record struct Guarded(RecorderLevel? Level, string? Reason, DateTimeOffset? At, string? Build, string? Seen, DateTimeOffset? InstalledAt, string? FramesOff)
+    readonly record struct Guarded(RecorderLevel? Level, string? Reason, DateTimeOffset? At, string? Build, string? Seen, DateTimeOffset? InstalledAt, string? FramesOff,
+        DateTimeOffset? HooksExcused)
     {
         public static Guarded Of(GameRecord r) => new(r.RecorderLevel, r.RecorderLevelReason, r.RecorderLevelAt, r.RecorderLevelBuild, r.RecorderSessionSeen, r.RecorderInstalledAt,
-            r.RecorderFramesOff);
+            r.RecorderFramesOff, r.RecorderHooksExcused);
 
-        public void To(GameRecord r) => (r.RecorderLevel, r.RecorderLevelReason, r.RecorderLevelAt, r.RecorderLevelBuild, r.RecorderSessionSeen, r.RecorderInstalledAt, r.RecorderFramesOff) =
-            (Level, Reason, At, Build, Seen, InstalledAt, FramesOff);
+        public void To(GameRecord r) => (r.RecorderLevel, r.RecorderLevelReason, r.RecorderLevelAt, r.RecorderLevelBuild, r.RecorderSessionSeen, r.RecorderInstalledAt, r.RecorderFramesOff,
+            r.RecorderHooksExcused) = (Level, Reason, At, Build, Seen, InstalledAt, FramesOff, HooksExcused);
     }
 
-    void ResetLevel(GameRecord rec) => (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelBuild, rec.RecorderLevelAt, rec.RecorderFramesOff) = (null, null, null, Clock(), null);
+    void ResetLevel(GameRecord rec) => (rec.RecorderLevel, rec.RecorderLevelReason, rec.RecorderLevelBuild, rec.RecorderLevelAt, rec.RecorderFramesOff, rec.RecorderHooksExcused) =
+        (null, null, null, Clock(), null, null);
 
     /// <summary>The game folder's scskiller.ini is the one SCSKiller wrote (or none beside our proxy, which Install writes):
     /// the recorder's hook switches reach the game through it (<see cref="UpdateRecorderIni"/>).</summary>

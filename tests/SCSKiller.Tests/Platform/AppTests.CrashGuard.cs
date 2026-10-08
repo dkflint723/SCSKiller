@@ -368,12 +368,13 @@ public partial class AppTests
     }
 
     /// <summary>At pipelines only, an early close of a launch that still ran the hooks (#hooks: it started before Reconcile
-    /// wrote frames=0) is no failure of that level while the ini is ours, which takes it from the next launch; the user's own
-    /// ini can't take it: the recorder goes.</summary>
+    /// wrote frames=0) is no failure of that level while the ini is ours, which takes it from the next launch; once per level:
+    /// another one that still ran them (a switch that never reached the game: a rewrite that keeps failing, an ini gone) is.
+    /// The user's own ini can't take it: the recorder goes.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task A_launch_that_still_ran_the_hooks_never_fails_pipelines_only(bool userIni)
+    public async Task A_launch_that_still_ran_the_hooks_is_let_off_once_at_pipelines_only(bool userIni)
     {
         var (k, running, poll, now) = Guarded();
         await k.ScanAsync(default);
@@ -386,8 +387,10 @@ public partial class AppTests
         Assert.Equal(userIni ? RecorderLevel.Off : RecorderLevel.Minimal, k.Games.Single().RecorderLevel);
         if (userIni) return;
         Assert.Contains("Fake Game closed early with the recorder's hooks still in", File.ReadAllText(Path.Combine(k.Store.DataDir, "recorders.log")));
-        Play(running, now, poll, _exeDir, exe, 5, marks: _ => "#hooks,0,0\n");   // at pipelines only: out
+        Assert.NotNull(k.Store.LoadGame(_game.Id).RecorderHooksExcused);
+        Play(running, now, poll, _exeDir, exe, 5, marks: _ => "#hooks,1,1\n");   // the hooks still in again: out
         Assert.Equal(RecorderLevel.Off, k.Games.Single().RecorderLevel);
+        Assert.Null(k.Store.LoadGame(_game.Id).RecorderHooksExcused);
     }
 
     /// <summary>Another hook that called the recorder's CreateSwapChain back (#frames_off reentry, upstream issue 48) turns
