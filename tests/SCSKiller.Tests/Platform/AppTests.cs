@@ -10908,6 +10908,74 @@ public partial class AppTests : IDisposable
         Assert.Equal(1, uploads());
     }
 
+    /// <summary>A game a fork-only engine reader reads (CONTROL Resonant: Northlight2, the carver upstream): its index's content
+    /// hash and engine name aren't upstream's for the game, so nothing is uploaded.</summary>
+    [Fact]
+    public async Task A_recording_of_a_game_a_fork_only_engine_reads_is_never_shared()
+    {
+        const string hash = "00112233445566778899aabbccddeeff00112233";
+        var game = _game with { Version = "42" };
+        File.WriteAllBytes(Path.Combine(_exeDir, "scskiller.db"), SharingTests.LocalRecording());
+        var fake = new CommunityTests.Fake(r => r.RequestUri!.AbsolutePath == "/v1/devices"
+            ? CommunityTests.Ours(HttpStatusCode.OK, """{"device_token":"sd1_anon","device_id":"d"}"""u8.ToArray())
+            : CommunityTests.Ours(HttpStatusCode.Accepted, """{"upload_id":"u","records":1,"new_records":1}"""u8.ToArray()));
+        var log = new List<string>();
+        var k = Killer(new FakeReader(new(SCSKiller.Core.Northlight.Northlight2Reader.Family, "DX12", null, "D3D12", false, null), hash), game: game);
+        k.Log = new Lines(log);
+        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.Settings.ShareRecordings,
+            new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
+        await k.ScanAsync(default);
+        Assert.EndsWith("|Northlight2", k.Store.LoadScan()[game.Id].Key);   // see A_scan_entry_of_a_fork_only_engine_is_one_upstreams_builds_detect_again
+        k.Enqueue(game.Id);
+        k.StartQueue();
+        await k.WhenQueueIdle().WaitAsync(TimeSpan.FromSeconds(10));   // indexed: a content hash of this build
+        Assert.Equal(hash, k.Store.LoadGame(game.Id).IndexContentHash);
+        k.Settings = k.Settings with { ShareRecordings = true };
+        await k.SharingPass;
+        Assert.Contains("Northlight2", ScsKiller.ForkOnlyFamilies);
+        lock (fake.Log) Assert.Empty(fake.Log);   // no device, no upload
+        lock (log) Assert.Contains(log, l => l.Contains("recording not shared: its engine (Northlight2) is this build's own"));
+        Assert.Null(k.Games.Single().RecordingSharedAt);
+    }
+
+    /// <summary>A compile's community lookup by its fresh index's content hash: a fork-only engine's is in no entry, so the
+    /// store build's alias (upstream's recording of this build) is downloaded instead; another engine's isn't.</summary>
+    [Theory]
+    [InlineData("Northlight2", true)]
+    [InlineData("Carved", false)]
+    public async Task A_compile_of_a_game_a_fork_only_engine_reads_downloads_its_builds_community_recording(string family, bool downloaded)
+    {
+        var obj = CommunityTests.Brotli(CommunityTests.HashOnly(new string('a', 40)));
+        const string content = "0123456789abcdef0123456789abcdef01234567";   // the carver's, in upstream's builds
+        var game = _game with { Version = "100" };
+        var manifest = CommunityTests.Manifest(CommunityTests.Alias($"{game.Id}@100", content), CommunityTests.Entry(content, obj, 1));
+        var fake = new CommunityTests.Fake(r => CommunityTests.Ours(HttpStatusCode.OK, r.RequestUri!.AbsolutePath.StartsWith("/v1/o/") ? obj : manifest));
+        var k = Killer(new FakeReader(new(family, "DX12", null, "D3D12", false, null), "00112233445566778899aabbccddeeff00112233"), game: game);
+        await k.ScanAsync(default);   // no community yet: nothing synced after the scan
+        k.Community = new Community(k.Store.DataDir, (_, _) => Task.FromResult<string?>("token"), new RouteFailover(fake, [new("https://api.test.com/")]));
+        k.Enqueue(game.Id);
+        k.StartQueue();
+        await k.WhenQueueIdle().WaitAsync(TimeSpan.FromSeconds(10));
+        lock (fake.Log) Assert.Equal(downloaded ? 1 : 0, fake.Log.Count(l => l.Contains("/v1/o/")));
+        Assert.Equal(downloaded, SCSKiller.Core.App.Community.Downloaded(k.Store.GameDir(game.Id)) != null);
+    }
+
+    /// <summary>scan.json is shared with upstream's builds, which have no reader for a fork-only family: its entry's key has a
+    /// field more, so to them it doesn't differ only in the build (used as it is) and they detect the game again first.</summary>
+    [Fact]
+    public void A_scan_entry_of_a_fork_only_engine_is_one_upstreams_builds_detect_again()
+    {
+        EngineInfo E(string family) => new(family, "DX12", null, "D3D12", false, null);
+        string Key(string build, EngineInfo? e) => $"exe|dir|100|profile||{build}|obj|" + ScsKiller.ForkOnlyMark(e);
+        Assert.Equal("|Northlight2", ScsKiller.ForkOnlyMark(E("Northlight2")));
+        Assert.Equal("", ScsKiller.ForkOnlyMark(E("Carved")));
+        Assert.Equal("", ScsKiller.ForkOnlyMark(null));
+        // upstream's build: no reader, so no mark, for the engine cached
+        Assert.False(ScsKiller.OnlyBuildDiffers(Key("fork", E("Northlight2")), Key("upstream", null)));
+        Assert.True(ScsKiller.OnlyBuildDiffers(Key("fork", E("Carved")), Key("upstream", E("Carved"))));
+        Assert.True(ScsKiller.OnlyBuildDiffers(Key("upstream", E("Carved")), Key("fork", E("Carved"))));   // the fork uses upstream's, detects again behind
+    }
+
     [Fact]
     public async Task A_recording_indexed_by_another_process_is_shared_when_the_game_exits()
     {

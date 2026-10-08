@@ -48,7 +48,9 @@ session), plans which pipelines to create, and replays them in a separate proces
    A scan reads again only what changed since an earlier one, at background I/O priority unless the user asked for it:
    a Steam or Xbox game keeps its exe while its build is the same (`discovered.json`); each game keeps its engine and
    anti-cheat verdict while its exe, store build and SCSKiller build are the same (`scan.json`; another SCSKiller
-   build's is shown at once and the game detected again in the background); the DLLs beside the exe are known by their
+   build's is shown at once and the game detected again in the background; one of an engine family only the fork reads,
+   `ScsKiller.ForkOnlyFamilies`, has a field more in its key, so upstream's builds, which have no reader for it,
+   detect the game again first); the DLLs beside the exe are known by their
    size, write time, NTFS change time and file id (`middleware.json`, `reshade.json`; a DLL's hash also by its first
    and last 4 KB), which a refresh the user asks for doesn't trust. An install is walked for anti-cheat in full when the
    entries of its root or exe folder changed since its last clean walk (the recorder's own files and data files aside),
@@ -391,9 +393,12 @@ open game files read-only and never launch or attach to the game.
   is left out), the libraries one pool. CONTROL Resonant: 141 files, 1,227 shaders, 930 distinct pipelines, 227
   libraries, every shader in some entry. Its material shaders aren't in these files (compressed in its `.rmdblob`
   packs), so a recording still adds pipelines: of the game's own PSOs in a recording on the PC this was measured on,
-  1,082 of 1,382 have all their shaders in these files, and each of those 1,082 is one of the reader's pipelines.
-  Alan Wake 2's files (layout `:`) differ and aren't detected. The family is distinct from Control's and the carver's,
-  so its games can be told apart where only upstream's engines may be shared.
+  1,082 of 1,389 have all their shaders in these files, and each of those 1,082 is one of the reader's pipelines.
+  Alan Wake 2's files (layout `:`) differ and aren't detected. The family is the fork's own (`ScsKiller.ForkOnlyFamilies`):
+  upstream's builds read the game with the carver, so this index's content hash and engine name aren't the ones the
+  community database knows the game by. Its recording is never shared, a compile's community lookup goes by the store
+  build's alias instead of the content hash (upstream's recording of that build), and its `scan.json` entry is one
+  upstream's builds detect again (see Scan).
 - **Dagor** (`Dagor/`): War Thunder's shader dumps, `compiledShaders\game.ps50.shdump.bin` (DirectX 11) and
   `gameDX12.ps50.shdump.bin` (`game.compatibility*` in the game's compatibility mode), dump version 11.3 only. The body
   is zstd, each entry a zstd frame of the dump's own dictionary; a vertex entry also holds the HS, DS and GS it is drawn

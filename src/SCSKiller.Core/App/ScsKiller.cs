@@ -1388,6 +1388,8 @@ public sealed partial class ScsKiller : IScsKiller
         }
         // read before Detect: what changes while it runs is seen by the next scan
         key += DetectStamp(g, hit?.Engine);
+        var stamped = key;
+        key += ForkOnlyMark(hit?.Engine);
         fresh = force || hit == null || hit.Key != key;
         if (fresh && !force && hit != null && OnlyBuildDiffers(hit.Key, key))
         {
@@ -1421,7 +1423,7 @@ public sealed partial class ScsKiller : IScsKiller
                 : CheckRecordings(g, engine);
         }
         catch (Exception e) { check = new(Readiness.Unsupported, e.Message); }
-        var ev = Streamline(g, new Evaluation(key, engine, GameFiles.DetectAntiCheat(g), check));   // last: anti-cheat that appeared during Detect counts
+        var ev = Streamline(g, new Evaluation(stamped + ForkOnlyMark(engine), engine, GameFiles.DetectAntiCheat(g), check));   // last: anti-cheat that appeared during Detect counts
         if (ev.AntiCheat != AntiCheat.None) AntiCheatFound(g, ev.AntiCheat, ev);
         else
         {
@@ -1449,8 +1451,13 @@ public sealed partial class ScsKiller : IScsKiller
         return ev with { StreamlineFirst = first, StreamlineFiles = read, StreamlineStamp = GameFiles.Stamp(read) };
     }
 
+    /// <summary>A field more at the end of a scan key whose engine is one of <see cref="ForkOnlyFamilies"/>: scan.json is shared
+    /// with upstream's builds, which have no reader for it, so for them it isn't a key that <see cref="OnlyBuildDiffers"/>
+    /// and they detect the game again before using the entry.</summary>
+    internal static string ForkOnlyMark(EngineInfo? e) => e != null && ForkOnlyFamilies.Contains(e.Family) ? "|" + e.Family : "";
+
     /// <summary>Keys that differ only in the SCSKiller build (the key's sixth field).</summary>
-    static bool OnlyBuildDiffers(string cached, string now)
+    internal static bool OnlyBuildDiffers(string cached, string now)
     {
         var (a, b) = (cached.Split('|'), now.Split('|'));
         if (a.Length != b.Length || a.Length < 6) return false;
@@ -2717,7 +2724,8 @@ public sealed partial class ScsKiller : IScsKiller
     async Task<bool> SyncCommunity(Game g, string? contentHash, CancellationToken ct)
     {
         if (Community is not { } community || !Settings.UseCommunityDb || await community.ManifestAsync(ct) is not { } manifest) return false;
-        var entry = contentHash != null ? manifest.Find(g, contentHash) : DbEntry(manifest, g, Store.LoadGame(g.Id));
+        // a fork-only engine's content hash is in no entry: its store build's alias names upstream's recording of this build
+        var entry = contentHash != null && ForkOnlyEngine(g) == null ? manifest.Find(g, contentHash) : DbEntry(manifest, g, Store.LoadGame(g.Id));
         var dir = Store.GameDir(g.Id);
         if (entry == null || entry.Object == Community.Downloaded(dir)?.Object) return false;
         // a compile saves its own record after this, and plans and warms the download anyway
@@ -2755,6 +2763,11 @@ public sealed partial class ScsKiller : IScsKiller
                 // ponytail: a store without build ids (no store build key) doesn't share; add when the server takes a key without one
                 if (g.Version is not { } v || rec.IndexGameVersion != v || rec.IndexContentHash is not { Length: 40 } hash) continue;
                 if (BlockingMod(g) != null) continue;   // read now: the state may not be published yet
+                if (ForkOnlyEngine(g) is { } fork)
+                {
+                    Log?.Report($"{g.Name}: recording not shared: its engine ({fork}) is this build's own, so its index isn't the one upstream's builds share it under");
+                    continue;
+                }
                 if (await sharing.ShareAsync(Store.GameDir(g.Id), hash, () => UploadMetaOf(g, v, hash),
                         () => Dlls(g).Where(d => d.Packable).SelectMany(d => Middleware.Scan(d.Path).Containers.Keys), LayerMadeNow) is { } got)
                 {
@@ -2791,6 +2804,19 @@ public sealed partial class ScsKiller : IScsKiller
             if (sharing.Problem is { } why) Log?.Report($"sharing upscaler packs: {why}");
         }
         catch (Exception e) { Log?.Report($"sharing upscaler packs failed: {e.Message}"); }
+    }
+
+    /// <summary>Engine families only this fork reads (upstream's builds read these games with the carver): a game's index
+    /// content hash and engine name aren't the ones upstream uploads under, so its recording is never shared, a community
+    /// recording is looked up by its store build only, and its scan cache entry is one upstream's builds detect again.</summary>
+    public static readonly IReadOnlySet<string> ForkOnlyFamilies = new HashSet<string> { Northlight.Northlight2Reader.Family };
+
+    /// <summary>The game's scanned engine family when it is one of <see cref="ForkOnlyFamilies"/>; else null.</summary>
+    string? ForkOnlyEngine(Game g)
+    {
+        EngineInfo? engine;
+        lock (_scanLock) engine = (_scan ??= Store.LoadScan()).GetValueOrDefault(g.Id)?.Engine;
+        return engine is { } e && ForkOnlyFamilies.Contains(e.Family) ? e.Family : null;
     }
 
     UploadMeta UploadMetaOf(Game g, string version, string contentHash)

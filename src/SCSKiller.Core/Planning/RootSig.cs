@@ -199,7 +199,7 @@ public static unsafe class RootSig
         Northlight2Table(0), [0, 0, 3, 4, 0, 0, 0], .. Enumerable.Range(0, 4).Select(b => new uint[] { 2, 0, (uint)b, 0, 0 }),
         [0, 0, 3, 64, 0, 1, 0], [1, 0, 0, 1, 4], .. Northlight2Bindless, [0, 0, 1, 1, 0, 5, 0]], Version10: true, RangeOffsets: true);
 
-    static readonly Stage[] Ue4Stages =[Stage.Pixel, Stage.Vertex, Stage.Geometry, Stage.Hull, Stage.Domain];
+    static readonly Stage[] Ue4Stages = [Stage.Pixel, Stage.Vertex, Stage.Geometry, Stage.Hull, Stage.Domain];
     static readonly Stage[] Ue5Stages = [Stage.Pixel, Stage.Vertex, Stage.Geometry, Stage.Mesh, Stage.Amplification];
 
     /// <summary>Stock UE (FD3D12RootSignatureDesc): per stage in priority order an SRV, sampler and UAV table (sizes from

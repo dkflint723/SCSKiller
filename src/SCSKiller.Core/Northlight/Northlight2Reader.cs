@@ -14,7 +14,7 @@ namespace SCSKiller.Core.Northlight;
 /// CS are each one IsPipeline map, the libraries one pool. Shaders carry no root signature: the engine builds one per kind of
 /// pipeline (<see cref="Planning.RootSig.Rule.Northlight2"/>). The game's material shaders aren't in these files (its packs
 /// compress them): a recording adds those. Alan Wake 2's effect files (layout ':') are laid out otherwise and not read.
-/// A fork-only reader with its own family, so what it plans is never shared as Northlight's or the carver's.
+/// A fork-only reader with its own family (<see cref="App.ScsKiller.ForkOnlyFamilies"/>): its games' recordings aren't shared.
 /// EngineInfo: Family "Northlight2", Version "DX12", D3D12.</summary>
 public sealed class Northlight2Reader : IEngineReader
 {
@@ -157,7 +157,7 @@ public sealed class Northlight2Reader : IEngineReader
     /// the entries are found by their ids. Null when the bytes don't follow this layout.</summary>
     public static Effect? Parse(byte[] b, CancellationToken ct)
     {
-        if (b.Length < 16 || !b.AsSpan(0, 4).SequenceEqual("RFX "u8) || U(b, 4) != Layout || U(b, 8) > b.Length - 12) return null;
+        if (b.Length < 16 || !b.AsSpan(0, 4).SequenceEqual("RFX "u8) || U(b, 4) != Layout || U(b, 8) > b.Length - 16) return null;   // the name, then the first count
         var start = 12 + (int)U(b, 8);
         var shaders = new List<Shader>();
         var ids = new Dictionary<ulong, int>();

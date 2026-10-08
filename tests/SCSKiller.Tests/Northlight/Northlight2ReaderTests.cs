@@ -40,6 +40,7 @@ public class Northlight2ReaderTests
             File.WriteAllBytes(Path.Combine(Effects, "rt_ao.binrfx"), Effect([(Lib, 4)], [[-1, -1, -1, -1, 0]]));
             File.WriteAllBytes(Path.Combine(Effects, "cloth.binrfx"), Effect([]));   // a material's effect: no shader
             File.WriteAllBytes(Path.Combine(Effects, "notes.binrfx"), "not an effect"u8.ToArray());
+            File.WriteAllBytes(Path.Combine(Effects, "half.binrfx"), [.. "RFX "u8, .. BitConverter.GetBytes((int)'O'), .. BitConverter.GetBytes(4), .. "copy"u8]);   // cut after its name: skipped
         }
     }
 
@@ -91,6 +92,36 @@ public class Northlight2ReaderTests
         return [.. "DXBC"u8, .. new byte[16], .. BitConverter.GetBytes(1), .. BitConverter.GetBytes(36 + dxil.Length), .. BitConverter.GetBytes(1), .. BitConverter.GetBytes(36), .. dxil];
     }
 
+    /// <summary>A DXIL container as the game ships (SM 6.x): the program header (<paramref name="kind"/> &lt;&lt; 16 | major
+    /// &lt;&lt; 4 | minor of <paramref name="sm"/>) and 32-byte signature parts of (name, index, system value, register, mask), float.</summary>
+    static byte[] Dxil(int kind, int sm, params (string Part, (string Name, int Index, int Sys, int Reg, byte Mask)[] Elems)[] sigs)
+    {
+        var parts = new List<(string Fourcc, byte[] Data)>();
+        foreach (var (part, elems) in sigs)
+        {
+            var d = new byte[8 + 32 * elems.Length];
+            var names = new List<byte>();
+            BitConverter.GetBytes(elems.Length).CopyTo(d, 0);
+            BitConverter.GetBytes(8).CopyTo(d, 4);
+            for (var i = 0; i < elems.Length; i++)
+            {
+                var (name, idx, sys, reg, mask) = elems[i];
+                foreach (var (at, v) in new[] { (4, d.Length + names.Count), (8, idx), (12, sys), (16, 3), (20, reg) }) BitConverter.GetBytes(v).CopyTo(d, 8 + 32 * i + at);
+                d[8 + 32 * i + 24] = mask;
+                names.AddRange([.. Encoding.ASCII.GetBytes(name), 0]);
+            }
+            parts.Add((part, [.. d, .. names]));
+        }
+        parts.Add(("DXIL", BitConverter.GetBytes(kind << 16 | sm)));
+        var b = new List<byte>([.. "DXBC"u8, .. new byte[16], .. BitConverter.GetBytes(1), .. new byte[4], .. BitConverter.GetBytes(parts.Count)]);
+        var pos = 32 + 4 * parts.Count;
+        foreach (var p in parts) { b.AddRange(BitConverter.GetBytes(pos)); pos += 8 + p.Data.Length; }
+        foreach (var p in parts) b.AddRange([.. Encoding.ASCII.GetBytes(p.Fourcc), .. BitConverter.GetBytes(p.Data.Length), .. p.Data]);
+        var c = b.ToArray();
+        BitConverter.GetBytes(c.Length).CopyTo(c, 24);
+        return c;
+    }
+
     [Fact]
     public void ReadsTheShadersAndTechniqueEntriesOfAnEffectFile()
     {
@@ -114,6 +145,13 @@ public class Northlight2ReaderTests
         Assert.Null(Northlight2Reader.Parse(miscounted, default));
         var noTable = Effect([(d.Ps[0], 1), (d.Ps[1], 1)], [[-1, 0, -1, -1, -1]]);
         Assert.Null(Northlight2Reader.Parse(noTable[..(noTable.AsSpan().LastIndexOf("technique0"u8) - 4)], default));   // the last shader's id: nowhere
+        // truncated (an update writing it): the header's name with no count after it is no effect; cut before its technique
+        // table, at most an empty one (a zero count is all it reads); cut anywhere, Parse doesn't throw
+        Assert.Null(Northlight2Reader.Parse([.. "RFX "u8, .. BitConverter.GetBytes((int)'O'), .. BitConverter.GetBytes(4), .. "copy"u8], default));
+        Assert.Null(Northlight2Reader.Parse([.. "RFX "u8, .. BitConverter.GetBytes((int)'O'), .. BitConverter.GetBytes(4), .. "copy"u8, 0, 0], default));
+        var table = f.AsSpan().IndexOf("technique0"u8);
+        for (var n = 0; n < f.Length; n++)
+            if (Northlight2Reader.Parse(f[..n], default) is { } cut) Assert.True(n > table || cut is { Shaders: [], Entries: [] }, $"cut at {n}");
     }
 
     [Fact]
@@ -186,5 +224,45 @@ public class Northlight2ReaderTests
         var work = Path.Combine(dir, "work");
         planner.Materialize(plan, d.Game, engine, reader, null, work, CancellationToken.None);
         Ff7.CheckWarmReady(work);
+    }
+
+    /// <summary>DXIL, as the game ships: VS+PS, MS+PS and CS entries are each a pipeline, planned with the root signature of
+    /// its kind (MS+PS: the mesh one); an MS+PS pair is kept as the technique names it, also one Planner.MeshFeeds rejects.</summary>
+    [Fact]
+    public void IndexesAndPlansDxilVertexMeshAndComputePipelines()
+    {
+        var dir = Ff7.TempDir("northlight2-dxil");
+        var effects = Directory.CreateDirectory(Path.Combine(dir, @"data\shaders\build\pc_dx12")).FullName;
+        (string, int, int, int, byte) Pos = ("SV_Position", 0, 1, 0, 0xF);
+        (string, int, int, int, byte) Uv(byte mask) => ("TEXCOORD", 0, 0, 1, mask);
+        var vs = Dxil(1, 0x66, ("OSG1", [Pos, Uv(3)]));
+        var ps = Dxil(0, 0x66, ("ISG1", [Pos, Uv(3)]), ("OSG1", [("SV_Target", 0, 64, 0, 0xF)]));
+        var cs = Dxil(5, 0x66);
+        var ms = Dxil(13, 0x65, ("OSG1", [Pos, Uv(3)]));
+        var msWide = Dxil(13, 0x65, ("OSG1", [Pos, Uv(7)]));   // TEXCOORD0.xyz to the PS's .xy: not the exact mask MeshFeeds asks for
+        File.WriteAllBytes(Path.Combine(effects, "deferred.binrfx"), Effect([(vs, Vs), (ps, Ps), (cs, Cs), (ms, Ms), (msWide, Ms)],
+            [[0, 1, -1, -1, -1], [-1, 1, -1, 3, -1], [-1, 1, -1, 4, -1]], [[-1, -1, 2, -1, -1]]));
+        var game = new Game("test:northlight2-dxil", "northlight2-dxil", Store.Other, dir, Path.Combine(dir, "CONTROLResonant.exe"));
+        var reader = new Northlight2Reader();
+        var engine = reader.Detect(game)!;
+        var index = reader.Index(game, engine, null, CancellationToken.None);
+        Assert.Equal([(Stage.Vertex, "vs_6_6"), (Stage.Pixel, "ps_6_6"), (Stage.Compute, "cs_6_6"), (Stage.Mesh, "ms_6_5"), (Stage.Mesh, "ms_6_5")],
+            new[] { vs, ps, cs, ms, msWide }.Select(c => (index.Shaders[Sha(c)].Stage, index.Shaders[Sha(c)].ShaderModel)));
+        Assert.True(Planner.MeshFeeds(index.Shaders[Sha(ms)], index.Shaders[Sha(ps)]));
+        Assert.False(Planner.MeshFeeds(index.Shaders[Sha(msWide)], index.Shaders[Sha(ps)]));
+        Assert.Equal(new[] { Sha(vs) + Sha(ps), Sha(ms) + Sha(ps), Sha(msWide) + Sha(ps), Sha(cs) }.Order(),
+            index.Maps.Where(m => m.IsPipeline).Select(m => string.Concat(m.Shaders)).Order());
+        Assert.DoesNotContain(index.Maps, m => !m.IsPipeline);   // every shader in an entry, no library
+
+        var plan = new Planner().Build(game, engine, index, null, Ff7.Nvidia, Ff7.TempDir("northlight2-dxil-plan"), null, CancellationToken.None);
+        var body = PlanFile.Read(plan.FilePath).Records.ToList();
+        var psos = body.Where(r => r.Tag == 'S').Select(r => PsoDb.Tuple(PsoDb.Parse(r).Rs, PsoDb.Parse(r).Stages))
+            .Concat(body.Where(r => r.Tag == 'P').Select(r => PsoDb.ParseItem(r.Payload)).Select(i => PsoDb.Tuple(i.Rs, i.Stages))).ToHashSet();
+        const string gfx = "f6b967e2bce45fc1ebcb49bbc36ca19f2c54e486", mesh = "c2401a34ac324e3dab7a6c2b1ca4ef3c83116bdc", compute = "8492d3d1cc34576ffa8b33c7a02e4550dda91288";
+        string T(string rs, params (Stage S, byte[] B)[] st) => PsoDb.Tuple(rs, st.Select(x => new KeyValuePair<int, string>((int)x.S, Sha(x.B))));
+        Assert.Equal(new HashSet<string> { T(gfx, (Stage.Vertex, vs), (Stage.Pixel, ps)), T(mesh, (Stage.Mesh, ms), (Stage.Pixel, ps)),
+            T(mesh, (Stage.Mesh, msWide), (Stage.Pixel, ps)), T(compute, (Stage.Compute, cs)) }, psos);
+        Assert.Equal(new[] { gfx, mesh, compute }.Order(), body.Where(r => r.Tag == 'B').Select(r => PsoDb.Hex(r.Payload.AsSpan(0, 20))).Order());
+        Assert.Equal((0L, 0L), (plan.Stats.Uncovered, plan.Stats.LeftOut));
     }
 }
