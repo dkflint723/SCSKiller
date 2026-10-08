@@ -93,10 +93,10 @@ public sealed class AboutVm : Bindable
     // "Check for updates": every installed build (the design data shows it too); the state of the update next to it.
     public bool ShowsCheck { get; } = Updater.Installed || App.Core is Design.FakeScsKiller;
     public bool CanCheck => !Updater.Checking && !Updater.Restarting;
-    public string UpdateNote => Updater.Downloading is { } d ? $"Downloading SCSKiller {d}…"
+    public string UpdateNote => Updater.Downloading is { } d ? $"Downloading Kindling {d}…"
         : Updater.Checking ? "Checking for updates…"
         : Updater.Ready is { } v ? AutoInstall.ReadyNote(v, App.Core.Settings)
-        : Updater.UpToDate ? "SCSKiller is up to date." : "";
+        : Updater.UpToDate ? "Kindling is up to date." : "";
     public string? UpdateProblem => Updater.Problem;
     public bool HasUpdateProblem => Updater.Problem != null;
 

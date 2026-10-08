@@ -181,8 +181,8 @@ besides `Settings.ShareRecordings` (`ScsKiller.SharesRecordings`: the app's `Sha
 `upload-fork.dat` its own anonymous upload device, never an official build's `upload.dat`. Its version is
 `0.0.0-dkfork.N` (`Directory.Build.props`; `build/publish.ps1` takes only `X.Y.Z-dkfork.N`), an unknown label and so the
 internal channel: no update or active check. Every request through `RouteFailover` sends
-`SCSKiller-fork-dkflint723/<version> (unofficial; Windows <build>)` (the CLI's product ends `-CLI`); the key list's GET
-names the fork too. Even opted in, a game's recording is shared only when an official build could have made it
+`Kindling/<version> (unofficial fork of SCSKiller; Windows <build>)` (`ForkBuild.Product` and `ForkBuild.Comment`; the
+CLI's product is `Kindling-CLI`); the key list's GET sends `Kindling/<version>`. Even opted in, a game's recording is shared only when an official build could have made it
 (`ForkBuild.UploadBlock`, read at each pass, logged once a run): its engine is known (the scan's, else the saved
 `scan.json`) and from an official reader's family, without `EngineInfo.ShipsRootSignatures` (never the PSPC reader); and
 `ForkBuild.ContentBlock` finds nothing (`ForkContent`). First what the recording holds, kept by markers only Clear recording
@@ -202,6 +202,24 @@ filled from every recording and kept past a clear, go only once the games are kn
 `packs-held.fork` (`ScsKiller.HoldPacks`): every pack whose `PackHeader.Sources` names a game with a marker (or whose header
 can't be read) is listed at each pass and before Clear recording deletes the markers, and leaves the list only once its
 file is gone (`Sharing.SharePacksAsync` skips it, unstamped). The upload's contents are upstream's, unchanged.
+
+The fork's name is **Kindling** (`ForkBuild.Name`), and only what a user reads carries it: the window and title bar, the
+notification area's tooltip, status line and menu (`Format.TrayStatus`), the notifications' display name
+(`AppNotificationManager.Register(name, icon)`: the AUMID, derived from the exe's path, is unchanged, so an existing
+registration is renamed rather than duplicated), the About and Settings text, the welcome dialog's title and its first
+paragraph (the rest is the server's or bundled `welcome.json`, SCSKiller's own text), the sign-in page, the User-Agent,
+and the exes' Product and the app's FileDescription (`Directory.Build.props`, `AssemblyTitle`). Everything a build or
+another program finds by name keeps SCSKiller's, so this build and an official one keep working side by side on the same
+data and game folders: the file names (`SCSKiller.exe`, `scskiller.exe`/`scskillerw.exe`, `scskiller_warm.exe`, the
+recorder's `d3d12.dll` with its `SCSKiller_StartWarm` export that `IsOurProxy` looks for, its version resource, and
+`scskiller.ini`, `scskiller.armed`, `scskiller.log` and the other `scskiller*` files in game folders), the data folder
+`%LOCALAPPDATA%\SCSKiller` and everything in it, the armed ledger (`LedgerDir`), the scheduled task `SCSKiller\RewarmStale`
+and the startup entry's `Run` value `SCSKiller`, the single-instance key, the mutexes and event names (`Global\SCSKiller…`,
+`Local\SCSKiller…`), the tray's window class, the namespaces and assembly names, the CLI command `scskiller`, the
+recorder's markers, the update channel logic (`AppVersion`, `UpdateFeeds`), and the stored status reasons the app parses
+("SCSKiller can now compile …", `NewShaders.PlannerChanged`, `Format`). Messages from Core (statuses, game notes, errors,
+the log) still say SCSKiller: they describe the engine both builds share, and keeping them as upstream wrote them keeps
+upstream merges clean.
 
 ## Driver caches
 

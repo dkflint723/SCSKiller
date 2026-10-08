@@ -102,7 +102,7 @@ public sealed partial class LibraryPage : Page
             return;
         }
         var listed = App.Core.Games.Any(s => s.Game.Id == added.Game.Id);
-        var where = added.Game.Store == Store.Manual ? "you added it already" : $"SCSKiller found it in {Fmt.StoreName(added.Game)}";
+        var where = added.Game.Store == Store.Manual ? "you added it already" : $"Kindling found it in {Fmt.StoreName(added.Game)}";
         if (listed && await App.ConfirmAsync(this, "Already in your library", $"{added.Game.Name} is in the list: {where}.", "Open", ContentDialogButton.Primary))
             App.Main.Navigate(typeof(DetailPage), added.Game.Id);
         else if (!listed) await Message("Already in your library", $"{added.Game.Name}: {where}. Refresh the library to see it.");
@@ -140,7 +140,7 @@ public sealed partial class LibraryPage : Page
             try { problem = await Task.Run(() => App.Core.KeyProblem(row.Id)); }   // reads what the key search recorded
             catch (Exception) { problem = null; }
             panel.Children.Insert(1, new TextBlock { TextWrapping = TextWrapping.Wrap, Text =
-                (problem ?? "SCSKiller couldn't find this game's key in its exe (protected exes hide it). Look the key up online, or paste it if you have it.") +
+                (problem ?? "Kindling couldn't find this game's key in its exe (protected exes hide it). Look the key up online, or paste it if you have it.") +
                 " A key is checked against the game's files and kept on this PC only." });
             AddKeyLookup(row, panel, box, dialog);
         }
@@ -219,7 +219,7 @@ public sealed partial class LibraryPage : Page
     {
         var row = RowOf(sender);
         if (!await App.ConfirmAsync(this, $"Record {row.Name}?",
-                "SCSKiller adds a small d3d12.dll next to the game that writes down every pipeline it creates. " +
+                "Kindling adds a small d3d12.dll next to the game that writes down every pipeline it creates. " +
                 "Play for about 5 minutes, close the game, then add it to the compile queue. You can remove it any time from the game's page.",
                 "Add recorder", ContentDialogButton.Primary)) return;
         try { await Task.Run(() => App.Core.InstallRecorder(row.Id)); }   // file IO and the game's re-evaluation

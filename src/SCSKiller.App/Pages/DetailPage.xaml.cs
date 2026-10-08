@@ -68,7 +68,7 @@ public sealed partial class DetailPage : Page
     {
         var id = Vm.Row.Id;
         if (!await App.ConfirmAsync(this, $"Remove {Vm.Name} from the library?",
-                "SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time.",
+                "Kindling forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time.",
                 "Remove")) return;
         try { await Task.Run(() => App.Core.RemoveManualGame(id)); }   // refused while a compile of it runs
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)

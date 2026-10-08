@@ -1,21 +1,23 @@
+<h1 align="center">Kindling</h1>
 <p align="center">
-  <img width="128" src=".github/assets/logo.png" alt="SCSKiller logo">
-</p>
-<h1 align="center">SCSKiller</h1>
-<p align="center">
-  <strong>Shader Compilation Stutter Killer.</strong> SCSKiller compiles your games' shaders into your GPU driver's
-  cache before you play, so the game doesn't stop to compile them mid-game. Free and open source, for Windows.
+  <strong>An unofficial fork of SCSKiller (Shader Compilation Stutter Killer).</strong> Kindling compiles your games'
+  shaders into your GPU driver's cache before you play, so the game doesn't stop to compile them mid-game. Free and open
+  source, for Windows.
 </p>
 
+> [!IMPORTANT]
+> Kindling is an unofficial fork of [SCSKiller](https://github.com/BlueHeisenberg/SCSKiller), maintained by dkflint723.
+> It is not affiliated with or endorsed by SCSKiller's author. Official SCSKiller builds come only from the SCSKiller
+> repository.
+
 <p align="center">
-  <a href="https://github.com/BlueHeisenberg/SCSKiller/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/BlueHeisenberg/SCSKiller"></a>
-  <a href="https://github.com/BlueHeisenberg/SCSKiller/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/BlueHeisenberg/SCSKiller/total"></a>
   <a href="LICENSE"><img alt="Licence: GPL-3.0-or-later" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-blue"></a>
-  <a href="https://www.patreon.com/SCSKiller"><img alt="Patreon" src="https://img.shields.io/badge/Patreon-support-f96854?logo=patreon&logoColor=white"></a>
-  <a href="https://discord.gg/st7C4yCTcN"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white"></a>
 </p>
 
 <p align="center">
+  <a href="https://github.com/dkflint723/SCSKiller/issues">Report a Kindling bug</a>
+  ·
+  SCSKiller:
   <a href="https://scskiller.com">Website</a>
   ·
   <a href="https://github.com/BlueHeisenberg/SCSKiller/releases/latest">Download</a>
@@ -25,18 +27,46 @@
   <a href="https://discord.gg/st7C4yCTcN">Discord</a>
   ·
   <a href="https://x.com/SCSKiller">X</a>
-  ·
-  <a href="https://github.com/BlueHeisenberg/SCSKiller/issues/new?template=bug.yml">Report a bug</a>
-  ·
-  <a href="https://github.com/BlueHeisenberg/SCSKiller/issues/new?template=game-request.yml">Request a game</a>
 </p>
 
+## What Kindling adds
+
+Kindling is SCSKiller with these changes (in full: [CHANGELOG.md](CHANGELOG.md), Unreleased):
+
+- **Encrypted Unreal games**: looks keys up in the community's key list, and "Import keys…" tries a file of keys you
+  collected on every encrypted game.
+- **More games**: FINAL FANTASY XVI and CONTROL Resonant are read from their files; fixes for Dead by Daylight, Dragon's
+  Dogma 2, Cyberpunk 2077 from Steam and Special K.
+- **The notification area's menu** shows what it's doing and has "Compile all ready" and "Open queue".
+- **"Compile new shaders when the PC is idle"**, **"Hide unsupported games"**, **"Clean up shader caches"** and
+  **"Compile for"** (a pick of GPU) in Settings; scans list games as they're read.
+- **A rebuild after a driver update no longer doubles a game's cache.**
+- **The recorder steps back by itself** in a game that closes early or crashes the driver with it, and handles frame
+  generation, OptiScaler and REFramework.
+
+**Uploads to SCSKiller's community database are off by default in this build.** Nothing is shared unless you tick both
+"Share anonymous shader hashes" and "Share from this unofficial build too" in Settings, and even then a recording only
+this build could make (a game only its readers read, a launch recorded in a way an official build doesn't) isn't
+shared. Kindling names itself to SCSKiller's servers as `Kindling/<version> (unofficial fork of SCSKiller; Windows …)`,
+with the version `0.0.0-dkfork.N`, and never checks for SCSKiller updates.
+
+Kindling's files keep SCSKiller's names (`SCSKiller.exe`, the `scskiller` command, the recorder's `d3d12.dll` and
+`scskiller.*` files in game folders, `%LOCALAPPDATA%\SCSKiller\`), so it shares its data folder with an official build
+on the same PC ([ARCHITECTURE.md](ARCHITECTURE.md), Unofficial build). There are no Kindling installers: build it from
+source (below). Report Kindling's problems [here](https://github.com/dkflint723/SCSKiller/issues), never to SCSKiller.
+
+**The rest of this README is SCSKiller's own**, by its author, describing SCSKiller. Its measurements and screenshots
+are SCSKiller's, made with official SCSKiller builds, not Kindling's.
+
+---
+
 > [!WARNING]
-> The only official downloads are this repository's [Releases](https://github.com/BlueHeisenberg/SCSKiller/releases).
+> The only official SCSKiller downloads are SCSKiller's [Releases](https://github.com/BlueHeisenberg/SCSKiller/releases).
 > See [official links](#official-links) for the accounts and sites that belong to SCSKiller.
 
 <p align="center">
   <img src=".github/assets/library.webp" alt="SCSKiller's library: games grouped by store, with shader and pipeline counts, cache size, compile time, a status such as Needs rebuilding or Warmed, and Play buttons.">
+  <br><sub>SCSKiller's screenshot (official SCSKiller, not Kindling)</sub>
 </p>
 
 ## Why
@@ -67,7 +97,7 @@ compile the game waited 20 ms or more for.
   <tr><td>Star Wars Jedi: Survivor</td><td>NVIDIA<br>RTX 5090</td><td>Stutters (≥ 20 ms)</td><td>9,038</td><td><b>11</b></td></tr>
 </table>
 
-Measured with SCSKiller's recorder. Your numbers depend on the game, GPU and driver. SCSKiller fixes shader compilation
+Measured by SCSKiller's author with official SCSKiller builds and SCSKiller's recorder, not with Kindling. Your numbers depend on the game, GPU and driver. SCSKiller fixes shader compilation
 stutter only, not traversal or streaming stutter, and a shader it couldn't find or record can still compile in game.
 
 ## Features
@@ -128,6 +158,7 @@ If a game needs a recording, turn on **Record**, play it for a few minutes, then
 <p align="center">
   <img src=".github/assets/queue.webp" width="49%" alt="The compile queue: one game compiling with pipelines per second, games waiting, one finished.">
   <img src=".github/assets/detail.webp" width="49%" alt="A game's page: the frame times of the last session, with shader compile stutters marked apart from other hitches and loading, and the list of slow frames.">
+  <br><sub>SCSKiller's screenshots (official SCSKiller, not Kindling)</sub>
 </p>
 
 ## FAQ

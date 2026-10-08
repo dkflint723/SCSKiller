@@ -96,7 +96,9 @@ public partial class App : Application
         try
         {
             AppNotificationManager.Default.NotificationInvoked += (_, a) => Main.DispatcherQueue.TryEnqueue(() => OnToast(a.Arguments));
-            AppNotificationManager.Default.Register();
+            // the name notifications show: this build's own; the AUMID (from the exe's path) and its registration stay as they were
+            try { AppNotificationManager.Default.Register(ForkBuild.Name, new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))); }
+            catch (Exception) { AppNotificationManager.Default.Register(); }   // the name and icon didn't take: the exe's, as before
         }
         catch (Exception ex) { toastError = ex.Message; }   // the app works without notifications
         notifications = toastError == null;
@@ -250,7 +252,7 @@ public partial class App : Application
         Core.Settings = Core.Settings with { TrayNoticeShown = true };
         AppNotificationManager.Default.Show(new AppNotificationBuilder()
             .AddArgument("action", "open")
-            .AddText("SCSKiller is still running")
+            .AddText("Kindling is still running")
             .AddText("It's in the notification area, right-click the icon to quit.")
             .BuildNotification());
     }
@@ -260,6 +262,9 @@ public partial class App : Application
     /// share checkbox (<see cref="Settings.ShareRecordings"/>).</summary>
     static void ShowWelcome(Task<WelcomeContent?> fetch)
     {
+        const string ForkWelcome = $"{ForkBuild.Name} is an unofficial fork of SCSKiller, maintained by dkflint723. It is not affiliated with or endorsed by "
+            + "SCSKiller's author. The text below is SCSKiller's own, about its community database and Patreon; sharing from this build also needs "
+            + "Settings' \"Share from this unofficial build too\".";
         var root = (FrameworkElement)Main.Content;
         root.Loaded += OnLoaded;
 
@@ -268,13 +273,14 @@ public partial class App : Application
             root.Loaded -= OnLoaded;
             var c = await fetch ?? WelcomeContent.Default;
             var panel = new StackPanel { Spacing = 12 };
+            panel.Children.Add(new TextBlock { Text = ForkWelcome, TextWrapping = TextWrapping.Wrap });   // the rest is SCSKiller's own text
             foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
             if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
             var share = new CheckBox { Content = c.Share, IsChecked = false };   // never pre-ticked: that isn't consent
             panel.Children.Add(share);
             var dialog = new ContentDialog
             {
-                XamlRoot = root.XamlRoot, Title = c.Title, Content = new ScrollViewer { Content = panel },
+                XamlRoot = root.XamlRoot, Title = $"Welcome to {ForkBuild.Name}", Content = new ScrollViewer { Content = panel },
                 PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary,
             };
             ContentDialogResult result;

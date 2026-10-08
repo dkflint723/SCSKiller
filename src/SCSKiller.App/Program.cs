@@ -48,7 +48,7 @@ public static class Program
     public static void StartFailed(Exception e, string[] args)
     {
         LogCrash(e);
-        if (!IsDesignRun(args)) MessageBoxW(0, $"SCSKiller couldn't start. Details are in {Path.Combine(Core.App.AppStore.DefaultDir, Core.App.CrashLog.FileName)}", "SCSKiller", 0x10 /* MB_ICONERROR */);
+        if (!IsDesignRun(args)) MessageBoxW(0, $"Kindling couldn't start. Details are in {Path.Combine(Core.App.AppStore.DefaultDir, Core.App.CrashLog.FileName)}", "Kindling", 0x10 /* MB_ICONERROR */);
     }
 
     public static bool IsDesignRun(string[] args) => args.Any(a => a is "--fake" or "--screenshots");

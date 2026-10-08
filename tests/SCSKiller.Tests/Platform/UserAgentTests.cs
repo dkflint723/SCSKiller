@@ -24,11 +24,11 @@ public class UserAgentTests : IDisposable
 
     // this unofficial build: never an official channel in the comment, whatever its version says
     [Theory]
-    [InlineData("SCSKiller-fork-dkflint723", "0.0.0-dkfork.0", 26100, "SCSKiller-fork-dkflint723/0.0.0-dkfork.0 (unofficial; Windows 26100)")]
-    [InlineData("SCSKiller-fork-dkflint723", "1.2.4", 26300, "SCSKiller-fork-dkflint723/1.2.4 (unofficial; Windows 26300)")]
-    [InlineData("SCSKiller-fork-dkflint723", "1.3.0-beta.2", 22631, "SCSKiller-fork-dkflint723/1.3.0-beta.2 (unofficial; Windows 22631)")]
-    [InlineData("SCSKiller-fork-dkflint723", "1.3.0-alpha.1+abc", 19045, "SCSKiller-fork-dkflint723/1.3.0-alpha.1 (unofficial; Windows 19045)")]
-    [InlineData("SCSKiller-fork-dkflint723-CLI", "1.2.4", 26300, "SCSKiller-fork-dkflint723-CLI/1.2.4 (unofficial; Windows 26300)")]
+    [InlineData("Kindling", "0.0.0-dkfork.0", 26100, "Kindling/0.0.0-dkfork.0 (unofficial fork of SCSKiller; Windows 26100)")]
+    [InlineData("Kindling", "1.2.4", 26300, "Kindling/1.2.4 (unofficial fork of SCSKiller; Windows 26300)")]
+    [InlineData("Kindling", "1.3.0-beta.2", 22631, "Kindling/1.3.0-beta.2 (unofficial fork of SCSKiller; Windows 22631)")]
+    [InlineData("Kindling", "1.3.0-alpha.1+abc", 19045, "Kindling/1.3.0-alpha.1 (unofficial fork of SCSKiller; Windows 19045)")]
+    [InlineData("Kindling-CLI", "1.2.4", 26300, "Kindling-CLI/1.2.4 (unofficial fork of SCSKiller; Windows 26300)")]
     public void The_User_Agent_is_the_fork_product_the_version_unofficial_and_the_Windows_build(string product, string version, int build, string expected)
     {
         var ua = RouteFailover.UserAgent(product, AppVersion.Parse(version)!, build);
@@ -41,9 +41,9 @@ public class UserAgentTests : IDisposable
     [Fact]
     public void Requests_name_the_fork_by_default()
     {
-        Assert.Equal("SCSKiller-fork-dkflint723", RouteFailover.Product);
-        Assert.StartsWith("SCSKiller-fork-dkflint723/", Expected);
-        Assert.Contains("(unofficial; Windows ", Expected);
+        Assert.Equal("Kindling", RouteFailover.Product);
+        Assert.StartsWith("Kindling/", Expected);
+        Assert.Contains("(unofficial fork of SCSKiller; Windows ", Expected);
     }
 
     [Theory]

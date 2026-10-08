@@ -295,23 +295,23 @@ public sealed class LoopbackCallback : IDisposable
             var q = c.Request.QueryString;
             if (q["state"] != state)
             {
-                Reply(c, 400, "This page doesn't belong to the sign-in SCSKiller is waiting for. Start again from SCSKiller.");
+                Reply(c, 400, "This page doesn't belong to the sign-in Kindling is waiting for. Start again from Kindling.");
                 throw new AccountException("The browser's answer didn't match this sign-in, so it was refused. Please try again.");
             }
             if (q["error"] != null || q["code"] is not { Length: > 0 } code)
             {
-                Reply(c, 400, "Sign-in didn't complete. You can close this tab and try again from SCSKiller.");
+                Reply(c, 400, "Sign-in didn't complete. You can close this tab and try again from Kindling.");
                 throw new AccountException(q["error"] == "access_denied" ? "Sign-in was cancelled on Patreon." : $"Sign-in didn't complete ({q["error"] ?? "no code"}). Please try again.");
             }
-            Reply(c, 200, "You're signed in. You can close this tab and go back to SCSKiller.");
+            Reply(c, 200, "You're signed in. You can close this tab and go back to Kindling.");
             return code;
         }
     }
 
     static void Reply(HttpListenerContext c, int status, string text)
     {
-        var html = Encoding.UTF8.GetBytes("<!doctype html><meta charset=utf-8><title>SCSKiller</title>" +
-            $"<body style=\"font:16px 'Segoe UI',sans-serif;margin:3em\"><h2>SCSKiller</h2><p>{WebUtility.HtmlEncode(text)}</p>");
+        var html = Encoding.UTF8.GetBytes("<!doctype html><meta charset=utf-8><title>Kindling</title>" +
+            $"<body style=\"font:16px 'Segoe UI',sans-serif;margin:3em\"><h2>Kindling</h2><p>{WebUtility.HtmlEncode(text)}</p>");
         c.Response.StatusCode = status;
         c.Response.ContentType = "text/html; charset=utf-8";
         c.Response.KeepAlive = false;   // sent whole (Content-Length) and closed gracefully: Dispose right after can't cut the page off

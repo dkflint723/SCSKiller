@@ -221,8 +221,8 @@ public class FormatTests
         try
         {
             QueueItem Q(QueueStage stage, WarmProgress? p = null, bool check = false) => new("g", stage, p, null, PlanCheck: check);
-            Assert.Equal(["SCSKiller: idle", "SCSKiller: finishing, the driver is saving the shader cache", "SCSKiller: checking games for more to compile",
-                    "SCSKiller: paused (Game)", "Compiling Game, 45%", "Compiling Game"],
+            Assert.Equal(["Kindling: idle", "Kindling: finishing, the driver is saving the shader cache", "Kindling: checking games for more to compile",
+                    "Kindling: paused (Game)", "Compiling Game, 45%", "Compiling Game"],
                 new[] { Format.TrayStatus(null, null, false), Format.TrayStatus(Q(QueueStage.Warming), "Game", true), Format.TrayStatus(Q(QueueStage.Planning, check: true), "Game", false),
                     Format.TrayStatus(Q(QueueStage.Paused), "Game", false), Format.TrayStatus(Q(QueueStage.Warming, new(45, 100, 0, 1)), "Game", false),
                     Format.TrayStatus(Q(QueueStage.Planning), "Game", false) });

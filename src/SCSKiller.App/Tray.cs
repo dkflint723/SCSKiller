@@ -16,7 +16,7 @@ sealed class Tray : IDisposable
     static readonly uint TaskbarCreated = RegisterWindowMessageW("TaskbarCreated");
 
     readonly nint _hwnd, _icon;
-    string _tip = "SCSKiller";
+    string _tip = "Kindling";
 
     /// <summary>Left-click or double-click.</summary>
     public required Action Open { get; init; }
@@ -77,7 +77,7 @@ sealed class Tray : IDisposable
         var menu = CreatePopupMenu();
         AppendMenuW(menu, 0x1 /* MF_GRAYED */, IdStatus, Status().Replace("&", "&&"));   // a game's name isn't a mnemonic
         AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
-        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open SCSKiller");
+        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open Kindling");
         var ready = ReadyCount();
         AppendMenuW(menu, ready == 0 ? 0x1u : 0, IdCompileReady, ready == 0 ? "Compile all ready" : $"Compile all ready ({ready})");
         AppendMenuW(menu, 0, IdQueue, "Open queue");

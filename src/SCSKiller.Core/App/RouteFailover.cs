@@ -19,7 +19,7 @@ public sealed class RouteFailover : DelegatingHandler
     public static string Product { get; set; } = ForkBuild.Product;
 
     /// <summary>The User-Agent of every request through this handler, any host. Names the build, nothing that identifies the user or the PC;
-    /// "unofficial" in place of the channel, so the official servers never take it for one of their builds.</summary>
+    /// "unofficial fork of SCSKiller" in place of the channel, so the official servers never take it for one of their builds.</summary>
     public static string UserAgent(string product, AppVersion v, int windowsBuild) => $"{product}/{v} ({ForkBuild.Comment}; Windows {windowsBuild})";
 
     public IReadOnlyList<Uri> Routes { get; }

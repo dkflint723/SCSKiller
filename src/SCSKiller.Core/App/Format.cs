@@ -28,10 +28,10 @@ public static class Format
     /// <summary>The notification-area icon's tooltip and its menu's first line: what the queue does now (<paramref name="running"/>,
     /// the first <see cref="Running"/> item, of the game <paramref name="name"/>).</summary>
     public static string TrayStatus(QueueItem? running, string? name, bool quitting) =>
-        quitting ? "SCSKiller: finishing, the driver is saving the shader cache"
-        : running == null ? "SCSKiller: idle"
-        : running.PlanCheck ? "SCSKiller: checking games for more to compile"
-        : running.Stage == QueueStage.Paused ? $"SCSKiller: paused ({name})"
+        quitting ? $"{ForkBuild.Name}: finishing, the driver is saving the shader cache"
+        : running == null ? $"{ForkBuild.Name}: idle"
+        : running.PlanCheck ? $"{ForkBuild.Name}: checking games for more to compile"
+        : running.Stage == QueueStage.Paused ? $"{ForkBuild.Name}: paused ({name})"
         : running is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? $"Compiling {name}, {100.0 * p.Done / p.Total:0}%"
         : $"Compiling {name}";
 

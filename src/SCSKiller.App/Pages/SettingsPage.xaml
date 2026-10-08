@@ -178,7 +178,7 @@
                                          Severity="{x:Bind Vm.AutoSeverity, Mode=OneWay}" IsClosable="False" />
                             </StackPanel>
                             <InfoBar IsOpen="True" Severity="Informational" IsClosable="False" Title="We recommend enabling it"
-                                     Message="A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. SCSKiller adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here." />
+                                     Message="A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. Kindling adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here." />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -253,7 +253,7 @@
                                       AutomationProperties.Name="Share from this unofficial build too">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
-                                    <TextBlock Text="This is an unofficial build; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. Games read only by this build are never shared; a recording made without NVAPI state, alongside a mod's d3d12.dll or under ReShade SCSKiller can't reproduce isn't shared until it is cleared, and an upscaler pack filled from one never is."
+                                    <TextBlock Text="Kindling is an unofficial fork of SCSKiller; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. Games read only by this build are never shared; a recording made without NVAPI state, alongside a mod's d3d12.dll or under ReShade Kindling can't reproduce isn't shared until it is cleared, and an upscaler pack filled from one never is."
                                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -297,23 +297,23 @@
                 <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
                     <StackPanel Spacing="12">
                         <TextBlock Text="In the background" Style="{StaticResource Section}" />
-                        <CheckBox IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}" AutomationProperties.Name="Start SCSKiller when Windows starts">
+                        <CheckBox IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}" AutomationProperties.Name="Start Kindling when Windows starts">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Start SCSKiller when Windows starts" TextWrapping="Wrap" />
+                                <TextBlock Text="Start Kindling when Windows starts" TextWrapping="Wrap" />
                                 <TextBlock Text="It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}" AutomationProperties.Name="Closing the window quits SCSKiller">
+                        <CheckBox IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}" AutomationProperties.Name="Closing the window quits Kindling">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
-                                <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit."
+                                <TextBlock Text="Closing the window quits Kindling" TextWrapping="Wrap" />
+                                <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps Kindling there; right-click its icon to quit."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when SCSKiller starts">
+                        <CheckBox IsChecked="{x:Bind Vm.ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when Kindling starts">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Scan games when SCSKiller starts" TextWrapping="Wrap" />
+                                <TextBlock Text="Scan games when Kindling starts" TextWrapping="Wrap" />
                                 <TextBlock Text="Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, when it exits, or when Steam or the Xbox app updates it."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
@@ -321,14 +321,14 @@
                         <CheckBox IsChecked="{x:Bind Vm.NotifyNewShaders, Mode=TwoWay}" AutomationProperties.Name="Notify me when games have new shaders to compile">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Notify me when games have new shaders to compile" TextWrapping="Wrap" />
-                                <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play."
+                                <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or a Kindling update. You're told once, never while you play."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <CheckBox IsChecked="{x:Bind Vm.CompileNewShadersWhenIdle, Mode=TwoWay}" AutomationProperties.Name="Compile new shaders when the PC is idle">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Compile new shaders when the PC is idle" TextWrapping="Wrap" />
-                                <TextBlock Text="Instead of telling you, SCSKiller queues such a game to compile in the background once you're away from the PC, as after a driver update. A compile that adds more than 16 GB is still asked about, and one that failed isn't tried again until there's more to compile."
+                                <TextBlock Text="Instead of telling you, Kindling queues such a game to compile in the background once you're away from the PC, as after a driver update. A compile that adds more than 16 GB is still asked about, and one that failed isn't tried again until there's more to compile."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -342,14 +342,14 @@
                         <CheckBox IsChecked="{x:Bind Vm.HideUnsupported, Mode=TwoWay}" AutomationProperties.Name="Hide unsupported games in the Library">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Hide unsupported games in the Library" TextWrapping="Wrap" />
-                                <TextBlock Text="Leaves out the games SCSKiller can't compile. They're still checked at every scan and show again once they can be compiled, for example when an encrypted game's key is found. The Library's search bar has the same switch."
+                                <TextBlock Text="Leaves out the games Kindling can't compile. They're still checked at every scan and show again once they can be compiled, for example when an encrypted game's key is found. The Library's search bar has the same switch."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <CheckBox IsChecked="{x:Bind Vm.LookUpKeysOnline, Mode=TwoWay}" AutomationProperties.Name="Look up keys for encrypted games online">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Look up keys for encrypted games online" TextWrapping="Wrap" />
-                                <TextBlock Text="When a scan finds an Unreal game whose files are encrypted and no key that opens them, SCSKiller checks the community's key list, the page below, fetched at most once a day. Nothing about you or your games is sent, and a listed key is kept only if it opens the game's files."
+                                <TextBlock Text="When a scan finds an Unreal game whose files are encrypted and no key that opens them, Kindling checks the community's key list, the page below, fetched at most once a day. Nothing about you or your games is sent, and a listed key is kept only if it opens the game's files."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -400,7 +400,7 @@
                             <ComboBox Grid.Column="1" ItemsSource="{x:Bind local:SettingsVm.RecordingLimitLabels}" MinWidth="140"
                                       SelectedIndex="{x:Bind Vm.RecordingLimitIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{x:Bind RecordingLimitLabel}" />
                         </Grid>
-                        <TextBlock Text="Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded."
+                        <TextBlock Text="Counts the recording in the game's folder and Kindling's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded."
                                    Style="{StaticResource Caption}" TextWrapping="Wrap" />
                         <TextBlock Text="{x:Bind Vm.RecordingSpace, Mode=OneWay}" TextWrapping="Wrap" />
                         <Expander Header="Space by game" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="{x:Bind Vm.HasRecordings, Mode=OneWay}">

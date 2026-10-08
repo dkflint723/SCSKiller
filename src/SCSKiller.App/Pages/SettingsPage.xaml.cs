@@ -133,7 +133,7 @@ public sealed partial class SettingsPage : Page
     {
         var (label, limit) = SettingsVm.Sizes[SizeBox.SelectedIndex];
         if (!await App.ConfirmAsync(this, $"Set the shader cache limit to {label}?",
-                $"This is a global {Fmt.Vendor(App.Core.Vendor.Vendor)} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, " +
+                $"This is a global {Fmt.Vendor(App.Core.Vendor.Vendor)} driver setting: it applies to every game on this PC, not only the ones Kindling compiles, " +
                 "and stays until you change it. Windows will ask for administrator permission.\n\n" +
                 "Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " +
                 "You can switch back to the driver default here at any time.",

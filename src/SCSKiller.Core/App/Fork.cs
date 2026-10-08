@@ -3,7 +3,7 @@ using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.App;
 
-/// <summary>This build is an unofficial fork of SCSKiller (dkflint723's), and says so to the official servers it talks to:
+/// <summary>This build is Kindling, an unofficial fork of SCSKiller (dkflint723's), and says so to the official servers it talks to:
 /// its own User-Agent product and comment, never one of the official channels; its own anonymous upload device
 /// (<see cref="UploadDevice"/>, never an official build's upload.dat); its own opt-in to sharing (<see cref="SettingsFile"/>),
 /// apart from settings.json, which official builds share and rewrite; and a share only of recordings an official build
@@ -11,9 +11,12 @@ namespace SCSKiller.Core.App;
 /// so no update check or active check either.</summary>
 public static partial class ForkBuild
 {
-    public const string Product = "SCSKiller-fork-dkflint723";
+    /// <summary>The name this build shows (window, notification area, notifications, About) and its User-Agent product. Display
+    /// only: the files, data folder, task, mutexes and markers keep SCSKiller's names (ARCHITECTURE.md, Unofficial build).</summary>
+    public const string Name = "Kindling";
+    public const string Product = Name;
     /// <summary>The User-Agent comment in place of the channel.</summary>
-    public const string Comment = "unofficial";
+    public const string Comment = "unofficial fork of SCSKiller";
     public const string UploadDevice = "upload-fork.dat";
     public const string SettingsFile = "fork.json";
     /// <summary>games\&lt;id&gt;\: a launch recorded without its NVAPI state (<see cref="RecorderLevel.Minimal"/>) went into the
@@ -42,10 +45,10 @@ public static partial class ForkBuild
     /// only a clear takes away, then how its recorder runs now, which no clear changes.</summary>
     public static string? ContentBlock(ForkContent c) =>
         c.RecordedMinimal ? "a launch recorded without NVAPI state (pipelines only) is in its recording: clear the recording to share it again"
-        : c.RecordedLayered ? "a launch recorded alongside a mod's d3d12.dll or under ReShade SCSKiller can't reproduce is in its recording: clear the recording to share it again"
+        : c.RecordedLayered ? "a launch recorded alongside a mod's d3d12.dll or under ReShade Kindling can't reproduce is in its recording: clear the recording to share it again"
         : c.NvapiOffNow ? "its recorder runs without NVAPI hooks (frame generation, or the crash guard stepped it down): not shared while it does"
         : c.ChainedNow ? "its recorder runs alongside a mod's d3d12.dll: not shared while it does"
-        : c.ReShade is { Copyable: false } ? "ReShade is loaded where SCSKiller can't reproduce it, so what it changes would pass for the game's own: not shared while it is"
+        : c.ReShade is { Copyable: false } ? "ReShade is loaded where Kindling can't reproduce it, so what it changes would pass for the game's own: not shared while it is"
         : null;
 
     /// <summary>A scskiller.ini (or SCSKILLER_NVAPI) that turns the recorder's NVAPI hooks off: what it records has no 'N' state.</summary>

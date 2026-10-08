@@ -6,6 +6,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ### New
 
+- **This unofficial fork is now called Kindling** (an unofficial fork of SCSKiller): the window, the notification area,
+  notifications, About, Settings, the welcome dialog and the User-Agent say Kindling. Its files, data folder
+  (`%LOCALAPPDATA%\SCSKiller`), recorder files in game folders and the `scskiller` command keep their names, so it still
+  works beside an official build.
+
 - **Encrypted Unreal games**: "Look up key online" in the Why? dialog checks the community's list of encryption keys and
   keeps the first listed key that opens the game's files. "Look up keys for encrypted games online" in Settings does it
   after scans (off by default). Only the list page is downloaded; nothing about your games is sent. The dialog also says
@@ -121,7 +126,7 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   cleared. A launch nothing tells of any more (a level reset since, a log deleted with the recorder) isn't caught: clear
   a recording you made at "pipelines only" before sharing from this build.
 - This build registers its own anonymous upload device (`upload-fork.dat`), never an official build's.
-- This build names itself to every server it talks to: `SCSKiller-fork-dkflint723/<version> (unofficial; Windows …)`,
+- This build names itself to every server it talks to: `Kindling/<version> (unofficial fork of SCSKiller; Windows …)`,
   and its version is `0.0.0-dkfork.N` (a packaged build's `X.Y.Z-dkfork.N`), never an official one.
 
 ### Games

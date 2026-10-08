@@ -613,7 +613,7 @@ public sealed class DetailVm(string id) : Bindable
     public string StatusReason => Sentence(s.Status switch
     {
         _ when s.CompileUnreached => s.StatusReason + (s.WarmedAt != null && !s.CacheFileFull ? ". " + Sentence(ScsKiller.ClearForGameNote) : ""),
-        _ when ScsKiller.IsPartlyCompiled(s) => ScsKiller.RefusedNote(s) + ". An SCSKiller update could fix it",
+        _ when ScsKiller.IsPartlyCompiled(s) => ScsKiller.RefusedNote(s) + ". A Kindling update could fix it",
         GameStatus.Warmed when ScsKiller.IsPartlyWarmed(s) => s.StatusReason,
         GameStatus.Warmed => $"compiled for {(ScsKiller.BothApis(s.Plan) ? "DirectX 11 and DirectX 12, for " : "")}driver {s.WarmedDriverVersion}" + (s.WarmedAt is { } t ? $" on {t.LocalDateTime:d}" : "")
             + (RtAfter ? ". " + Sentence(ScsKiller.RtAfterRecordingNote) : ""),
@@ -627,7 +627,7 @@ public sealed class DetailVm(string id) : Bindable
         + Format.CacheFileNote(s))
         + (IsPartlyCompiled || s.CompileUnreached ? "." : "");
     public bool IsPartlyCompiled => ScsKiller.IsPartlyCompiled(s);
-    public const string PartlyCompiledWhy = "SCSKiller compiled this game, but the graphics driver refused a large part of it. This happens when the driver or Windows can't build pipelines the way the game does. The refused ones are built by the game the first time it needs them, which is when they can stutter. SCSKiller compiles them again after a driver update.";
+    public const string PartlyCompiledWhy = "Kindling compiled this game, but the graphics driver refused a large part of it. This happens when the driver or Windows can't build pipelines the way the game does. The refused ones are built by the game the first time it needs them, which is when they can stutter. Kindling compiles them again after a driver update.";
 
     // The manifest is public: a PC without "db" sees that the community database covers the game, and where to get it.
     // Shown, it is the page's only mention of the database.
@@ -680,7 +680,7 @@ public sealed class DetailVm(string id) : Bindable
     // the driver cache, as Disk space shows it; the dialog lists Windows' cache with its own size
     public string ClearCacheText => s.CacheOnDisk != null ? $"Clear cache ({DiskValue})" : "Clear cache";
     public string ClearCacheTip => HasCache ? "Deletes this game's shader caches (the driver's and Windows', and the game's own if you choose) so its next run starts cold"
-        : "SCSKiller learns this game's driver cache files the first time it compiles it or sees it running";
+        : "Kindling learns this game's driver cache files the first time it compiles it or sees it running";
 
     public bool IsKnownStutter => s.KnownStutter != null;
     public string StutterReason => s.KnownStutter?.Reason ?? "";
@@ -715,7 +715,7 @@ public sealed class DetailVm(string id) : Bindable
     public string RecordTip => RtPartial || RtAfter ? $"Turn on recording and play with ray tracing on{(Enough ? "" : " for about 5 minutes")}. " + ScsKiller.RtWhy(App.Core.Vendor.Caps, s.Engine)
             + (RtAfter ? " Everything else is compiled." : " Everything else compiles from the game files already.")
         : Enough ? Sentence(s.StatusReason) + "."
-        : "Turn on recording and play as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile.";
+        : "Turn on recording and play as usual for about 5 minutes. Kindling learns this game's shader layout from it, then it can compile.";
     public bool ShowRecordAction => !RecordOn && CanToggleRecord;
 
     // Shader coverage (PlanStats), in words: how much of what the planner found gets compiled, where it comes from, what's
@@ -789,14 +789,14 @@ public sealed class DetailVm(string id) : Bindable
             Left.AntiCheat => !NoAntiCheat ? $"Anything else compiles while you play: {Fmt.AntiCheatName(s.AntiCheat)} blocks the recording that would find it."
                 : s.RootUnconfirmed ? "Anything else compiles while you play: confirm the game's folder (Game folder… above) to record what's missing."
                 : "Anything else compiles while you play: DLSS on NVIDIA blocks the recording that would find it.",
-            Left.EngineSlots => "The rest use shader slots this game's engine adds." + (tipAsks ? "" : " A 5-minute recording lets SCSKiller rebuild them."),
-            Left.UnknownSlots => "The rest use shader slots SCSKiller can't rebuild yet, so they still compile while you play.",
-            Left.NotSeen => "SCSKiller hasn't seen how the game sets the rest up yet." + (tipAsks ? "" : " Playing longer with recording on teaches it."),
+            Left.EngineSlots => "The rest use shader slots this game's engine adds." + (tipAsks ? "" : " A 5-minute recording lets Kindling rebuild them."),
+            Left.UnknownSlots => "The rest use shader slots Kindling can't rebuild yet, so they still compile while you play.",
+            Left.NotSeen => "Kindling hasn't seen how the game sets the rest up yet." + (tipAsks ? "" : " Playing longer with recording on teaches it."),
             Left.Recording => "Recording is on: anything new you play is added the next time it compiles.",
             Left.PlayedCompiles => $"Last time you played, {PlayCompiles(L!):N0} still had to compile." + (tipAsks ? "" : " Recording picks them up."),
             _ when Rt || RtUnseen || RtInline => null,   // ray tracing is what's left
             Left.PlayedClean => "Nothing was missing last time you played.",
-            Left.NothingKnown => "Nothing SCSKiller knows of is missing.",
+            Left.NothingKnown => "Nothing Kindling knows of is missing.",
             _ => "A few effects are only put together while you play." + (tipAsks ? "" : " A short recording picks them up."),
         },
         !Guessed ? null : tipAsks ? "Some shader states are guesses." : "Some shader states are guesses; a longer recording makes them exact.",
@@ -849,8 +849,8 @@ public sealed class DetailVm(string id) : Bindable
         P is { } p ? new("Pipelines in the plan", Fmt.N(p.Recorded + p.Generated + p.MiddlewareItems)) : null,
         s.ShaderCount != null ? new("Shaders in the game files", Fmt.N(s.ShaderCount)) : null,
         P is { StageSets: > 0 } ? new("Shader combinations found", Fmt.N(P.StageSets)) : null,
-        P is { LeftOut: > 0 } ? new("Left out", Fmt.N(P.LeftOut) + (P.Uncovered == P.LeftOut ? " (shader slots SCSKiller can't rebuild)" : P.Uncovered > 0 ? $" ({P.Uncovered:N0} for shader slots SCSKiller can't rebuild)" : "")) : null,
-        P is { StageSets: 0, Uncovered: > 0 } ? new("Left out for shader slots SCSKiller can't rebuild", Fmt.N(P.Uncovered)) : null,
+        P is { LeftOut: > 0 } ? new("Left out", Fmt.N(P.LeftOut) + (P.Uncovered == P.LeftOut ? " (shader slots Kindling can't rebuild)" : P.Uncovered > 0 ? $" ({P.Uncovered:N0} for shader slots Kindling can't rebuild)" : "")) : null,
+        P is { StageSets: 0, Uncovered: > 0 } ? new("Left out for shader slots Kindling can't rebuild", Fmt.N(P.Uncovered)) : null,
         P != null ? new("Recorded pipelines", Fmt.N(P.Recorded)) : null,
         P != null ? new("Built from the game files", Fmt.N(P.Generated)) : null,
         P is { MiddlewareItems: > 0 } ? new("Upscaler pipelines", Fmt.N(P.MiddlewareItems)) : null,
@@ -996,7 +996,7 @@ public sealed class DetailVm(string id) : Bindable
         ? $"{Fmt.AntiCheatName(s.AntiCheat)} blocks the recorder, but you can enable it at your own risk with an offline session."
         : !NoAntiCheat
         ? $"Not available: {Fmt.AntiCheatName(s.AntiCheat)} treats an extra d3d12.dll as tampering, so this game is compiled from its files only."
-        : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records."
+        : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): Kindling checks all of it for anti-cheat before it records."
         : s.RecorderSkip == ScsKiller.SkipCrashed && s.RecorderLevelReason is { } crashed ? $"{Sentence(crashed)}. It stays out until the game updates or you try again."
         : s.RecorderSkip == ScsKiller.SkipModNotChainable ? $"Not available: {ScsKiller.NotChainableReason(s.RecorderMod)}."
         : s.RecorderSkip is { } skip ? $"Not available: {skip}."
@@ -1004,7 +1004,7 @@ public sealed class DetailVm(string id) : Bindable
           + (s.RecorderNote is { } pending ? $" ({Sentence(pending)})" : "")
         : s.RecorderFramesOff is { } framesOff && RecordOn ? $"{Sentence(framesOff)}." + (s.RecorderNote is { } waiting ? $" ({Sentence(waiting)})" : "")
         : s.RecordingNotNeeded && !RecordOn ? ScsKiller.RecordingNotNeededNote
-        : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time. If a game has anti-cheat SCSKiller didn't detect, don't turn this on."
+        : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time. If a game has anti-cheat Kindling didn't detect, don't turn this on."
           + (s.RecorderNote is { } note ? $" ({Sentence(note)})" : "")
           + (s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? " " + why : "");   // else the status says it
 
@@ -1030,11 +1030,11 @@ public sealed class DetailVm(string id) : Bindable
     public bool CanStartOffline => s.OfflineRecord && OfflinePending == null && !s.OfflineRunning && !s.Playing && !OfflineStarting;
     public string OfflineButtonText => s.OfflineRunning ? "Offline session running…" : "Record offline without EasyAntiCheat (at your own risk)";
     public string OfflineRiskText => OfflineRisk;
-    public const string OfflineRisk = "Starts the game offline without EasyAntiCheat. SCSKiller removes its files when the game exits (after a crash: "
-        + "at the next logon). If any are left when you play online, you could be banned. Steam must be running; don't uninstall SCSKiller mid-session.";
+    public const string OfflineRisk = "Starts the game offline without EasyAntiCheat. Kindling removes its files when the game exits (after a crash: "
+        + "at the next logon). If any are left when you play online, you could be banned. Steam must be running; don't uninstall Kindling mid-session.";
 
     public bool HasRecording => s.RecordingBytes > 0;
-    public string RecordingSize => $"The recording uses {Format.Bytes(s.RecordingBytes)} (in the game folder and SCSKiller's copy)";
+    public string RecordingSize => $"The recording uses {Format.Bytes(s.RecordingBytes)} (in the game folder and Kindling's copy)";
     public bool RecordingPaused => s.RecordingPaused;
     public string RecordingPausedText => ScsKiller.PausedNote(App.Core.Settings) + ". Raise the limit in Settings, or clear the recording.";
     public bool ClearingRecording { get; set; }
@@ -1269,8 +1269,8 @@ public sealed class SettingsVm : Bindable
     public bool NotConfigurable => !Configurable;
     public string NotConfigurableText => V.Vendor == GpuVendor.Amd
         ? $"The AMD driver's DirectX 12 shader cache is fixed at {Format.Bytes(AmdAppCache.DxcCacheCap)}; it has no size setting. "
-          + "Past it, the driver removes the least recently used games' caches when a game starts, and SCSKiller shows those games as needing a compile again."
-        : $"SCSKiller can't change the cache size of {Fmt.Vendor(V.Vendor)} drivers yet, so it only shows what is used. "
+          + "Past it, the driver removes the least recently used games' caches when a game starts, and Kindling shows those games as needing a compile again."
+        : $"Kindling can't change the cache size of {Fmt.Vendor(V.Vendor)} drivers yet, so it only shows what is used. "
           + "If games get evicted, raise the limit in your GPU vendor's control panel.";
 
     public string CurrentLimit => read == null ? Format.Dash : read.Value.Limit switch
@@ -1414,13 +1414,13 @@ public sealed class SettingsVm : Bindable
     public bool CanClearCache => total is { Apps: > 0 };
     public string DriverCacheText => !storageRead ? Format.Dash : total switch
     {
-        null => $"SCSKiller can't clear the {Fmt.Vendor(V.Vendor)} driver's shader cache: it isn't split per game.",
+        null => $"Kindling can't clear the {Fmt.Vendor(V.Vendor)} driver's shader cache: it isn't split per game.",
         { Apps: 0 } => "The driver shader cache is empty.",
         var (bytes, apps) => $"{Format.Bytes(bytes)} in the caches of {apps:N0} games and apps.",
     };
     /// <summary>The confirmation's text, with what is there now.</summary>
-    public string ClearCacheQuestion => $"This deletes the driver's shader cache of every game and app on this PC ({Format.Bytes(total?.Bytes ?? 0)}), not only the games SCSKiller compiles. "
-        + "Every game compiles its shaders again and stutters until it does: compile your games again in SCSKiller afterwards.\n\n"
+    public string ClearCacheQuestion => $"This deletes the driver's shader cache of every game and app on this PC ({Format.Bytes(total?.Bytes ?? 0)}), not only the games Kindling compiles. "
+        + "Every game compiles its shaders again and stutters until it does: compile your games again in Kindling afterwards.\n\n"
         + "The caches of apps that are running now (a game, a browser, Steam, Discord) are in use and are kept.";
     public IReadOnlyList<CleanupRow> Cleanup => cleanup;
     public bool HasCleanup => cleanup.Count > 0;
@@ -1446,7 +1446,7 @@ public sealed class SettingsVm : Bindable
         set { if (value >= 0 && value != GpuIndex) S = S with { GpuAdapter = value == 0 ? null : Gpus[value - 1].Id }; }
     }
     public string GpuNote => GpuBackends.Chosen([.. Gpus.Select(g => g.Adapter)], S.GpuAdapter) is { } pick && pick.Gpu.AdapterLuid != V.Gpu.AdapterLuid
-        ? $"Restart SCSKiller to compile on {pick.Gpu.Name}." : $"Compiles target {V.Gpu.Name}. Pick the GPU your games run on: the driver cache is per GPU."
+        ? $"Restart Kindling to compile on {pick.Gpu.Name}." : $"Compiles target {V.Gpu.Name}. Pick the GPU your games run on: the driver cache is per GPU."
         + (Gpus.Any(g => g.Id.Contains('#')) ? " Identical cards are listed in Windows' order, the one with the main display first: moving the monitor to the other card swaps them." : "");
 }
 
@@ -1545,7 +1545,7 @@ public sealed class AccountVm : Bindable
     public bool ShowsUpdates => ShowsChannels || OffersBackToStable;
     public string ChannelNote => Updater.Checking ? "Checking for updates…"
         : Updater.Ready is { } v ? AutoInstall.ReadyNote(v, App.Core.Settings)
-        : (App.Core.Settings.InstallUpdatesAutomatically ? "Updates download in the background and install the next time SCSKiller starts or quits, never during a compile or a game."
+        : (App.Core.Settings.InstallUpdatesAutomatically ? "Updates download in the background and install the next time Kindling starts or quits, never during a compile or a game."
             : "Updates download in the background; Restart to update installs them.") + " Leaving an early channel keeps this build until Stable passes it.";
     public string? UpdateProblem => Updater.Problem;
     public bool HasUpdateProblem => Updater.Problem != null;

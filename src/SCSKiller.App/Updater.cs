@@ -141,7 +141,7 @@ public static class Updater
             // the marker first, then Busy: a compile worker holds Busy first, then reads the marker (ScsKiller.Work), so
             // one of the two always sees the other
             Busy.MarkApplying(DataDir, DateTimeOffset.UtcNow);
-            if (Busy.IsHeld()) return Undo("A compile started meanwhile. The update installs when SCSKiller quits after it has finished.");
+            if (Busy.IsHeld()) return Undo("A compile started meanwhile. The update installs when Kindling quits after it has finished.");
             if (Usable(ready) is null) return Undo("The update channel changed meanwhile. Restart to update again once it is ready.");
             if (still?.Invoke() == false) return Undo(null);
             if (OfflineBlocks()) return Undo(OfflineRunning);
@@ -296,14 +296,14 @@ public static class Updater
         catch (HttpRequestException e) when (e.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             Log("The update server asked SCSKiller to wait (429)");
-            Problem = asked ? "The update server asked SCSKiller to wait. It checks again by itself later." : null;
+            Problem = asked ? "The update server asked Kindling to wait. It checks again by itself later." : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
         {
             Log($"Couldn't check for updates: {e.GetType().Name}: {e.Message}");
             // offline or a hiccup: the next check retries; say so only once it has kept failing for a day
-            Problem = ++failures >= 24 ? "Couldn't reach the update server for a while. SCSKiller keeps trying."
-                : asked ? "Couldn't reach the update server. SCSKiller tries again within the hour." : null;
+            Problem = ++failures >= 24 ? "Couldn't reach the update server for a while. Kindling keeps trying."
+                : asked ? "Couldn't reach the update server. Kindling tries again within the hour." : null;
         }
         catch (Exception e)
         {
@@ -368,7 +368,7 @@ public static class Updater
             for (var i = 0; i < 20 && Busy.IsHeld(); i++) await Task.Delay(100);   // our worker lets go just after the item ends
             if (Busy.IsHeld())
             {
-                Problem = "The background rebuild after a driver update is compiling. The update installs when SCSKiller quits after it has finished.";
+                Problem = "The background rebuild after a driver update is compiling. The update installs when Kindling quits after it has finished.";
                 Log($"Restart to update: {Problem}");
                 return false;
             }

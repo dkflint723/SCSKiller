@@ -28,7 +28,7 @@ static class GameFolderDialog
                 Spacing = 4, MaxWidth = 520,
                 Children =
                 {
-                    new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Before it records, SCSKiller checks the whole game folder for anti-cheat. "
+                    new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Before it records, Kindling checks the whole game folder for anti-cheat. "
                         + "Pick the game's own folder, not one that holds other games." },
                     Label("Game"),
                     new TextBlock { Text = game.Name, TextWrapping = TextWrapping.Wrap },

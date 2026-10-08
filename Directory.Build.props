@@ -3,9 +3,10 @@
   <!-- Product metadata on every assembly and exe (SignPath checks product name and version on each signed file). The version comes from the tag: build/publish.ps1 passes -p:Version=<tag
        without v> and turns the +sha suffix off, so every file of a release reports the same version. A plain build is
        0.0.0-dkfork.0+<commit sha> (SourceLink appends the sha): this unofficial fork's label, never an official dev build's
-       0.0.0-internal.0; an unknown label is the internal channel all the same (no update or active check). -->
+       0.0.0-internal.0; an unknown label is the internal channel all the same (no update or active check). Product is this fork's display
+       name (Kindling, the exes' Product name); the authors and copyright stay SCSKiller's. -->
   <PropertyGroup>
-    <Product>SCSKiller</Product>
+    <Product>Kindling</Product>
     <Company>The SCSKiller authors</Company>
     <Authors>The SCSKiller authors</Authors>
     <Copyright>Copyright (C) 2026 The SCSKiller authors</Copyright>
