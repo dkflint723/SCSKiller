@@ -36,10 +36,11 @@ public static class Format
         : $"Compiling {name}";
 
     /// <summary>The games "Add all ready" queues (the Library's button, the notification area's "Compile all ready"): ready or
-    /// stale and within reach, not in the queue, not a game without shader stutter.</summary>
+    /// stale and within reach, not in the queue (a plan check doesn't count: queueing makes it the compile), not a game
+    /// without shader stutter.</summary>
     public static IReadOnlyList<string> ReadyToAdd(IEnumerable<GameState> games, IEnumerable<QueueItem> queue)
     {
-        var queued = queue.Where(q => q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped)).Select(q => q.GameId).ToHashSet();
+        var queued = queue.Where(q => !q.PlanCheck && q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped)).Select(q => q.GameId).ToHashSet();
         return [.. games.Where(s => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached && s.NoStutter == null && !queued.Contains(s.Game.Id))
             .Select(s => s.Game.Id)];
     }

@@ -233,7 +233,9 @@ public class FormatTests
             new(new Game(id, id, Store.Steam, "", ""), null, AntiCheat.None, status, "", null, null, null, null, null, null, null, false, null);
         GameState[] games = [S("ready", GameStatus.Ready), S("stale", GameStatus.Stale), S("warmed", GameStatus.Warmed), S("needs", GameStatus.NeedsRecording),
             S("queued", GameStatus.Ready), S("done", GameStatus.Ready), S("calm", GameStatus.Ready) with { NoStutter = "no shader stutter" },
-            S("far", GameStatus.Ready) with { CompileUnreached = true }];
-        Assert.Equal(["ready", "stale", "done"], Format.ReadyToAdd(games, [new("queued", QueueStage.Waiting, null, null), new("done", QueueStage.Done, null, null)]));
+            S("far", GameStatus.Ready) with { CompileUnreached = true }, S("check", GameStatus.Stale)];
+        // a plan check isn't a compile the user queued: the Library lists the game to add, and adding it makes it the compile
+        Assert.Equal(["ready", "stale", "done", "check"], Format.ReadyToAdd(games, [new("queued", QueueStage.Waiting, null, null), new("done", QueueStage.Done, null, null),
+            new("check", QueueStage.Planning, null, null, PlanCheck: true)]));
     }
 }

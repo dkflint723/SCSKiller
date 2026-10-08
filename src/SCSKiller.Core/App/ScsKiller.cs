@@ -435,6 +435,7 @@ public sealed partial class ScsKiller : IScsKiller
         bool detected = false;
         var games = found.DistinctBy(g => g.Id).OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
         var shown = Shown();
+        Interlocked.Increment(ref _scanning);
         try
         {
             foreach (var g in games)
@@ -452,7 +453,11 @@ public sealed partial class ScsKiller : IScsKiller
                 GameChanged?.Invoke(states[^1]);
             }
         }
-        finally { ScanProgress?.Invoke(null); }
+        finally
+        {
+            Interlocked.Decrement(ref _scanning);
+            ScanProgress?.Invoke(null);
+        }
         lock (_lock) Publish(started, Newest(states, tickets, driverStale));
         var running = Running();   // notes how running games were launched (the real check only opens processes named like a game)
         var learned = LearnKeysOfRunning(running);
@@ -502,26 +507,34 @@ public sealed partial class ScsKiller : IScsKiller
         var was = kept.DistinctBy(s => s.Game.Id).ToDictionary(s => s.Game.Id);
         var gpu = Snapshot();
         var (states, tickets, driverStale) = (new List<GameState>(), new List<long>(), new List<bool>());
-        foreach (var g in found.DistinctBy(g => g.Id).OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase))
+        var games = found.DistinctBy(g => g.Id).OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        Interlocked.Increment(ref _scanning);
+        try
         {
-            tickets.Add(Ticket());
-            if (unresolved.TryGetValue(g.Id, out var why))
+            foreach (var g in games)
             {
-                states.Add(Unread(g, why, out var unread));
-                driverStale.Add(unread);
-            }
-            else if (was.GetValueOrDefault(g.Id) is { } listed && listed.Game == g && !listed.StatusReason.StartsWith(StillReading, StringComparison.Ordinal))
-            {
-                var rec = Store.LoadGame(g.Id);
-                states.Add(listed with { Playing = IsPlaying(g.Id) });
-                driverStale.Add(rec.WarmedAt != null && !CurrentDriver(gpu, rec.WarmedDriverId, rec.WarmedDriverVersion));
-            }
-            else
-            {
-                states.Add(Read(g, false, true, tickets[^1], out _, out var stale));
-                driverStale.Add(stale);
+                tickets.Add(Ticket());
+                if (unresolved.TryGetValue(g.Id, out var why))
+                {
+                    states.Add(Unread(g, why, out var unread));
+                    driverStale.Add(unread);
+                }
+                else if (was.GetValueOrDefault(g.Id) is { } listed && listed.Game == g && !listed.StatusReason.StartsWith(StillReading, StringComparison.Ordinal))
+                {
+                    var rec = Store.LoadGame(g.Id);
+                    states.Add(listed with { Playing = IsPlaying(g.Id) });
+                    driverStale.Add(rec.WarmedAt != null && !CurrentDriver(gpu, rec.WarmedDriverId, rec.WarmedDriverVersion));
+                }
+                else
+                {
+                    states.Add(Read(g, false, true, tickets[^1], out _, out var stale));
+                    driverStale.Add(stale);
+                    // as Scanned does: a read past its budget is stored once its placeholder is listed, not after the other reads
+                    lock (_lock) Publish(started, [.. Newest(states, tickets, driverStale), .. games.Skip(states.Count).Select(x => was.GetValueOrDefault(x.Id)).OfType<GameState>()]);
+                }
             }
         }
+        finally { Interlocked.Decrement(ref _scanning); }
         lock (_lock) Publish(started, Newest(states, tickets, driverStale));
         foreach (var s in states) GameChanged?.Invoke(s);
         StartStutterUpdate(false);
@@ -749,62 +762,109 @@ public sealed partial class ScsKiller : IScsKiller
     public TimeSpan ReadBudget { get; set; } = TimeSpan.FromMinutes(2);
     /// <summary>A scan's step: "Reading Cyberpunk 2077 (3 of 15)"; null once it has read every game.</summary>
     public event Action<string?>? ScanProgress;
+    /// <summary>A scan is reading its games: the list it publishes after each lacks the ones not read yet (none listed before),
+    /// so what keeps a store by game id (the notified and auto-queued ones) waits for the GameChanged after its last game.</summary>
+    public bool Scanning => Volatile.Read(ref _scanning) > 0;
+    int _scanning;
     static readonly TimeSpan SlowRead = TimeSpan.FromSeconds(10);   // a read this long is logged with its time
 
     /// <summary>A scan's <see cref="Evaluate"/> of one game, on a thread of its own (in background mode when <paramref name="low"/>),
     /// waited for at most <see cref="ReadBudget"/>: past it, the game's last state with "still reading its files", and the
-    /// read's state published when it ends, unless a later evaluation is in place.</summary>
+    /// read's state published when it ends, unless a later evaluation is in place. A game whose read from an earlier scan
+    /// still runs (a hung file, an offline drive) isn't read again: it shows still reading at once, and that read (with the
+    /// earlier scan's force) reports under this scan's ticket.</summary>
     GameState Read(Game g, bool force, bool low, long ticket, out bool fresh, out bool driverStale)
     {
+        fresh = false;
+        Reading? reading;
+        lock (_lock)
+            if (_reading.TryGetValue(g.Id, out reading)) reading.Ticket = ticket;   // its end reports under this scan's ticket
+        if (reading != null)   // still reading since an earlier scan: never a second read of the same files
+            return Unread(g, null, out driverStale, StillReadingReason());
         var clock = Stopwatch.StartNew();
         var read = Task.Run(() =>
         {
-            (GameState S, bool Fresh, bool Stale) Run() => (Evaluate(g, force, out var f, out var d), f, d);
+            // EvaluateGame, not Evaluate: _unread is cleared only with the state stored, never while the placeholder is listed
+            (GameState S, bool Fresh, bool Stale, bool Read) Run()
+            {
+                try { return (EvaluateGame(g, force, out var f, out var d, default), f, d, true); }
+                catch (Exception e) when (e is not OperationCanceledException) { return (Unread(g, e, out var d), false, d, false); }
+            }
             return low ? LowIo(Run) : Run();
         });
         if (read.Wait(ReadBudget))
         {
             if (clock.Elapsed > SlowRead) Log?.Report($"{g.Name}: read in {Duration(clock.Elapsed)}");
+            if (read.Result.Read) _unread.TryRemove(g.Id, out _);
             (fresh, driverStale) = (read.Result.Fresh, read.Result.Stale);
             return read.Result.S;
         }
         Log?.Report($"{g.Name}: still reading its files after {Duration(ReadBudget)}: the scan goes on, and the game shows once they're read");
-        read.ContinueWith(t => Late(g, ticket, t.Result.S, t.Result.Stale, clock.Elapsed), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Unwrap();
-        fresh = false;
-        return Unread(g, null, out driverStale, $"{StillReading} after {Duration(ReadBudget)}; it shows here once they're read");
+        reading = new Reading { Ticket = ticket };
+        lock (_lock) _reading[g.Id] = reading;
+        read.ContinueWith(t =>
+        {
+            if (t.IsCompletedSuccessfully) return Late(g, reading, t.Result.S, t.Result.Stale, t.Result.Read, clock.Elapsed);
+            lock (_lock) Forget(g.Id, reading);
+            return Task.CompletedTask;
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+        return Unread(g, null, out driverStale, StillReadingReason());
     }
+
+    string StillReadingReason() => $"{StillReading} after {Duration(ReadBudget)}; it shows here once they're read";
 
     /// <summary>The start of the reason of a game <see cref="Read"/> went on without: a list kept with it reads the game again.</summary>
     public const string StillReading = "still reading its files";
 
+    /// <summary>A read past its scan's budget, by game id: a later scan shows the game still reading and moves the ticket its
+    /// end is stored under to its own, instead of reading the same files again. Under _lock.</summary>
+    sealed class Reading { public long Ticket; }
+    readonly Dictionary<string, Reading> _reading = [];
+
+    void Forget(string id, Reading reading)   // under _lock
+    {
+        if (_reading.GetValueOrDefault(id) == reading) _reading.Remove(id);
+    }
+
     /// <summary>A read that outlasted its scan's <see cref="ReadBudget"/>: stored as <see cref="Refresh(Game, CancellationToken, bool)"/>
-    /// stores one, under the scan's ticket, then the game's recorder is reconciled and the list kept.</summary>
-    async Task Late(Game g, long ticket, GameState s, bool driverStale, TimeSpan took)
+    /// stores one, under the ticket of the last scan that listed it still reading, then what that scan did for the game:
+    /// its plan check, its recorder reconciled, its key lookup, and the list kept (the scan's sharing, community sync and
+    /// migration took the game from its placeholder, which keeps the last state's). <paramref name="read"/> false (its
+    /// files failed): the game stays unread, its recorder as it is.</summary>
+    async Task Late(Game g, Reading reading, GameState s, bool driverStale, bool read, TimeSpan took)
     {
         // the scan publishes what it went on with under the same ticket: wait for that (a minute at most), then replace it
         for (var tries = 0; ; tries++)
         {
             lock (_lock)
             {
+                var ticket = reading.Ticket;
                 var at = _evaluatedAt.GetValueOrDefault(g.Id);
-                if (at > ticket || _removed.Contains(g.Id) || StaleCopy(g)) return;   // an evaluation started later is in place
+                if (at > ticket || _removed.Contains(g.Id) || StaleCopy(g) || tries == 120)   // an evaluation started later is in place, or its scan never listed it (stopped)
+                {
+                    Forget(g.Id, reading);
+                    return;
+                }
                 var i = _games.FindIndex(x => x.Game.Id == g.Id);
                 if (at == ticket && i >= 0)
                 {
                     (_evaluatedAt[g.Id], _driverStale[g.Id]) = (ticket, driverStale);
                     _games[i] = s = WithVerdict(s);
                     _lateRead.Add(ticket);   // the scan's next Newest keeps it over what it went on with
+                    if (read) _unread.TryRemove(g.Id, out _);   // with the state stored: Reconcile never acts on the placeholder
+                    Forget(g.Id, reading);
                     break;
                 }
             }
-            if (tries == 120) return;   // its scan never listed it (stopped)
             await Task.Delay(500);
         }
         Log?.Report($"{g.Name}: read in {Duration(took)}, after its scan went on");
         GameChanged?.Invoke(s);
+        if (CheckPlans && s.Engine != null && s.Status != GameStatus.Unsupported && Store.LoadGame(g.Id) is var r && NeedsPlanCheck(g, r, s.Engine)) CheckPlan(g.Id, OlderPlanner(g, r));
         if (ManageRecorders)
             try { ReconcileRecorders(g.Id); }
             catch (Exception e) { Log?.Report($"{g.Name}: reconciling its recorder failed: {e.Message}"); }
+        StartKeyLookups([s]);
         KeepList();
     }
 

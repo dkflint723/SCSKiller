@@ -24,15 +24,17 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   signature. On NVIDIA it compiles all of them without a recording (about 57,000 pipelines); on AMD it needs a
   recording, since AMD's cache also depends on pipeline state the list doesn't give.
 - **The notification area's menu** shows what SCSKiller is doing ("Compiling Cyberpunk 2077, 45%"), and has "Compile
-  all ready", which compiles what the Library's "Add all ready" would add without opening the window, and "Open queue"
-  (upstream issue 45, the first step).
+  all ready", which compiles what the Library's "Add all ready" would add without opening the window (a compile you
+  stopped stays stopped; not while a scan or Quit runs), and "Open queue" (upstream issue 45, the first step).
 - **"Compile new shaders when the PC is idle"** (Settings, off by default): a compiled game that gains enough new
   pipelines (from its recording, the community's or an SCSKiller update) goes into the queue to compile in the
   background once you're away, instead of a notification. A compile that adds more than 16 GB is still asked about,
   and one that failed isn't queued again until as many more are new (upstream issue 98).
 - **Scanning shows games as it goes**: each game is listed as soon as it's read, instead of after the slowest one, and
   the Library says which game is being read ("Reading Cyberpunk 2077 (3 of 15)"). A game whose files take more than
-  2 minutes to read no longer holds up the rest: it shows "still reading its files" and updates once they're read.
+  2 minutes to read no longer holds up the rest: it shows "still reading its files", its recorder left as it is, and
+  updates once they're read, with the plan check and recorder update the scan would have done; a later scan doesn't
+  read it again meanwhile.
   The log notes every game that took over 10 seconds (upstream issue 51; choosing which folders are scanned isn't
   in this change).
 

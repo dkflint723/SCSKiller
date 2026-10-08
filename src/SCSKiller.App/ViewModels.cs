@@ -490,7 +490,7 @@ public sealed class LibraryVm : Bindable
         ApplyFilter();
 
         int ready = list.Count(g => g.Status is GameStatus.Ready or GameStatus.Stale);
-        ReadyCount = Games.Count(r => r.IsAdd && !r.Queued && !r.IsNoStutter);
+        ReadyCount = Format.ReadyToAdd(list, core.Queue).Count;   // the notification area's "Compile all ready" counts the same
         RecommendedCount = RecommendedToAdd().Count;
         WaitingCount = queue.Count(q => q.Stage == QueueStage.Waiting);
         var stores = Fmt.Stores.Where(n => n != Fmt.AddedByYou && Games.Any(r => r.StoreName == n)).ToList();
@@ -564,7 +564,7 @@ public sealed class LibraryVm : Bindable
 
     public void AddAllReady()
     {
-        foreach (var g in Games.Where(r => r.IsAdd && !r.Queued && !r.IsNoStutter).ToList()) App.Core.Enqueue(g.Id);
+        foreach (var id in Format.ReadyToAdd(App.Core.Games, App.Core.Queue)) App.Core.Enqueue(id);
         Refresh();
     }
 }

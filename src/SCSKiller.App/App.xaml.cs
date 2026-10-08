@@ -145,7 +145,8 @@ public partial class App : Application
             if (activation.Kind == ExtendedActivationKind.Launch) _ = Updater.ApplyAtStartAsync(args[1..]);
             if (Core is ScsKiller k && !driverUpdated)
             {
-                var check = new Coalesced(Main.DispatcherQueue, () => { QueueNewShaders(k.Store); NotifyNewShaders(k.Store); });   // a game queued isn't told about
+                // a game queued isn't told about; a scan's list before its last game lacks the games not read yet, which the stores would forget
+                var check = new Coalesced(Main.DispatcherQueue, () => { if (k.Scanning) return; QueueNewShaders(k.Store); NotifyNewShaders(k.Store); });
                 Core.GameChanged += _ => check.Request();
             }
             if (Updater.HasResume)   // restarted by "Restart to update": the queue goes on once the games are known
@@ -326,7 +327,7 @@ public partial class App : Application
         {
             Open = ShowWindow,
             Status = StatusText,
-            ReadyCount = () => Format.ReadyToAdd(Core.Games, Core.Queue).Count,
+            ReadyCount = () => quitting || Core is ScsKiller { Scanning: true } ? 0 : Format.ReadyToAdd(Core.Games, Core.Queue).Count,   // 0: shown disabled
             CompileAllReady = CompileAllReady,
             OpenQueue = () => { Main.Navigate(typeof(QueuePage)); ShowWindow(); },
             PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? "Resume" : "Pause compiling",
@@ -365,11 +366,13 @@ public partial class App : Application
         return Format.TrayStatus(q, q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quitting);
     }
 
-    /// <summary>The notification area's "Compile all ready": what the Library's "Add all ready" queues, started without the window.</summary>
+    /// <summary>The notification area's "Compile all ready": what the Library's "Add all ready" queues, started without the
+    /// window as each game's Compile starts it: a stopped compile stays stopped, "when idle" items keep waiting. Not while
+    /// quitting (it waits for the compile to end) nor while a scan reads its games (the Library's button waits too).</summary>
     static void CompileAllReady()
     {
-        foreach (var id in Format.ReadyToAdd(Core.Games, Core.Queue)) Core.Enqueue(id);
-        Core.StartQueue();   // "when idle" items keep waiting
+        if (quitting || Core is ScsKiller { Scanning: true }) return;
+        foreach (var id in Format.ReadyToAdd(Core.Games, Core.Queue)) Core.Compile(id);
     }
 
     static QueueItem? Running() => Core.Queue.FirstOrDefault(Format.Running);
@@ -448,7 +451,7 @@ public partial class App : Application
     /// "when idle", with no notification (one queued isn't told about).</summary>
     static void QueueNewShaders(AppStore store)
     {
-        if (!Core.Settings.CompileNewShadersWhenIdle) return;
+        if (!Core.Settings.CompileNewShadersWhenIdle || quitting) return;   // quitting waits for the compile to end
         autoQueued ??= store.LoadAutoQueued();
         var (due, queued) = NewShaders.WhenIdle(Core.Games, Core.Queue, autoQueued, Core.DriverStaleGames().Select(s => s.Game.Id).ToHashSet());
         if (due.Count == 0 && queued.Count == autoQueued.Count && queued.All(e => autoQueued.GetValueOrDefault(e.Key) == e.Value)) return;

@@ -65,7 +65,12 @@ session), plans which pipelines to create, and replays them in a separate proces
    "Reading Cyberpunk 2077 (3 of 15)"); a read over 10 s is logged with its time. A game whose read takes longer than
    `ReadBudget` (2 minutes) is listed as not supported ("still reading its files") with its recorder left as it is,
    and the scan goes on; the read continues in the background and its state replaces that one when it ends, unless a
-   later evaluation is in place.
+   later evaluation is in place. It is stored together with clearing the game's unread mark, so `Reconcile` never acts
+   on the placeholder, and then gets what the scan did for the game: its plan check, its recorder, its key lookup. A
+   scan (or a kept list's re-read, which lists each read as it ends too) that finds a read still running shows the game
+   still reading at once and has that read report under its own ticket, never reading the same files twice. While a
+   scan reads its games (`Scanning`) its list lacks the ones not read yet: the app's new-shaders notification and "when
+   idle" queueing wait for the whole list, and `NewShaders` keeps the entries of a game listed unread.
 2. **Index.** An `IEngineReader` per engine family detects the engine and lists every shader the build ships (stage,
    SHA-1, signatures, root signature if embedded), grouped in shader maps that say which shaders can be drawn together
    (an exact pipeline's map may name its root signature).

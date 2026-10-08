@@ -221,4 +221,20 @@ public class NewShadersTests
         Assert.Equal(["new"], WhenIdle(queued, [S("new", recorded: 250)]).Queue);
         Assert.Equal(["new"], WhenIdle(queued, [S("new", recorded: 150, warmedAt: At.AddDays(1))]).Queue);   // compiled again since
     }
+
+    /// <summary>A game listed unread (its read failed or outlasted its scan's budget: Unsupported, its last state's warm kept)
+    /// keeps what it was told and queued for: once read, the same count isn't told or queued again.</summary>
+    [Fact]
+    public void A_game_listed_unread_keeps_its_notified_and_queued_entries()
+    {
+        var (_, notified) = Due([], S("a", recorded: 300));
+        var (_, queued) = WhenIdle([], [S("a", recorded: 300)]);
+        var unread = S("a", recorded: 300, status: GameStatus.Unsupported, reason: ScsKiller.StillReading + " after 2 min");
+        (_, notified) = DueAt(Now.AddDays(2), notified, unread);   // past the day: an Unsupported game's entry was dropped
+        (_, queued) = WhenIdle(queued, [unread]);
+        Assert.Equal(["a"], notified.Keys);
+        Assert.Equal(["a"], queued.Keys);
+        Assert.Empty(DueAt(Now.AddDays(2), notified, S("a", recorded: 300)).Due);
+        Assert.Empty(WhenIdle(queued, [S("a", recorded: 300)]).Queue);
+    }
 }
