@@ -3121,7 +3121,7 @@ public sealed partial class ScsKiller : IScsKiller
         SkipPackageD3D12 = "a d3d12.dll in the game's package folder loads instead of the recorder",
         SkipShaderMod = "an HDR mod changes every pipeline", SkipStreamline = "DLSS on NVIDIA loads DirectX 12 before the recorder can",
         SkipManual = "game folder not confirmed",
-        SkipCrashed = "the game closed early twice with it";   // RecorderLevel.Off (RecorderHealth)
+        SkipCrashed = "the game closed early with it";   // RecorderLevel.Off (RecorderHealth): twice, or once from pipelines only (StartLevel)
 
     /// <summary>Why a game whose ReShade add-on adds to every root signature, in a layer a copy can't reproduce
     /// (<see cref="ReShadeInstall.Blocks"/>), isn't compiled: the case and its fix, one line.</summary>
@@ -3253,6 +3253,11 @@ public sealed partial class ScsKiller : IScsKiller
     /// game's own switch still records it.</summary>
     public static bool RecorderEffective(RecorderOverride o, bool recordAllGames, string? skip, bool notNeeded = false) =>
         skip == null && (o == RecorderOverride.On || (o == RecorderOverride.Default && recordAllGames && !notNeeded));
+
+    /// <summary>What a game's "Use default" asks for: "record all", which leaves out a game without shader stutter and one
+    /// <see cref="GameState.RecordingNotNeeded"/>, as reconciling the recorders does.</summary>
+    public static bool RecordsByDefault(bool recordAllGames, GameState s) =>
+        RecorderEffective(RecorderOverride.Default, recordAllGames && s.NoStutter == null, null, s.RecordingNotNeeded);
 
     /// <summary>The game's files name every pipeline with its root signature (<see cref="EngineInfo.ShipsRootSignatures"/>)
     /// and this GPU's cache ignores the state they don't give (<see cref="VendorCaps.StateIndependentCache"/>): the plan

@@ -986,7 +986,8 @@ public sealed class DetailVm(string id) : Bindable
     public bool CanToggleRecord => ShowOffline ? OfflinePending == null && !s.OfflineRunning
         : RecordPending == null && AlongsidePending == null && NoAntiCheat && s.RecorderSkip == null;
     public bool ShowUseDefault => RecordPending == null && s.RecorderOverride != RecorderOverride.Default && s.RecorderSkip == null;
-    public string UseDefaultText => $"Use default ({(App.Core.Settings.RecordAllGames && s.NoStutter == null && !s.RecordingNotNeeded ? "on" : "off")})";
+    public bool DefaultOn => ScsKiller.RecordsByDefault(App.Core.Settings.RecordAllGames, s);   // also the switch while "Use default" runs
+    public string UseDefaultText => $"Use default ({(DefaultOn ? "on" : "off")})";
     public string RecordNote => ShowOffline
         ? $"{Fmt.AntiCheatName(s.AntiCheat)} blocks the recorder, but you can enable it at your own risk with an offline session."
         : !NoAntiCheat

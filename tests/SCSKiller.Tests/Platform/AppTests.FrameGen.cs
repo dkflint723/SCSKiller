@@ -163,6 +163,7 @@ public partial class AppTests
         Play(running, now, poll, _exeDir, exe, 6);   // closed early at its start level: out
         s = k.Games.Single();
         Assert.Equal((RecorderLevel.Off, ScsKiller.SkipCrashed, false, true), (s.RecorderLevel, s.RecorderSkip, s.RecorderInstalled, s.RecorderSteppedDown));
+        Assert.Equal("the game closed early with it", s.RecorderSkip);   // once here: Settings' count and the CLI don't say twice
         Assert.Equal("Fake Game closed shortly after starting (6 s): the recorder was taken out for this game", s.RecorderLevelReason);
         Assert.False(File.Exists(dll));
 
@@ -211,6 +212,9 @@ public partial class AppTests
         Assert.False(ScsKiller.RecordingNotNeeded(Unreal, new PlanCheck(Readiness.Ready, Planner.NoRecording), new FakeVendor(Gpu).Caps));
         Assert.True(ScsKiller.RecorderEffective(RecorderOverride.On, true, null, notNeeded: true));
         Assert.False(ScsKiller.RecorderEffective(RecorderOverride.Default, true, null, notNeeded: true));
+        // "Use default" on its page: off here, and so the switch while it runs (it showed on until the removal finished)
+        Assert.Equal((false, false), (ScsKiller.RecordsByDefault(true, s), ScsKiller.RecordsByDefault(true, s with { NoStutter = "none", RecordingNotNeeded = false })));
+        Assert.Equal((true, false), (ScsKiller.RecordsByDefault(true, s with { RecordingNotNeeded = false }), ScsKiller.RecordsByDefault(false, s with { RecordingNotNeeded = false })));
     }
 
     /// <summary>A game whose index names each pipeline's root signature (FINAL FANTASY XVI's list), on a state-independent

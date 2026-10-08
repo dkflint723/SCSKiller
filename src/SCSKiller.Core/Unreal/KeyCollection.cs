@@ -209,11 +209,15 @@ public sealed class KeyCollection
         finally { gate.Release(); }
     }
 
+    /// <summary>Why a saved page of <paramref name="length"/> bytes or chars isn't read; null = it is. The app checks the file's
+    /// size with it before reading, so a large one is reported as that, not as a page without keys.</summary>
+    public static string? TooLarge(long length) => length > MaxBytes ? $"the saved page is larger than {MaxBytes >> 20} MB" : null;
+
     /// <summary>A copy of the list page the user saved from a browser: parsed like a download and cached as fetched now from
     /// <paramref name="url"/>.</summary>
     public (IReadOnlyList<KeyEntry>? List, string? Problem) Import(string url, string html)
     {
-        if (html.Length > MaxBytes) return (null, $"the saved page is larger than {MaxBytes >> 20} MB");
+        if (TooLarge(html.Length) is { } large) return (null, large);
         var list = Parse(html);
         if (list.Count == 0) return (null, "the saved page has no keys in it (not the key list?)");
         gate.Wait();

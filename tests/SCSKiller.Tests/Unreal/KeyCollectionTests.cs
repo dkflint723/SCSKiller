@@ -233,6 +233,17 @@ public class KeyCollectionTests : IDisposable
         Assert.Equal(1, server.Requests);   // the saved copy is used for a day
     }
 
+    /// <summary>Load saved page checks a file's size with the same rule as Import before reading it: one too large is said to
+    /// be that, not a page without keys.</summary>
+    [Fact]
+    public void A_saved_page_too_large_is_said_to_be_that()
+    {
+        Assert.Null(KeyCollection.TooLarge(KeyCollection.MaxBytes));
+        Assert.Equal("the saved page is larger than 4 MB", KeyCollection.TooLarge(KeyCollection.MaxBytes + 1L));
+        var keys = new KeyCollection(_dir, new Server(() => Html(Page)), _clock);
+        Assert.Equal(KeyCollection.TooLarge(KeyCollection.MaxBytes + 1L), keys.Import(Url, new string('x', KeyCollection.MaxBytes + 1)).Problem);
+    }
+
     [Fact]
     public void A_key_file_of_lines_takes_every_separator_bare_keys_and_skips_junk()
     {

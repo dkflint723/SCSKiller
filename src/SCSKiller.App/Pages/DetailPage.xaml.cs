@@ -14,11 +14,11 @@ public sealed partial class DetailPage : Page
     public DetailPage()
     {
         InitializeComponent();
-        var refresh = new Coalesced(DispatcherQueue, () => Vm.Refresh());
+        var refresh = new Coalesced(DispatcherQueue, () => Vm?.Refresh());   // null: the game was gone (OnNavigatedTo)
         void OnChanged(GameState s) { if (s.Game.Id == Vm?.Row.Id) refresh.Request(); }   // a scan raises one per game
         void OnQueue(QueueItem q) { if (q.Stage != QueueStage.Warming) refresh.Request(); }   // "In queue"
         // Refresh too: a change raised while the page wasn't loaded (e.g. the game exited) would show only at the next one
-        Loaded += (_, _) => { App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request; App.Account.Changed += refresh.Request; Vm.Refresh(); };
+        Loaded += (_, _) => { App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request; App.Account.Changed += refresh.Request; Vm?.Refresh(); };
         Unloaded += (_, _) => { App.Core.GameChanged -= OnChanged; App.Core.QueueChanged -= OnQueue; Icons.Failed -= refresh.Request; App.Account.Changed -= refresh.Request; };
     }
 
@@ -90,7 +90,7 @@ public sealed partial class DetailPage : Page
     void DrawFrames()
     {
         double w = FrameGraph.ActualWidth, h = FrameGraph.ActualHeight;
-        if (Vm.F is not { Peaks.Count: > 0 } f || w < 10 || h < 10 || (f == _drawn && w == _drawnWidth)) return;
+        if (Vm?.F is not { Peaks.Count: > 0 } f || w < 10 || h < 10 || (f == _drawn && w == _drawnWidth)) return;
         (_drawn, _drawnWidth) = (f, w);
         double total = Math.Max(1, f.Duration.TotalMilliseconds);
         int cols = (int)w;
@@ -241,7 +241,7 @@ public sealed partial class DetailPage : Page
 
     void OnTryRecorderAgain(object _, RoutedEventArgs __) => Set((vm, p) => vm.TryAgainPending = p, true, id => App.Core.ResetRecorderHealth(id));
 
-    void SetRecord(bool? on) => Set((vm, p) => vm.RecordPending = p, on ?? App.Core.Settings.RecordAllGames,
+    void SetRecord(bool? on) => Set((vm, p) => vm.RecordPending = p, on ?? Vm.DefaultOn,
         id => App.Core.SetRecorderOverride(id, on switch { true => RecorderOverride.On, false => RecorderOverride.Off, null => RecorderOverride.Default }));
 
     void OnAlongsideToggled(object _, RoutedEventArgs __) { if (AlongsideSwitch.IsOn != Vm.AlongsideOn) SetAlongside(AlongsideSwitch.IsOn); }
