@@ -53,7 +53,9 @@ session), plans which pipelines to create, and replays them in a separate proces
    anti-cheat verdict while its exe, store build and SCSKiller build are the same (`scan.json`; another SCSKiller
    build's is shown at once and the game detected again in the background; a verdict another engine reader gave only
    because one before it threw is logged, and not kept when that was a file in use (a sharing or lock violation), as in
-   a game update; access denied or a missing file is kept: `EngineReaders.Detect`'s out skip, per call); the DLLs beside the exe are known by their
+   a game update; access denied or a missing file is kept: `EngineReaders.Detect`'s out skip, per call; one of an engine
+   family only the fork reads, `ScsKiller.ForkOnlyFamilies`, has a field more in its key, so upstream's builds, which have
+   no reader for it, detect the game again first); the DLLs beside the exe are known by their
    size, write time, NTFS change time and file id (`middleware.json`, `reshade.json`; a DLL's hash also by its first
    and last 4 KB), which a refresh the user asks for doesn't trust. An install is walked for anti-cheat in full when the
    entries of its root or exe folder changed since its last clean walk (the recorder's own files and data files aside),
@@ -100,7 +102,7 @@ Everything vendor- or engine-specific sits behind one interface: a new GPU vendo
 | `src/SCSKiller.Core/FromSoft/` | `IEngineReader` for FromSoftware games |
 | `src/SCSKiller.Core/ReEngine/` | `IEngineReader` for Capcom's RE Engine |
 | `src/SCSKiller.Core/RedEngine/` | `IEngineReader` for REDengine 3 (The Witcher 3, DX12) |
-| `src/SCSKiller.Core/Northlight/` | `IEngineReader` for Remedy's Northlight (Control, DX12) |
+| `src/SCSKiller.Core/Northlight/` | `IEngineReader`s for Remedy's Northlight (Control, DX12; CONTROL Resonant, the fork's own) |
 | `src/SCSKiller.Core/Dagor/` | `IEngineReader` for Gaijin's Dagor Engine (War Thunder) |
 | `src/SCSKiller.Core/SquareEnix/` | `IEngineReader` for FINAL FANTASY XVI's pipeline list (`.pspc`) |
 | `src/SCSKiller.Core/Carved/` | `IEngineReader` for any game that ships raw DXBC/DXIL containers in its files |
@@ -452,6 +454,22 @@ open game files read-only and never launch or attach to the game.
   set in `pc_dx11` (SM 5.0, the same layout) is indexed apart, one map per file on its own platform: D3D11 items only,
   never a D3D12 pipeline. The game runs on either API and its files don't say which, so it is "D3D11 or D3D12"
   (Control: 1,435 DX11 shaders).
+- **Northlight2** (`Northlight/Northlight2Reader.cs`, the fork's own): CONTROL Resonant's effect files in
+  `data\shaders\build\pc_dx12` (`.binrfx`, magic `RFX `, layout `O`), raw and uncompressed: DXIL vertex, pixel, compute
+  and mesh shaders (up to SM 6.9) and ray tracing libraries. A file holds five shader groups (VS, PS, CS, MS, libraries),
+  each a count and its shaders (entry point, size, container, reflection, an 8-byte id), then its techniques, whose
+  entries name one shader per group by id. The reflection isn't parsed: each shader's id is where the next shader's
+  header, or the technique table after the last one, puts it, and entries are found by their ids; a file that doesn't
+  follow this exactly isn't read. Each entry's VS+PS, MS+PS and CS is an exact shader map (a VS that doesn't feed its PS
+  is left out), the libraries one pool. CONTROL Resonant: 141 files, 1,227 shaders, 930 distinct pipelines, 227
+  libraries, every shader in some entry. Its material shaders aren't in these files (compressed in its `.rmdblob`
+  packs), so a recording still adds pipelines: of the game's own PSOs in a recording on the PC this was measured on,
+  1,082 of 1,389 have all their shaders in these files, and each of those 1,082 is one of the reader's pipelines.
+  Alan Wake 2's files (layout `:`) differ and aren't detected. The family is the fork's own (`ScsKiller.ForkOnlyFamilies`):
+  upstream's builds read the game with the carver, so this index's content hash and engine name aren't the ones the
+  community database knows the game by. Its recording is never shared, a compile's community lookup goes by the store
+  build's alias instead of the content hash (upstream's recording of that build), and its `scan.json` entry is one
+  upstream's builds detect again (see Scan).
 - **Dagor** (`Dagor/`): War Thunder's shader dumps, `compiledShaders\game.ps50.shdump.bin` (DirectX 11) and
   `gameDX12.ps50.shdump.bin` (`game.compatibility*` in the game's compatibility mode), dump version 11.3 only. The body
   is zstd, each entry a zstd frame of the dump's own dictionary; a vertex entry also holds the HS, DS and GS it is drawn
@@ -515,6 +533,12 @@ it confirms get one (`RootSig.Red3Validated`); any other is left out.
 Northlight builds its root signatures in code (version 1.0, read from Control's renderer DLL), one for graphics and one
 for compute (`RootSig.Rule.Northlight`). Both end in a bounded table of 244,000 SRVs in space 1 that the shaders declare
 unbounded; the runtime accepts an unbounded shader range in a bounded one that holds its first register.
+
+CONTROL Resonant's Northlight builds one root signature per kind of pipeline (`RootSig.Rule.Northlight2`): VS+PS, MS+PS
+and compute, version 1.0, tables at explicit offsets, no static samplers. They were read from the root signatures its
+recording holds; serialized, the rule's are byte for byte those. 1,382 of that recording's 1,389 PSOs use one of the
+three; the other 7 are compute shaders with static samplers that no effect file holds. With a recording the rule
+rebuilds its root signatures exactly; without one it counts as untested, like Control's.
 
 Dagor builds each pipeline's root signature from its stages' `dxil::ShaderHeader`s (`RootSig.Rule.Dagor`,
 `DagorRootSig`, ported from DagorEngine's `decode_graphics_root_signature` / `decode_compute_root_signature`): version
@@ -581,7 +605,8 @@ MAX_SAMPLERS' 32-sampler table) and applies only when the libraries have 5.1's b
 bindless heap access, no shared uniform buffers in space 4. UE 5.5/5.6's bindless ray tracing has no rule without a recording.
 Northlight gets its own global and local root signatures (`RtCollections.NorthlightLocal`),
 each library's payload and attributes, and a guessed recursion depth of 1; Control creates whole ray tracing pipelines,
-not collections, so whether NVIDIA reuses these collections for them is unverified.
+not collections, so whether NVIDIA reuses these collections for them is unverified. CONTROL Resonant (Northlight2) has
+no collection rule: its libraries are compiled only from a recording's state objects.
 
 Elden Ring compiles each material's closest hit and any hit pair (one per ray payload, its `_[RT].shaderbdle` bundle)
 into a collection, then links its pipelines from the loaded materials' collections plus `gxraytracing`'s libraries.

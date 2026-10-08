@@ -150,6 +150,16 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **Special K** as `dxgi.dll` is no longer taken for ReShade because it looks ReShade up: a compile through it never
   finished ("scskiller_warm exited without a done event"). A DLL counts as ReShade by its contents only when its
   version resource names no other product (upstream issue 78).
+- **CONTROL Resonant**: SCSKiller reads its effect files and plans about 4 in 5 of its pipelines without a recording
+  (upstream issue 5). It reads the game's effect files (`data\shaders\build\pc_dx12\*.binrfx`), which name each of
+  their about 930 pipelines, and builds the three root signatures the game creates. Measured against one recording of
+  the game on one PC: every recorded pipeline whose shaders are in those files is planned, with its root signature, and
+  those are about 4 in 5 of the pipelines it recorded. Its material shaders are packed where SCSKiller can't read them
+  and its ray tracing needs a recording too, so the game stays "not tested" and the game page still says a recording
+  improves it. This reader is the fork's own: the game shows as engine "Northlight2", not "Carved", so its recordings
+  aren't shared (the community database knows the game by what official builds read) and it downloads the community's
+  recording for its store build. Official builds sharing the data folder detect the game again instead of using this
+  build's scan of it. Alan Wake 2's effect files are laid out differently and aren't read.
 
 ## [1.2.4] - 2026-10-08
 
