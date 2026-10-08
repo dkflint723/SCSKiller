@@ -367,8 +367,9 @@ open game files read-only and never launch or attach to the game.
   shaders byte for byte). Nightreign is taken to do the same, unverified.
 - **RE Engine** (`ReEngine/`): KPKA packages with encrypted entry tables. The table key needs the game's public RSA
   modulus, which isn't on disk in the clear; it's downloaded from a pinned commit of ree-pak-rs, or given by hand in
-  `pak.modulus`. Shaders are in master material files, found by their magic since file names are hashes. RE Engine
-  builds root signatures at run time, so D3D12 games need a recording.
+  `pak.modulus`. An entry remap table (feature 0x40, Dragon's Dogma 2) is skipped unread, as ree-pak-rs's open pull
+  request 16 does; its meaning isn't known. Shaders are in master material files, found by their magic since file
+  names are hashes. RE Engine builds root signatures at run time, so D3D12 games need a recording.
 - **REDengine 3** (`RedEngine/`): The Witcher 3's DX12 caches in `content\content0`. `shaderdx12_0.cache` holds the
   material shaders (zlib) and the techniques, each naming one pipeline's shaders by key: every distinct technique is an
   exact shader map (438,220 techniques, 60,674 distinct pipelines). `staticshaderDx12_0.cache` holds the engine's own

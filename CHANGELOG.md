@@ -62,6 +62,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   or an import that failed only because of this are tried again once.
 - An encrypted Unreal game whose exe isn't a program SCSKiller can read no longer falls back to the generic shader
   carver ("Carved DXIL"): the key search skips the exe and asks for the key.
+- **Dragon's Dogma 2** is read instead of "unknown package features 0x68" (upstream issue 56): its packages have an
+  entry remap table, which SCSKiller now skips, as a proposed change to ree-pak-rs (a community RE Engine tool) reads
+  it. Like other RE Engine games it needs a recording. Not checked on the game itself.
 - A game taken for another engine because SCSKiller's reader for its own engine failed on its files (FINAL FANTASY VII
   Rebirth showed as "Carved DXIL" on 1.2.3, upstream issue 63) is now named in the log with the error. When the files
   were in use, as during a game update, the next scan reads the game again instead of keeping that result.

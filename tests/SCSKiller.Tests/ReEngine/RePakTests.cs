@@ -19,14 +19,17 @@ public class RePakTests
     public sealed record E(ulong Hash, byte[] Data, int Compression = 0, bool Chunked = false, bool SizeInPacked = false);
 
     /// <summary>A KPKA v4.2 package. Chunked entries go to a chunk table of <paramref name="block"/>-byte chunks (every
-    /// other one stored, the rest zstd; the last padded to the block size, as the format requires).</summary>
-    public static byte[] Pak(ushort features, int block, params E[] entries)
+    /// other one stored, the rest zstd; the last padded to the block size, as the format requires). An entry remap table
+    /// holds <paramref name="remaps"/> records of junk.</summary>
+    public static byte[] Pak(ushort features, int block, params E[] entries) => Pak(features, block, 3, entries);
+
+    public static byte[] Pak(ushort features, int block, int remaps, params E[] entries)
     {
         var data = new MemoryStream();
         var chunks = new List<(long Start, int Packed)>();
         var table = new byte[48 * entries.Length];
         long head = 16 + table.Length + ((features & RePak.ExtraU32) != 0 ? 4 : 0) + ((features & RePak.ExtraData) != 0 ? 9 : 0)
-            + ((features & RePak.EncryptedTable) != 0 ? 128 : 0);
+            + ((features & RePak.EncryptedTable) != 0 ? 128 : 0) + ((features & RePak.RemapTable) != 0 ? 8 + 16 * remaps : 0);
         var chunked = entries.Where(e => e.Chunked).Sum(e => (e.Data.Length + block - 1) / block);
         if ((features & RePak.ChunkTable) != 0) head += 8 + 8 * chunked;
         for (var i = 0; i < entries.Length; i++)
@@ -78,6 +81,11 @@ public class RePakTests
         o.Write(table);
         if ((features & RePak.ExtraU32) != 0) o.Write(BitConverter.GetBytes(0xAABBCCDD));
         if ((features & RePak.ExtraData) != 0) o.Write(new byte[9]);
+        if ((features & RePak.RemapTable) != 0)
+        {
+            o.Write(BitConverter.GetBytes((ulong)remaps));
+            for (var i = 0; i < remaps; i++) o.Write(Enumerable.Repeat((byte)(0xA0 + i), 16).ToArray());
+        }
         if ((features & RePak.EncryptedTable) != 0) o.Write(raw);
         if ((features & RePak.ChunkTable) != 0)
         {
@@ -109,10 +117,18 @@ public class RePakTests
 
     static string Temp(string name) => Planning.Ff7.TempDir(name);
 
+    static string WriteTo(string path, byte[] b)
+    {
+        File.WriteAllBytes(path, b);
+        return path;
+    }
+
     [Theory]
     [InlineData((ushort)0)]
     [InlineData((ushort)(RePak.EncryptedTable | RePak.ChunkTable))]  // PRAGMATA's re_chunk_000.pak
     [InlineData((ushort)(RePak.ExtraU32 | RePak.ExtraData | RePak.EncryptedTable | RePak.ChunkTable))]
+    [InlineData((ushort)(RePak.RemapTable | RePak.EncryptedTable | RePak.ChunkTable))]  // Dragon's Dogma 2's 0x68 (upstream issue 56)
+    [InlineData((ushort)(RePak.ExtraU32 | RePak.ExtraData | RePak.RemapTable | RePak.EncryptedTable | RePak.ChunkTable))]
     public void ReadsEveryEntryKind(ushort features)
     {
         var chunk = (features & RePak.ChunkTable) != 0;
@@ -146,9 +162,20 @@ public class RePakTests
         var dir = Temp("repak-bad");
         var path = Path.Combine(dir, "a.pak");
         var b = Pak(0, 64, new E(1, Bytes(10, 3)));
-        b[6] = 0x40; // an unknown feature bit
+        b[6] = 0x80; // an unknown feature bit
         File.WriteAllBytes(path, b);
         Assert.Contains("features", Assert.Throws<InvalidDataException>(() => RePak.Open(path)).Message);
+
+        foreach (var remaps in new[] { 0, 2 })   // a remap table cut short, or counting past the end of the file: refused
+        {
+            b = Pak(RePak.RemapTable, 64, remaps, new E(1, Bytes(10, 3)));
+            File.WriteAllBytes(path, b[..(16 + 48 + 8 + 16 * remaps - 1)]);
+            Assert.Contains("remap table", Assert.Throws<InvalidDataException>(() => RePak.Open(path)).Message);
+            BitConverter.TryWriteBytes(b.AsSpan(16 + 48), (ulong)b.Length / 16 + 1);
+            File.WriteAllBytes(path, b);
+            Assert.Contains("remap table", Assert.Throws<InvalidDataException>(() => RePak.Open(path)).Message);
+        }
+        using (var empty = RePak.Open(WriteTo(path, Pak(RePak.RemapTable, 64, 0, new E(1, Bytes(10, 3)))))) Assert.Equal(Bytes(10, 3), empty.Read(empty.Entries[0]));
 
         b = Pak(0, 64, new E(1, Bytes(10, 3)));
         b[16 + 32 + 2] = 1; // attributes bits 16-23: resource encryption
