@@ -706,6 +706,70 @@ public class UnrealReaderTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, true); }   // no GC needed: the key check closes the files itself when CUE4Parse throws
     }
 
+    /// <summary>Upstream issue 83: Dead by Daylight XORs its pak index with bytes from the pak's footer on top of AES. The key
+    /// check gives its readers the game's own decryption, as a CUE4Parse provider does, so its right key opens it; a wrong
+    /// one still doesn't.</summary>
+    [Fact]
+    public void ADeadByDaylightKeyOpensItsXoredIndex()
+    {
+        var install = Ff7.TempDir("DeadByDaylight");
+        var paks = Directory.CreateDirectory(Path.Combine(install, "DeadByDaylight", "Content", "Paks")).FullName;
+        DbdPak(Path.Combine(paks, "pakchunk0-Windows.pak"), KeyBytes(1), [.. Enumerable.Range(100, 28).Select(i => (byte)i)]);
+        var exe = Path.Combine(Directory.CreateDirectory(Path.Combine(install, "DeadByDaylight", "Binaries", "Win64")).FullName, "DeadByDaylight-Win64-Shipping.exe");
+        File.WriteAllText(exe, "++UE5+Release-5.7-CL-0", System.Text.Encoding.Unicode);
+        var game = new Game("test:dbd", "Dead by Daylight", Store.Other, install, exe);
+        var e = reader.Detect(game, out var why)!;   // an exe that isn't a PE file isn't scanned for the key, and Detect doesn't throw
+        Assert.Equal(("GAME_DeadByDaylight", true), (e.Fork, e.Encrypted));
+        Assert.Contains("isn't a program SCSKiller can read", why);
+        Assert.False(reader.SetKey(game, Key(33)));
+        Assert.True(reader.SetKey(game, Key(1)));
+        Assert.False(reader.Detect(game, out var notes)!.Encrypted);
+        Assert.Contains("AES key: stored key", notes);
+    }
+
+    /// <summary>The game's own decryption, as CUE4Parse's providers give it: none for stock Unreal; Marvel Rivals' IoStore
+    /// containers are left without theirs (its paks get it).</summary>
+    [Fact]
+    public void ReadersGetTheirGamesOwnDecryption()
+    {
+        Assert.Equal(nameof(CUE4Parse.GameTypes.DBD.Encryption.Aes.DBDAes.DbDDecrypt), UnrealReader.CustomEncryption(CUE4Parse.UE4.Versions.EGame.GAME_DeadByDaylight)?.Method.Name);
+        Assert.Equal(nameof(CUE4Parse.GameTypes.DBD.Encryption.Aes.DBDAes.DbDDecrypt), UnrealReader.CustomEncryption(CUE4Parse.UE4.Versions.EGame.GAME_DeadByDaylight_Old)?.Method.Name);
+        Assert.NotNull(UnrealReader.CustomEncryption(CUE4Parse.UE4.Versions.EGame.GAME_MarvelRivals));
+        Assert.Null(UnrealReader.CustomEncryption(CUE4Parse.UE4.Versions.EGame.GAME_UE5_6));
+        Assert.Null(UnrealReader.CustomEncryption(CUE4Parse.UE4.Versions.EGame.GAME_NevernessToEverness));
+        var dir = Ff7.TempDir("custom-encryption");
+        DbdPak(Path.Combine(dir, "dbd.pak"), KeyBytes(1), new byte[28]);
+        EncryptedPak(Path.Combine(dir, "stock.pak"), KeyBytes(1));
+        foreach (var (pak, game, has) in new[] { ("dbd.pak", CUE4Parse.UE4.Versions.EGame.GAME_DeadByDaylight, true), ("stock.pak", CUE4Parse.UE4.Versions.EGame.GAME_UE5_6, false) })
+        {
+            using var r = UnrealReader.Custom(new CUE4Parse.UE4.Pak.PakFileReader(Path.Combine(dir, pak), new CUE4Parse.UE4.Versions.VersionContainer(game)));
+            Assert.Equal(has, r.CustomEncryption != null);
+        }
+    }
+
+    /// <summary>A version 11 .pak as Dead by Daylight writes it: an encrypted index (just its mount point) that is XORed with
+    /// <paramref name="mask"/>, which the footer carries after the index hash, then AES-256 (ECB) encrypted with
+    /// <paramref name="key"/>; a 253-byte footer with 5 compression method names.</summary>
+    static void DbdPak(string path, byte[] key, byte[] mask)
+    {
+        using var index = new MemoryStream();
+        var iw = new BinaryWriter(index);
+        iw.Write(10); iw.Write("../../../\0"u8.ToArray()); iw.Write(0);
+        index.SetLength((index.Length + 15) & ~15);
+        var plain = index.ToArray();
+        for (var i = 0; i < plain.Length; i++) plain[i] ^= mask[i % mask.Length];
+        using var aes = Aes.Create();
+        aes.Key = key;
+        var encrypted = aes.EncryptEcb(plain, PaddingMode.None);
+        using var f = new BinaryWriter(File.Create(path));
+        f.Write(new byte[16]);
+        var indexAt = f.BaseStream.Position;
+        f.Write(encrypted);
+        f.Write(new byte[16]); f.Write((byte)1); f.Write(0x5A6F12E1u); f.Write(11); f.Write(indexAt); f.Write((long)encrypted.Length); f.Write(new byte[20]);
+        f.Write(mask); f.Write(0u);
+        f.Write(new byte[5 * 32]);
+    }
+
     static byte[] KeyBytes(int from) => [.. Enumerable.Range(from, 32).Select(i => (byte)i)];
     static string Key(int from) => "0x" + Convert.ToHexString(KeyBytes(from));
 

@@ -48,7 +48,9 @@ session), plans which pipelines to create, and replays them in a separate proces
    A scan reads again only what changed since an earlier one, at background I/O priority unless the user asked for it:
    a Steam or Xbox game keeps its exe while its build is the same (`discovered.json`); each game keeps its engine and
    anti-cheat verdict while its exe, store build and SCSKiller build are the same (`scan.json`; another SCSKiller
-   build's is shown at once and the game detected again in the background); the DLLs beside the exe are known by their
+   build's is shown at once and the game detected again in the background; a verdict another engine reader gave only
+   because one before it threw is logged, and not kept when that was a file in use or access denied, as in a game
+   update: `EngineReaders.Skipped`); the DLLs beside the exe are known by their
    size, write time, NTFS change time and file id (`middleware.json`, `reshade.json`; a DLL's hash also by its first
    and last 4 KB), which a refresh the user asks for doesn't trust. An install is walked for anti-cheat in full when the
    entries of its root or exe folder changed since its last clean walk (the recorder's own files and data files aside),
@@ -345,7 +347,9 @@ open game files read-only and never launch or attach to the game.
   only if none works and the online lookup is on, the list's other candidates; the Why? dialog's lookup goes in the same
   order and says which stage it is in. An import waits for that pass, and the next pass for it (`KeyLookupPass`). Every
   key is stored only if it opens one of the game's encrypted containers (`UnrealReader.KeyCheck`, as the exe scan's
-  keys). A shipped pipeline cache (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30,
+  keys). Every container reader SCSKiller makes itself gets the game's own encryption on top of AES (Dead by Daylight
+  XORs its index; `UnrealReader.Custom`), as CUE4Parse's file providers give it to theirs, Marvel Rivals' IoStore
+  containers excepted as there. A shipped pipeline cache (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30,
   `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact shader
   map, so the planner pairs those shaders as the game does (global and post-process passes that no signature match
   pairs). They are left out of the index's content hash.

@@ -1420,6 +1420,10 @@ public sealed partial class ScsKiller : IScsKiller
                 : CheckRecordings(g, engine);
         }
         catch (Exception e) { check = new(Readiness.Unsupported, e.Message); }
+        // a reader that threw handed the game to the next one: said, and a file in use (a game update) not kept as the verdict
+        var skipped = (_reader as EngineReaders)?.Skipped(g);
+        if (skipped is { } s) Log?.Report($"{g.Name}: the {s.Family} reader failed ({s.Error.GetType().Name}: {s.Error.Message}), so it was read as {engine?.Family}");
+        var transient = skipped?.Error is IOException or UnauthorizedAccessException;
         var ev = Streamline(g, new Evaluation(key, engine, GameFiles.DetectAntiCheat(g), check));   // last: anti-cheat that appeared during Detect counts
         if (ev.AntiCheat != AntiCheat.None) AntiCheatFound(g, ev.AntiCheat, ev);
         else
@@ -1430,7 +1434,8 @@ public sealed partial class ScsKiller : IScsKiller
                 {
                     _verdicts.TryRemove(g.Id, out _);   // a full scan that started after any finding found none: clean again
                     _scanStarted[g.Id] = started;
-                    _scan[g.Id] = ev with { Clean = InstallGen(g) == gen ? folders : null };   // an install change meanwhile: walked again
+                    if (transient) _scan.Remove(g.Id);   // detected again at the next scan
+                    else _scan[g.Id] = ev with { Clean = InstallGen(g) == gen ? folders : null };   // an install change meanwhile: walked again
                     Store.SaveScan(_scan);
                 }
         }
@@ -2085,7 +2090,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         var file = Path.Combine(Store.GameDir(g.Id), "aes.lookup");
         if (File.Exists(Path.Combine(Store.GameDir(g.Id), "aes.key"))) KeyCollection.ForgetLegacy(file);   // the stored key no longer opens its files
-        return (file, ExeStamp(g));
+        return (file, $"{UnrealKeys.ScanVersion}:{ExeStamp(g)}");   // a new key check tries the same candidates again
     }
 
     public string? KeyProblem(string gameId) => UnrealFiles is { } u ? UnrealKeys.Advice(u.KeyMiss(Find(gameId).Game)) : null;

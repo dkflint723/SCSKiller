@@ -56,6 +56,15 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   a compile already covered (the same shaders and root signature under other state on NVIDIA, what an HDR mod's layer
   makes of them while compiles run through the same layer) don't count either.
 - `scskiller index --out` writes a big game's index without running out of memory.
+- **Dead by Daylight**: its right AES key is taken instead of "That key didn't work" (upstream issue 83, found by
+  finacrum). SCSKiller now decrypts the extra layer some games put on their files (Dead by Daylight, Marvel Rivals,
+  3on3 FreeStyle: Rebound) when it checks a key, as it already did when reading them. Keys from the exe scan, a key list
+  or an import that failed only because of this are tried again once.
+- An encrypted Unreal game whose exe isn't a program SCSKiller can read no longer falls back to the generic shader
+  carver ("Carved DXIL"): the key search skips the exe and asks for the key.
+- A game taken for another engine because SCSKiller's reader for its own engine failed on its files (FINAL FANTASY VII
+  Rebirth showed as "Carved DXIL" on 1.2.3, upstream issue 63) is now named in the log with the error. When the files
+  were in use, as during a game update, the next scan reads the game again instead of keeping that result.
 
 ## [1.2.4] - 2026-10-08
 

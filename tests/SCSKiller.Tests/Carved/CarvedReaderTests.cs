@@ -146,7 +146,12 @@ public class CarvedReaderTests
         var packed = ue with { Unsupported = "shaders stored inside materials" };
         Assert.Equal(carved, new EngineReaders(("Unreal", new Stub(packed)), (CarvedReader.Family, c)).Detect(game)); // Unreal can't: the carver can
         Assert.Equal(packed, new EngineReaders(("Unreal", new Stub(packed)), (CarvedReader.Family, new Stub(carved with { Unsupported = "packed" }))).Detect(game)); // neither: the first reason
-        Assert.Equal(carved, new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, c)).Detect(game));
+        var failed = new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, c));
+        Assert.Equal(carved, failed.Detect(game));
+        Assert.Equal(("Unreal", "unreadable"), failed.Skipped(game) is { } s ? (s.Family, s.Error.Message) : default);   // the carver had it only because Unreal threw
+        Assert.Null(chain.Skipped(game));
+        Assert.Equal(packed, new EngineReaders(("Unreal", new Stub(packed)), (CarvedReader.Family, new Stub(null, throws: true))) is var later ? later.Detect(game) : null);
+        Assert.Null(later.Skipped(game));   // a reader after the one that recognized the game doesn't count
         Assert.Throws<IOException>(() => new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, new Stub(null))).Detect(game));
         Assert.Null(new EngineReaders(("Unreal", new Stub(null)), (CarvedReader.Family, new Stub(null))).Detect(game));
     }

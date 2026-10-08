@@ -221,9 +221,9 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         try
         {
             toc = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            if (!utoc) return new PakFileReader(path, toc, versions);
+            if (!utoc) return Custom(new PakFileReader(path, toc, versions));
             cas = File.Open(casPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            return new IoStoreReader(path, toc, cas, EIoStoreTocReadOptions.ReadDirectoryIndex, versions);
+            return Custom(new IoStoreReader(path, toc, cas, EIoStoreTocReadOptions.ReadDirectoryIndex, versions));
         }
         catch
         {
@@ -233,8 +233,24 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         }
     }
 
-    static AbstractAesVfsReader OpenContainer(string path, VersionContainer versions) => path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase)
-        ? new IoStoreReader(path, EIoStoreTocReadOptions.ReadDirectoryIndex, versions) : new PakFileReader(path, versions);
+    static AbstractAesVfsReader OpenContainer(string path, VersionContainer versions) => Custom<AbstractAesVfsReader>(path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase)
+        ? new IoStoreReader(path, EIoStoreTocReadOptions.ReadDirectoryIndex, versions) : new PakFileReader(path, versions));
+
+    /// <summary>A reader with its game's own encryption on top of AES (Dead by Daylight XORs its indexes), as a CUE4Parse file
+    /// provider gives it to the readers it registers: a reader made directly has none, and a right key then fails.</summary>
+    internal static T Custom<T>(T r) where T : AbstractAesVfsReader
+    {
+        if (!(r.Game == EGame.GAME_MarvelRivals && r is IoStoreReader)) r.CustomEncryption = CustomEncryption(r.Game);   // as CUE4Parse's PostLoadReader
+        return r;
+    }
+
+    internal static IAesVfsReader.CustomEncryptionDelegate? CustomEncryption(EGame game) => customEncryption.GetOrAdd(game, g =>
+    {
+        using var p = new StreamedFileProvider("", new VersionContainer(g), StringComparer.OrdinalIgnoreCase);   // its constructor picks the game's
+        return p.CustomEncryption;
+    });
+
+    static readonly ConcurrentDictionary<EGame, IAesVfsReader.CustomEncryptionDelegate?> customEncryption = new();
 
     /// <summary>Shader library and global shader cache platforms, the containers we can't read (encrypted), and the RHI
     /// config files: .utoc by header and name scan, .pak one index at a time (a full mount of a big game is ~1 GB; this peaks
@@ -1089,7 +1105,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         {
             var toc = Directory.EnumerateFiles(paks, "*.utoc").Where(p => (TocHeader(p)[80] & 8) != 0).MinBy(p => new FileInfo(p).Length);
             if (toc == null) return false;
-            using var r = new IoStoreReader(toc, EIoStoreTocReadOptions.ReadDirectoryIndex, new VersionContainer(EGame.GAME_UE5_5));
+            using var r = Custom(new IoStoreReader(toc, EIoStoreTocReadOptions.ReadDirectoryIndex, new VersionContainer(EGame.GAME_UE5_5)));
             if (r.IsEncrypted) r.AesKey = key ?? throw new InvalidDataException("encrypted");
             r.Mount(StringComparer.OrdinalIgnoreCase);
             var head = r.Files.Values.First(f => f.Extension == "uasset").Read(new FByteBulkDataHeader(default, 0, 76, 0, default));

@@ -12718,6 +12718,36 @@ public partial class AppTests : IDisposable
         }
     }
 
+    /// <summary>Upstream issue 63: a reader that throws hands the game to the next one (FF7 Rebirth showed as "Carved DXIL").
+    /// The log says why; after a file in use (a game update) that verdict isn't kept, so the next scan reads the game again.
+    /// Any other failure stays the game's verdict until its files change.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_reader_that_failed_is_logged_and_after_a_file_in_use_tried_again(bool inUse)
+    {
+        var unreal = new FailingReader(Unreal, inUse ? new IOException("in use") : new InvalidDataException("bad pak"));
+        var carved = new FakeReader(new EngineInfo(Core.Carved.CarvedReader.Family, "DXIL", null, "D3D12", false, null));
+        var k = Killer(new Core.Carved.EngineReaders(("Unreal", unreal), (Core.Carved.CarvedReader.Family, carved)));
+        var logged = false;
+        k.Log = new At($"the Unreal reader failed ({(inUse ? "IOException: in use" : "InvalidDataException: bad pak")}), so it was read as Carved", () => logged = true);
+        Assert.Equal(Core.Carved.CarvedReader.Family, (await k.ScanAsync(default)).Single().Engine!.Family);
+        Assert.True(logged);
+        Assert.Equal(!inUse, k.Store.LoadScan().ContainsKey(_game.Id));
+        unreal.Fails = false;
+        Assert.Equal(inUse ? "Unreal" : Core.Carved.CarvedReader.Family, (await k.ScanAsync(default)).Single().Engine!.Family);
+        Assert.Equal(inUse ? 2 : 1, unreal.Detects);
+    }
+
+    sealed class FailingReader(EngineInfo engine, Exception error) : IEngineReader
+    {
+        public int Detects;
+        public bool Fails = true;
+        public EngineInfo? Detect(Game game) { Detects++; return Fails ? throw error : engine; }
+        public ShaderIndex Index(Game game, EngineInfo e, IProgress<string>? log, CancellationToken ct) => throw new NotSupportedException();
+        public void ReadShaders(Game game, EngineInfo e, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct) { }
+    }
+
     sealed class FakeReader(EngineInfo? engine, string content = "content-1", int shaders = 3000, List<ShaderMap>? maps = null) : IEngineReader
     {
         public int Detects;
