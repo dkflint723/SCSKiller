@@ -49,8 +49,8 @@ session), plans which pipelines to create, and replays them in a separate proces
    a Steam or Xbox game keeps its exe while its build is the same (`discovered.json`); each game keeps its engine and
    anti-cheat verdict while its exe, store build and SCSKiller build are the same (`scan.json`; another SCSKiller
    build's is shown at once and the game detected again in the background; a verdict another engine reader gave only
-   because one before it threw is logged, and not kept when that was a file in use or access denied, as in a game
-   update: `EngineReaders.Skipped`); the DLLs beside the exe are known by their
+   because one before it threw is logged, and not kept when that was a file in use (a sharing or lock violation), as in
+   a game update; access denied or a missing file is kept: `EngineReaders.Detect`'s out skip, per call); the DLLs beside the exe are known by their
    size, write time, NTFS change time and file id (`middleware.json`, `reshade.json`; a DLL's hash also by its first
    and last 4 KB), which a refresh the user asks for doesn't trust. An install is walked for anti-cheat in full when the
    entries of its root or exe folder changed since its last clean walk (the recorder's own files and data files aside),

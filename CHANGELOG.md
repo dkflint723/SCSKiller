@@ -67,7 +67,8 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   it. Like other RE Engine games it needs a recording. Not checked on the game itself.
 - A game taken for another engine because SCSKiller's reader for its own engine failed on its files (FINAL FANTASY VII
   Rebirth showed as "Carved DXIL" on 1.2.3, upstream issue 63) is now named in the log with the error. When the files
-  were in use, as during a game update, the next scan reads the game again instead of keeping that result.
+  were in use, as during a game update, the next scan reads the game again instead of keeping that result. Any other
+  failure, such as access denied to an Xbox app game's files, keeps the result until the game's files change.
 
 ## [1.2.4] - 2026-10-08
 

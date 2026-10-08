@@ -1412,18 +1412,19 @@ public sealed partial class ScsKiller : IScsKiller
         }
         var (gen, folders) = (InstallGen(g), FolderStamp(g));   // before Detect and the check, as the key
         EngineInfo? engine = null;
+        (string Family, Exception Error)? skipped = null;
         PlanCheck check;
         try
         {
-            engine = _reader.Detect(g);
+            engine = _reader is EngineReaders readers ? readers.Detect(g, out skipped) : _reader.Detect(g);
             check = engine == null ? new(Readiness.Unsupported, "engine not supported yet")
                 : CheckRecordings(g, engine);
         }
         catch (Exception e) { check = new(Readiness.Unsupported, e.Message); }
-        // a reader that threw handed the game to the next one: said, and a file in use (a game update) not kept as the verdict
-        var skipped = (_reader as EngineReaders)?.Skipped(g);
+        // a reader that threw handed the game to the next one: said, and a file in use (a game update) not kept as the verdict.
+        // Only a sharing or lock violation: access denied (an Xbox app install's files) or a missing file stays so, kept
         if (skipped is { } s) Log?.Report($"{g.Name}: the {s.Family} reader failed ({s.Error.GetType().Name}: {s.Error.Message}), so it was read as {engine?.Family}");
-        var transient = skipped?.Error is IOException or UnauthorizedAccessException;
+        var transient = skipped?.Error is IOException { HResult: var hr } && (hr & 0xFFFF) is 32 or 33;   // ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
         var ev = Streamline(g, new Evaluation(key, engine, GameFiles.DetectAntiCheat(g), check));   // last: anti-cheat that appeared during Detect counts
         if (ev.AntiCheat != AntiCheat.None) AntiCheatFound(g, ev.AntiCheat, ev);
         else

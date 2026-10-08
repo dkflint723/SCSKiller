@@ -12720,17 +12720,31 @@ public partial class AppTests : IDisposable
 
     /// <summary>Upstream issue 63: a reader that throws hands the game to the next one (FF7 Rebirth showed as "Carved DXIL").
     /// The log says why; after a file in use (a game update) that verdict isn't kept, so the next scan reads the game again.
-    /// Any other failure stays the game's verdict until its files change.</summary>
+    /// Any other failure stays the game's verdict until its files change: access denied (an Xbox app install's files are
+    /// encrypted at rest) or a missing file isn't a game update, and isn't read again at every scan.</summary>
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task A_reader_that_failed_is_logged_and_after_a_file_in_use_tried_again(bool inUse)
+    [InlineData("sharing", true)]
+    [InlineData("lock", true)]
+    [InlineData("denied", false)]
+    [InlineData("missing", false)]
+    [InlineData("io", false)]
+    [InlineData("data", false)]
+    public async Task A_reader_that_failed_is_logged_and_after_a_file_in_use_tried_again(string failure, bool inUse)
     {
-        var unreal = new FailingReader(Unreal, inUse ? new IOException("in use") : new InvalidDataException("bad pak"));
+        Exception error = failure switch
+        {
+            "sharing" => new IOException("unreadable", unchecked((int)0x80070020)),   // ERROR_SHARING_VIOLATION
+            "lock" => new IOException("unreadable", unchecked((int)0x80070021)),      // ERROR_LOCK_VIOLATION
+            "denied" => new UnauthorizedAccessException("unreadable"),
+            "missing" => new FileNotFoundException("unreadable"),
+            "io" => new IOException("unreadable"),
+            _ => new InvalidDataException("unreadable"),
+        };
+        var unreal = new FailingReader(Unreal, error);
         var carved = new FakeReader(new EngineInfo(Core.Carved.CarvedReader.Family, "DXIL", null, "D3D12", false, null));
         var k = Killer(new Core.Carved.EngineReaders(("Unreal", unreal), (Core.Carved.CarvedReader.Family, carved)));
         var logged = false;
-        k.Log = new At($"the Unreal reader failed ({(inUse ? "IOException: in use" : "InvalidDataException: bad pak")}), so it was read as Carved", () => logged = true);
+        k.Log = new At($"the Unreal reader failed ({error.GetType().Name}: unreadable), so it was read as Carved", () => logged = true);
         Assert.Equal(Core.Carved.CarvedReader.Family, (await k.ScanAsync(default)).Single().Engine!.Family);
         Assert.True(logged);
         Assert.Equal(!inUse, k.Store.LoadScan().ContainsKey(_game.Id));
