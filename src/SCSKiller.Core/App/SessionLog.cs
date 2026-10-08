@@ -158,6 +158,10 @@ public static class SessionLog
         public long? Start, End;   // the #session and #end stamps (unix ms)
         public double? StartT, EndT;   // the same instants on the recorder's clock (t_ms); null from an older proxy
         public double? FramesOffT;   // #frames_off: frame generation's swap chain took the Present hook off, the frame log ends there
+        public bool FramesReentry;   // ...its reason reentry: another hook re-entered the proxy's CreateSwapChain, frame timing went off for the launch
+        public long? Removed;        // #removed: the device was removed (a TDR, a driver crash) at this unix ms
+        public string? RemovedReason;   // its GetDeviceRemovedReason (0x887a0006: hung)
+        public bool? HooksOn;        // #hooks: the launch ran the frame-timing or NVAPI hooks (frames=, nvapi=); null = an older proxy
         public string Exe = "";
         public readonly List<(double T, char Kind, double Ms, string? Key, long? Tid, bool Presents)> Creates = [];   // Tid null: an older proxy
     }
@@ -185,7 +189,14 @@ public static class SessionLog
                 else if (f[0] == "#clock" && cur is { Start: not null, Creates.Count: 0 } && double.TryParse(f.Length > 1 ? f[1] : "", CultureInfo.InvariantCulture, out var st))
                     cur.StartT = st;
                 else if (f[0] == "#frames_off" && cur is { Start: not null, End: null } && double.TryParse(f.Length > 2 ? f[2] : "", CultureInfo.InvariantCulture, out var ft))
+                {
                     cur.FramesOffT ??= ft;
+                    cur.FramesReentry |= f.Length > 3 && f[3] == "reentry";
+                }
+                else if (f[0] == "#removed" && cur is { Start: not null, End: null } && ms > 0 && cur.Removed == null)
+                    (cur.Removed, cur.RemovedReason) = (ms, f.Length > 2 ? f[2] : "");
+                else if (f[0] == "#hooks" && cur is { Start: not null } && f.Length > 2)
+                    cur.HooksOn = f[1] != "0" || f[2] != "0";
                 else if (f[0] == "#end" && cur != null)
                 {
                     cur.End = ms;

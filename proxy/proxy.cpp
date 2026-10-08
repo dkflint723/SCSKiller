@@ -2217,7 +2217,8 @@ static void install_hooks(IUnknown* unk) {
         if (g_csv && !g_staged) {  // a staged scskiller_warm run is a warm-up, not a play session: no marker
             g_session_unix = unix_ms();
             double t = now_ms();  // #clock: the stamp on the t_ms clock, which starts when the recorder loads
-            fprintf(g_csv, "#session,%lld,%ls\n#clock,%.1f\n", g_session_unix, exe_name().c_str(), t);
+            // #hooks: whether this launch runs the frame-timing and NVAPI hooks (frames=, nvapi=): the crash guard's level as it ran
+            fprintf(g_csv, "#session,%lld,%ls\n#clock,%.1f\n#hooks,%d,%d\n", g_session_unix, exe_name().c_str(), t, (int)g_frames_on, (int)g_nvapi_on);
             fflush(g_csv);
             g_wrote_session = true;
             g_csv_h = (HANDLE)_get_osfhandle(_fileno(g_csv));
@@ -2641,32 +2642,53 @@ static bool opti_fg() {
     if (is(L"FrameGen", L"FGType", L"nofg")) return false;
     return is(L"FrameGen", L"FGType", L"nukems") || is(L"OptiFG", L"Enabled", L"true");
 }
-// The originals go back before frame generation's swap chain is made, so no hook installed on it can take ours as its
-// original; g_frames_off is set only after, under g_mx, which hook_swapchain checks under it. A slot another hook took
-// after ours (even meanwhile: compare-exchange) stays as it is.
+static HRESULT STDMETHODCALLTYPE hk_createsc(IDXGIFactory*, IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**);
+static HRESULT STDMETHODCALLTYPE hk_createsc_hwnd(IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,
+                                                  IDXGIOutput*, IDXGISwapChain1**);
+static HRESULT STDMETHODCALLTYPE hk_createsc_cw(IDXGIFactory2*, IUnknown*, IUnknown*, const DXGI_SWAP_CHAIN_DESC1*, IDXGIOutput*, IDXGISwapChain1**);
+static HRESULT STDMETHODCALLTYPE hk_createsc_comp(IDXGIFactory2*, IUnknown*, const DXGI_SWAP_CHAIN_DESC1*, IDXGIOutput*, IDXGISwapChain1**);
+static void** g_fvt[2];  // the DXGI factory vtables frame_hooks patched: IDXGIFactory's, IDXGIFactory2's (null: none)
+
+// Frame timing off for the rest of the launch. The originals go back before frame generation's swap chain is made, so no
+// hook installed on it can take ours as its original; g_frames_off is set only after, under g_mx, which hook_swapchain
+// checks under it. A slot another hook took after ours (even meanwhile: compare-exchange) stays as it is. factory: the
+// CreateSwapChain hooks come out too. The frame log ends here, not with the launch: #frames_off tells the app's crash
+// guard not to read it as the launch's length, its reason (none: frame generation's swap chain) what turned it off. Frames
+// already off (frame generation first): factory still takes the CreateSwapChain hooks out and writes its own #frames_off
+// line (the app keeps the first one's time and any line's reentry).
+static bool g_factory_off;  // under g_mx: frames_stop took the CreateSwapChain hooks out
+static void frames_stop(const char* why, const char* reason, bool factory) {
+    std::lock_guard l(g_mx);
+    if (g_frames_off && (!factory || g_factory_off)) return;
+    logf(g_frames_off ? "frames: CreateSwapChain hooks off (%s)" : "frames: off (%s)", why);
+    auto unhook = [](void** vt, int slot, void* hook, void* o, const char* what) {
+        if (!vt || !o) return;
+        DWORD old;
+        VirtualProtect(&vt[slot], sizeof(void*), PAGE_READWRITE, &old);
+        void* was = InterlockedCompareExchangePointer(&vt[slot], o, hook);
+        VirtualProtect(&vt[slot], sizeof(void*), old, &old);
+        if (was != hook) logf("frames: %s vtable %p slot %d is another hook's, left as it is", what, (void*)vt, slot);
+    };
+    for (int i = 0, n = g_frames_off ? 0 : (int)g_nscvt; i < n; ++i) {
+        unhook(g_scvt[i].vt, SLOT_PRESENT, (void*)hk_present, g_scvt[i].present, "swap chain");
+        unhook(g_scvt[i].vt, SLOT_PRESENT1, (void*)hk_present1, g_scvt[i].present1, "swap chain");
+    }
+    if (factory) {
+        g_factory_off = true;
+        unhook(g_fvt[0], SLOT_CREATESC, (void*)hk_createsc, (void*)o_createsc, "DXGI factory");
+        unhook(g_fvt[1], SLOT_CREATESC_HWND, (void*)hk_createsc_hwnd, (void*)o_createsc_hwnd, "DXGI factory");
+        unhook(g_fvt[1], SLOT_CREATESC_CW, (void*)hk_createsc_cw, (void*)o_createsc_cw, "DXGI factory");
+        unhook(g_fvt[1], SLOT_CREATESC_COMP, (void*)hk_createsc_comp, (void*)o_createsc_comp, "DXGI factory");
+    }
+    g_frames_off = true;
+    if (g_wrote_session && g_csv) fprintf(g_csv, "#frames_off,%lld,%.1f%s%s\n", unix_ms(), now_ms(), reason ? "," : "", reason ? reason : ""), fflush(g_csv);
+}
 static void frames_fg(IUnknown* dev) {
     if (g_frames_off) return;
     std::wstring name;
     bool fg = fg_queue(dev, name);
     logf("frames: a swap chain on queue \"%ls\"%s", name.c_str(), fg ? ": frame generation's" : "");
-    if (!fg) return;
-    std::lock_guard l(g_mx);
-    if (g_frames_off) return;
-    logf("frames: off (frame generation swap chain)");
-    for (int i = 0, n = g_nscvt; i < n; ++i)
-        for (auto [slot, hook, orig] : {std::tuple{SLOT_PRESENT, (void*)hk_present, &ScVt::present}, std::tuple{SLOT_PRESENT1, (void*)hk_present1, &ScVt::present1}}) {
-            void** vt = g_scvt[i].vt;
-            void* o = g_scvt[i].*orig;
-            if (!o) continue;
-            DWORD old;
-            VirtualProtect(&vt[slot], sizeof(void*), PAGE_READWRITE, &old);
-            void* was = InterlockedCompareExchangePointer(&vt[slot], o, hook);
-            VirtualProtect(&vt[slot], sizeof(void*), old, &old);
-            if (was != hook) logf("frames: swap chain vtable %p slot %d is another hook's, left as it is", (void*)vt, slot);
-        }
-    g_frames_off = true;
-    // the frame log ends here, not with the launch: the app's crash guard must not read it as the launch's length
-    if (g_wrote_session && g_csv) fprintf(g_csv, "#frames_off,%lld,%.1f\n", unix_ms(), now_ms()), fflush(g_csv);
+    if (fg) frames_stop("frame generation swap chain", nullptr, false);
 }
 static void hook_swapchain(HRESULT hr, void* p) {
     if (FAILED(hr) || !p) return;
@@ -2677,30 +2699,66 @@ static void hook_swapchain(HRESULT hr, void* p) {
     if (SUCCEEDED(((IUnknown*)p)->QueryInterface(IID_PPV_ARGS(&sc)))) sc_patch(*(void***)sc, SLOT_PRESENT, (void*)hk_present, &ScVt::present), sc->Release();
     if (SUCCEEDED(((IUnknown*)p)->QueryInterface(IID_PPV_ARGS(&sc1)))) sc_patch(*(void***)sc1, SLOT_PRESENT1, (void*)hk_present1, &ScVt::present1), sc1->Release();
 }
-static HRESULT STDMETHODCALLTYPE hk_createsc(IDXGIFactory* f, IUnknown* dev, DXGI_SWAP_CHAIN_DESC* d, IDXGISwapChain** pp) {
+// Another hook on the factory may call CreateSwapChain* back through the vtable from inside ours: a guard against what may
+// be upstream issue 48 (Assassin's Creed Valhalla hung at its splash after 2,201 entries in 0.1 s; nested or one after
+// another, its log can't tell, not confirmed on the game). Only a thread's outermost entry hooks the swap chain made; each
+// entry under kScNest still checks its own queue for frame generation's (a frame generation mod's hook makes that swap
+// chain through the vtable from inside ours). The kScNest'th nested entry takes the frame hooks out for the launch, the
+// factory's too, with its caller's module in the log and #frames_off,...,reentry in the csv (the app turns frame timing
+// off for the game). A runtime's own nesting (CreateSwapChain through CreateSwapChainForHwnd) stays far under it.
+// kScBurst outermost entries on a thread within 0.1 s are logged once: calls one after another, not nested.
+static thread_local int t_createsc;
+static const int kScNest = 8, kScBurst = 100;
+static thread_local ULONGLONG t_sc_since;
+static thread_local int t_sc_burst;
+// The caller named is the first module on the thread's stack that isn't this dll: a hook that tail-calls the vtable leaves no
+// frame of its own above ours, its earlier entry is below.
+static void sc_reentered() {
+    static std::atomic<bool> once;
+    if (once.exchange(true)) return;
+    const DWORD by_address = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+    HMODULE self = nullptr, m = nullptr;
+    GetModuleHandleExW(by_address, (LPCWSTR)&sc_reentered, &self);
+    void* stack[64];
+    for (USHORT i = 0, n = CaptureStackBackTrace(1, 64, stack, nullptr); i < n; ++i)
+        if (GetModuleHandleExW(by_address, (LPCWSTR)stack[i], &m) && m != self) break;
+        else m = nullptr;
+    wchar_t path[MAX_PATH] = L"an unknown module";
+    if (m) GetModuleFileNameW(m, path, MAX_PATH);
+    logf("frames: CreateSwapChain re-entered %d deep, called back from %ls", kScNest, path);
+    frames_stop("CreateSwapChain re-entered: another hook calls it back", "reentry", true);
+}
+template <class F> static HRESULT createsc(IUnknown* dev, void** pp, F&& call) {
+    if (t_createsc) {
+        if (t_createsc < kScNest) frames_fg(dev);
+        if (t_createsc++ == kScNest) sc_reentered();
+        HRESULT hr = call();
+        --t_createsc;
+        return hr;
+    }
+    ULONGLONG now = GetTickCount64();
+    if (now - t_sc_since > 100) t_sc_since = now, t_sc_burst = 0;
+    static std::atomic<bool> burst;
+    if (++t_sc_burst == kScBurst && !burst.exchange(true)) logf("frames: CreateSwapChain called %d times in 0.1 s on one thread, one after another (not nested)", kScBurst);
     frames_fg(dev);
-    HRESULT hr = o_createsc(f, dev, d, pp);
+    t_createsc = 1;
+    HRESULT hr = call();
+    t_createsc = 0;
     hook_swapchain(hr, pp ? *pp : nullptr);
     return hr;
+}
+static HRESULT STDMETHODCALLTYPE hk_createsc(IDXGIFactory* f, IUnknown* dev, DXGI_SWAP_CHAIN_DESC* d, IDXGISwapChain** pp) {
+    return createsc(dev, (void**)pp, [&] { return o_createsc(f, dev, d, pp); });
 }
 static HRESULT STDMETHODCALLTYPE hk_createsc_hwnd(IDXGIFactory2* f, IUnknown* dev, HWND w, const DXGI_SWAP_CHAIN_DESC1* d,
                                                   const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fs, IDXGIOutput* o, IDXGISwapChain1** pp) {
-    frames_fg(dev);
-    HRESULT hr = o_createsc_hwnd(f, dev, w, d, fs, o, pp);
-    hook_swapchain(hr, pp ? *pp : nullptr);
-    return hr;
+    return createsc(dev, (void**)pp, [&] { return o_createsc_hwnd(f, dev, w, d, fs, o, pp); });
 }
 static HRESULT STDMETHODCALLTYPE hk_createsc_cw(IDXGIFactory2* f, IUnknown* dev, IUnknown* w, const DXGI_SWAP_CHAIN_DESC1* d, IDXGIOutput* o, IDXGISwapChain1** pp) {
-    frames_fg(dev);
-    HRESULT hr = o_createsc_cw(f, dev, w, d, o, pp);
-    hook_swapchain(hr, pp ? *pp : nullptr);
-    return hr;
+    return createsc(dev, (void**)pp, [&] { return o_createsc_cw(f, dev, w, d, o, pp); });
 }
 static HRESULT STDMETHODCALLTYPE hk_createsc_comp(IDXGIFactory2* f, IUnknown* dev, const DXGI_SWAP_CHAIN_DESC1* d, IDXGIOutput* o, IDXGISwapChain1** pp) {
-    frames_fg(dev);
-    HRESULT hr = o_createsc_comp(f, dev, d, o, pp);
-    hook_swapchain(hr, pp ? *pp : nullptr);
-    return hr;
+    return createsc(dev, (void**)pp, [&] { return o_createsc_comp(f, dev, d, o, pp); });
 }
 
 static HANDLE g_frames = INVALID_HANDLE_VALUE;
@@ -2788,9 +2846,10 @@ static void frame_hooks() {
         std::lock_guard l(g_mx);
         void** vt = *(void***)f;
         patch(vt, SLOT_CREATESC, (void*)hk_createsc, o_createsc);
+        g_fvt[0] = vt;
         IDXGIFactory2* f2;
         if (SUCCEEDED(f->QueryInterface(IID_PPV_ARGS(&f2)))) {
-            void** vt2 = *(void***)f2;
+            void** vt2 = g_fvt[1] = *(void***)f2;
             patch(vt2, SLOT_CREATESC_HWND, (void*)hk_createsc_hwnd, o_createsc_hwnd);
             patch(vt2, SLOT_CREATESC_CW, (void*)hk_createsc_cw, o_createsc_cw);
             patch(vt2, SLOT_CREATESC_COMP, (void*)hk_createsc_comp, o_createsc_comp);
@@ -2887,10 +2946,74 @@ static void log_device(IUnknown* unk) {
     hook_aftermath();   // a game initializes it on the device it just created
 }
 
+// Device removal while recording (a TDR, a driver crash; upstream issue 62): the crash guard counts such a launch as a
+// failure whatever its length. Each device the game gets is watched from a thread of ours, frame hooks or not: a fence
+// whose event waits for UINT64_MAX fires when the device is removed (a removed device completes every fence), and once a
+// second GetDeviceRemovedReason is asked too. The watch holds the device (and its fence does) only while the game does:
+// the poll lets it go once the device's count is down to the watch's own (a probe, a renderer restart, a device dropped
+// before EnableDebugLayer), at most a second after the game's last release, and a removal then isn't the game's (not
+// written). Removed while the game holds it: let go too, so the game's next device of that adapter is a new one (D3D12 has
+// one device per adapter). #removed,<unix ms>,<reason> goes straight through the csv's file handle: the game may die any
+// moment after.
+struct Watched { ID3D12Device* dev; ID3D12Fence* fence; HANDLE ev; ULONG ours; };  // ours: the references the watch holds
+static ULONG refs(IUnknown* u) { return u->AddRef(), u->Release(); }
+static std::mutex g_watch_mx;
+static std::vector<Watched> g_watched;  // under g_watch_mx
+static void append_csv(const char* b, DWORD n) {
+    OVERLAPPED at{};
+    at.Offset = at.OffsetHigh = 0xFFFFFFFF;  // append at the file's end
+    WriteFile(g_csv_h, b, n, &n, &at);
+}
+static void watch_removal() {
+    for (;;) {
+        std::vector<HANDLE> evs;
+        {
+            std::lock_guard l(g_watch_mx);
+            for (auto& w : g_watched) evs.push_back(w.ev);
+        }
+        if (evs.empty()) Sleep(1000);
+        else WaitForMultipleObjects((DWORD)evs.size(), evs.data(), FALSE, 1000);
+        std::lock_guard l(g_watch_mx);
+        for (size_t i = 0; i < g_watched.size();) {
+            Watched w = g_watched[i];
+            bool held = refs(w.dev) > w.ours;
+            HRESULT hr = w.dev->GetDeviceRemovedReason();
+            if (SUCCEEDED(hr) && held) { ++i; continue; }
+            if (held) {
+                char b[64];
+                int n = snprintf(b, sizeof b, "#removed,%lld,0x%08x\r\n", unix_ms(), (unsigned)hr);  // the csv is a text-mode stream
+                append_csv(b, (DWORD)n);
+                logf("device %p removed (0x%08x): written to the csv for the app's crash guard", (void*)w.dev, (unsigned)hr);
+            } else
+                logf("device %p let go by the game%s: no longer watched", (void*)w.dev, FAILED(hr) ? " (removed after: not written)" : "");
+            w.fence->Release(), w.dev->Release(), CloseHandle(w.ev);
+            g_watched.erase(g_watched.begin() + i);
+        }
+    }
+}
+static void watch_device(IUnknown* unk) {
+    ID3D12Device* dev;
+    if (g_warm || !g_wrote_session || FAILED(unk->QueryInterface(IID_PPV_ARGS(&dev)))) return;  // a play session's only
+    std::lock_guard l(g_watch_mx);
+    if (std::any_of(g_watched.begin(), g_watched.end(), [&](const Watched& w) { return w.dev == dev; })) return (void)dev->Release();
+    ID3D12Fence* fence = nullptr;
+    ULONG before = refs(dev);  // the game's and our QueryInterface's
+    HANDLE ev = g_watched.size() < 8 ? CreateEventW(nullptr, FALSE, FALSE, nullptr) : nullptr;
+    if (!ev || FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))) || FAILED(fence->SetEventOnCompletion(UINT64_MAX, ev))) {
+        if (fence) fence->Release();
+        if (ev) CloseHandle(ev);
+        return (void)dev->Release();
+    }
+    ULONG after = refs(dev);
+    g_watched.push_back({dev, fence, ev, 1 + (after > before ? after - before : 0)});  // ours, and the fence's if it counts
+    static std::once_flag once;
+    std::call_once(once, [] { std::thread(watch_removal).detach(); });
+}
 static HRESULT device_created(HRESULT hr, IUnknown* adapter, D3D_FEATURE_LEVEL fl, void** pp) {
     if (FAILED(hr) || !pp || !*pp || !admitted()) return hr;
     pin_self();
     install_hooks((IUnknown*)*pp);
+    watch_device((IUnknown*)*pp);
     log_device((IUnknown*)*pp);
     if (g_next) {
         auto create = (decltype(&D3D12CreateDevice))GetProcAddress(g_real, "D3D12CreateDevice");

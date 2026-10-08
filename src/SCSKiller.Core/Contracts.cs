@@ -291,7 +291,8 @@ public sealed record GameState(
     bool NewOnly = false,              // Stale only for pipelines its last warm didn't compile (ScsKiller.StaleReason past WarmChanged): the rest still serve
     RecorderLevel RecorderLevel = RecorderLevel.Full,   // the crash guard's step (GameRecord.RecorderLevel), else ScsKiller.StartLevel; Off: RecorderSkip is ScsKiller.SkipCrashed
     string? RecorderLevelReason = null,   // why it isn't Full, for the game page; null = Full
-    bool RecorderSteppedDown = false);    // the crash guard set the level (GameRecord.RecorderLevel): "Try again" puts it back to its start
+    bool RecorderSteppedDown = false,     // the crash guard set the level (GameRecord.RecorderLevel): "Try again" puts it back to its start
+    string? RecorderFramesOff = null);    // why frame timing is off for the game (GameRecord.RecorderFramesOff); null = on
 
 /// <summary>A launch's frame times from the recorder (<see cref="App.FrameLog"/>): its length, the startup stretch before
 /// play (the game's own precompile and first load), the 1% low of play, every frame of 50 ms or more, and for a graph
@@ -363,7 +364,13 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool TrayNoticeShown = false,    // the "still running" notification was shown (App.HideToTray): never again
     bool LookUpKeysOnline = false,   // a scan that finds an encrypted Unreal game without a key looks it up in the key list (Unreal.KeyCollection)
     string? KeyListUrl = null,       // the key list's page; null = KeyCollection.DefaultUrl
-    bool HideUnsupported = false);   // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
+    bool HideUnsupported = false)    // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
+{
+    /// <summary>settings.json's keys this build doesn't know (another build's sharing the data folder, such as an upstream
+    /// release's): written back as they were, so switching builds loses no setting. Null = none.</summary>
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? Unknown { get; init; }
+}
 
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Paused, Done, Failed, Stopped }
 public sealed record QueueItem(string GameId, QueueStage Stage, WarmProgress? Progress, string? Error,
@@ -492,7 +499,7 @@ public interface IScsKiller
     /// to delete. Throws InvalidOperationException while the game runs or a compile of it is in progress.</summary>
     bool ClearRecording(string gameId);
     /// <summary>The game page's "Try again": the recorder back to its start for the game (<see cref="RecorderLevel.Full"/>, or
-    /// Minimal by <see cref="App.ScsKiller.StartLevel(string?, bool)"/>), installed again
+    /// Minimal by <see cref="App.ScsKiller.StartLevel(string?, bool, bool)"/>), installed again
     /// by its switch or "record all"; a launch already judged isn't judged again.</summary>
     void ResetRecorderHealth(string gameId);
 }

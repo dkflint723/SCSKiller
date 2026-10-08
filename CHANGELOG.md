@@ -49,6 +49,29 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   renamed into place.
 - **REFramework** (RE Engine games): removing the recorder also deletes REFramework's copy of it, and nothing else there.
   Only one copy of the recorder ever records in a game. The game page notes REFramework.
+- **A graphics driver crash while recording** (upstream issue 62) now counts against the recorder whatever the launch
+  lasted: the recorder notices the removed device, even with frame timing off, and the game page says the driver crashed
+  while recording. As with an early close, the recorder then records pipelines only in that game, and after a second
+  crash it's taken out.
+- **A game that calls the recorder's swap chain hook back** through another hook, 8 deep: the recorder lets the calls
+  through, turns its frame timing off for the launch and names the other program in its log. SCSKiller then keeps
+  frame timing off for that game until "Try again" or the game's next update. This may be what hung Assassin's Creed
+  Valhalla at its splash screen (upstream issue 48), not yet confirmed on the game: its log can't tell calls nested
+  in each other from calls one after another, so the recorder's log now also says when a thread creates swap chains
+  100 times in 0.1 s one after another.
+- A frame generation mod that makes its swap chain from inside its own hook of the game's (OptiScaler, FSR 3 or XeSS
+  frame generation injectors) still turns the recorder's frame timing off, as when it makes it directly.
+- **OptiScaler installed as the game's `dxgi.dll`**: the recorder starts with pipelines only (no frame timing or NVAPI
+  hooks). Onimusha: Way of the Sword with OptiScaler crashed a few seconds into startup with the recorder (upstream
+  issue 69).
+- **"Try again"** on the game page also shows for a game DLSS kept the recorder out of, and frame timing turned off;
+  that game's next update puts the recorder back too.
+- The crash guard no longer takes the recorder out after a launch that still ran with frame timing on because it
+  started before SCSKiller switched it off (once per level: a second such launch counts), and no longer misses an
+  early close judged while the game's exit was being saved.
+- The recorder no longer keeps a graphics device alive after the game lets it go (a probe, a renderer restart): a
+  device released and then removed (the D3D12 debug layer turned on after it) isn't counted as a driver crash.
+- `settings.json` keeps the settings another build of SCSKiller wrote there when this one saves its own.
 
 ### Sharing (this unofficial build)
 

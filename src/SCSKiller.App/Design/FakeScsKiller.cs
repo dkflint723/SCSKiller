@@ -340,7 +340,7 @@ public sealed class FakeScsKiller : IScsKiller
             int i = games.FindIndex(x => x.Game.Id == gameId);
             var skip = games[i].RecorderSkip == Core.App.ScsKiller.SkipCrashed ? null : games[i].RecorderSkip;
             bool eff = Core.App.ScsKiller.RecorderEffective(games[i].RecorderOverride, Settings.RecordAllGames, skip);
-            games[i] = g = games[i] with { RecorderLevel = RecorderLevel.Full, RecorderLevelReason = null, RecorderSteppedDown = false, RecorderSkip = skip, RecorderEffective = eff, RecorderInstalled = eff };
+            games[i] = g = games[i] with { RecorderLevel = RecorderLevel.Full, RecorderLevelReason = null, RecorderSteppedDown = false, RecorderSkip = skip, RecorderEffective = eff, RecorderInstalled = eff, RecorderFramesOff = null };
         }
         GameChanged?.Invoke(g);
     }

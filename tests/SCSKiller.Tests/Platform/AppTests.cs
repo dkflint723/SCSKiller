@@ -3279,6 +3279,114 @@ public partial class AppTests : IDisposable
         }
     }
 
+    /// <summary>`selftest <paramref name="args"/>` next to the built proxy in its own folder <paramref name="name"/> (record,
+    /// the extra ini lines): its output, the proxy's log and its csv's last launch.</summary>
+    (string Out, string Log, SessionLog.CsvLaunch Launch) ProxyRun(string warmExe, string name, string args, string ini = "")
+    {
+        var (bin, dir) = (Path.GetDirectoryName(warmExe)!, Path.Combine(_root, name));
+        Directory.CreateDirectory(dir);
+        File.Copy(Path.Combine(bin, "selftest.exe"), Path.Combine(dir, "selftest.exe"));
+        File.Copy(Path.Combine(bin, "d3d12.dll"), Path.Combine(dir, "d3d12.dll"));
+        File.WriteAllText(Path.Combine(dir, "scskiller.ini"), "[scskiller]\r\nmode=record\r\n" + ini);
+        using var p = Process.Start(new ProcessStartInfo(Path.Combine(dir, "selftest.exe"), args) { RedirectStandardOutput = true })!;
+        var o = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        Assert.Equal(0, p.ExitCode);
+        return (o, File.ReadAllText(Path.Combine(dir, "scskiller.log")), SessionLog.Launches(Path.Combine(dir, "scskiller_creates.csv")).Last());
+    }
+
+    /// <summary>Another hook on the DXGI factory that calls CreateSwapChainForHwnd back through the vtable from inside the
+    /// proxy's (`selftest screenter`, upstream issue 48): a shallow nesting passes through, hooked as usual; 8 deep, the proxy
+    /// takes its frame hooks out, the factory's too, names the caller once in its log and writes #frames_off reentry. The swap
+    /// chain is made either way.</summary>
+    [Fact]
+    public void The_proxy_steps_out_of_a_swap_chain_create_called_back_into()
+    {
+        UseLiveLedger();
+        if (OwnWarmExe() is not { } warmExe) return;
+        var deep = ProxyRun(warmExe, "screenter-deep", "screenter 20");
+        Assert.Contains("calls 21", deep.Out);
+        Assert.Contains("slot15 overlay", deep.Out);
+        Assert.Contains("hooked 0", deep.Out);
+        Assert.Contains("frames -1", deep.Out);
+        Assert.Matches(@"CreateSwapChain re-entered 8 deep, called back from [^\r\n]*selftest\.exe", deep.Log);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(deep.Log, "re-entered 8 deep"));   // once
+        Assert.Contains("frames: off (CreateSwapChain re-entered: another hook calls it back)", deep.Log);
+        Assert.Equal((true, (bool?)true), (deep.Launch.FramesReentry, deep.Launch.HooksOn));
+        Assert.NotNull(deep.Launch.FramesOffT);
+
+        var shallow = ProxyRun(warmExe, "screenter-shallow", "screenter 2");
+        Assert.Contains("calls 3", shallow.Out);
+        Assert.Contains("slot15 ours", shallow.Out);
+        Assert.Contains("hooked 1", shallow.Out);
+        Assert.Contains("frames 3", shallow.Out);
+        Assert.Null(shallow.Launch.FramesOffT);
+        Assert.DoesNotContain("re-entered", shallow.Log);
+        Assert.DoesNotContain("one after another", shallow.Log);
+
+        // a frame generation mod's hook makes its swap chain from inside the proxy's, on its present queue: frame timing off,
+        // the swap chain made unhooked, the factory's hooks kept
+        var fg = ProxyRun(warmExe, "screenter-fg", "screenter 1 \"AMD FSR PresentQueue\"");
+        Assert.Contains("calls 2", fg.Out);
+        Assert.Contains("slot15 ours", fg.Out);
+        Assert.Contains("hooked 0", fg.Out);
+        Assert.Contains("frames -1", fg.Out);
+        Assert.Contains("frames: off (frame generation swap chain)", fg.Log);
+        Assert.False(fg.Launch.FramesReentry);
+        Assert.NotNull(fg.Launch.FramesOffT);
+        Assert.DoesNotContain("re-entered", fg.Log);
+        // ...and called back 8 deep after: the factory's hooks out too, reentry written after frame generation's #frames_off
+        var both = ProxyRun(warmExe, "screenter-fg-deep", "screenter 20 \"AMD FSR PresentQueue\"");
+        Assert.Contains("slot15 overlay", both.Out);
+        Assert.Contains("hooked 0", both.Out);
+        Assert.Contains("frames: off (frame generation swap chain)", both.Log);
+        Assert.Contains("frames: CreateSwapChain hooks off (CreateSwapChain re-entered: another hook calls it back)", both.Log);
+        Assert.True(both.Launch.FramesReentry);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(Path.Combine(_root, "screenter-fg-deep", "scskiller_creates.csv")), "#frames_off,").Count);
+
+        // creates one after another, not nested: logged once, frame timing stays on
+        var burst = ProxyRun(warmExe, "scburst", "scburst 300");
+        Assert.Contains("failed 300", burst.Out);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(burst.Log, "CreateSwapChain called 100 times in 0.1 s on one thread, one after another"));
+        Assert.DoesNotContain("re-entered", burst.Log);
+        Assert.Null(burst.Launch.FramesOffT);
+    }
+
+    /// <summary>A device removed while recording (`selftest removed`: ID3D12Device5::RemoveDevice on WARP, as a TDR would;
+    /// upstream issue 62), frame timing off: the proxy's watch writes #removed with the reason to the csv and lets the device
+    /// go, so the game's next device is a new one.</summary>
+    [Fact]
+    public void The_proxy_marks_a_removed_device_in_the_csv_and_lets_it_go()
+    {
+        UseLiveLedger();
+        if (OwnWarmExe() is not { } warmExe) return;
+        var r = ProxyRun(warmExe, "removed", "removed", "frames=0\r\n");
+        if (r.Out.Contains("no RemoveDevice")) return;
+        var reason = System.Text.RegularExpressions.Regex.Match(r.Out, "removed (0x[0-9a-f]{8})").Groups[1].Value;
+        Assert.NotEqual("0x00000000", reason);
+        Assert.Contains("again 0x00000000", r.Out);
+        Assert.Equal(reason, r.Launch.RemovedReason);
+        Assert.InRange(r.Launch.Removed!.Value - r.Launch.Start!.Value, 0, 60_000);
+        Assert.True(r.Launch.HooksOn);   // nvapi=1
+        Assert.Contains($"removed ({reason}): written to the csv for the app's crash guard", r.Log);
+        Assert.True(RecorderHealth.Judge(new[] { r.Launch }, null, 0, 0, null, null, RecorderHealth.Threshold)!.Failed);
+    }
+
+    /// <summary>A device the game releases (`selftest released`: a probe, a renderer restart) goes with it: the proxy's watch
+    /// holds it only while the game does, and writes no #removed for it.</summary>
+    [Fact]
+    public void The_proxy_lets_a_device_go_with_the_game()
+    {
+        UseLiveLedger();
+        if (OwnWarmExe() is not { } warmExe) return;
+        var r = ProxyRun(warmExe, "released", "released");
+        Assert.Contains("freed 1", r.Out);
+        Assert.Contains("again 0x00000000", r.Out);
+        Assert.Matches(@"device [0-9A-Fa-f]+ let go by the game: no longer watched", r.Log);
+        Assert.Null(r.Launch.Removed);
+        Assert.DoesNotContain("#removed", File.ReadAllText(Path.Combine(_root, "released", "scskiller_creates.csv")));
+    }
+
     /// <summary>The proxy's frame file held open by another handle at first (`selftest framesheld`): the frames presented
     /// meanwhile are lost, and the first one written after keeps its own time.</summary>
     [Fact]
@@ -5712,6 +5820,24 @@ public partial class AppTests : IDisposable
         Assert.Null(value);
         Assert.False(Apply(false, @"D:\Moved\SCSKiller.exe"));
         Assert.Equal(3, writes);
+    }
+
+    /// <summary>settings.json is shared with other builds (an upstream release on the same data folder): keys this build
+    /// doesn't know are written back as they were when it saves its own.</summary>
+    [Fact]
+    public void Settings_another_build_wrote_survive_a_save()
+    {
+        var store = new AppStore(Path.Combine(_root, "data"));
+        store.SaveSettings(AppStore.DefaultSettings);
+        Assert.Equal(AppStore.DefaultSettings, store.LoadSettings());
+        var file = Path.Combine(_root, "data", "settings.json");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+        json["NewerSetting"] = 7;
+        json["NewerList"] = new System.Text.Json.Nodes.JsonArray("a", "b");
+        File.WriteAllText(file, json.ToJsonString());
+        store.SaveSettings(store.LoadSettings() with { CloseQuits = true });
+        var saved = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+        Assert.Equal((7, "b", true), ((int)saved["NewerSetting"]!, (string)saved["NewerList"]![1]!, (bool)saved["CloseQuits"]!));
     }
 
     [Fact]

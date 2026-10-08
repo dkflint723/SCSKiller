@@ -600,6 +600,58 @@ public partial class AppTests
         Assert.Null(rec.StreamlineNeverSaw);
     }
 
+    /// <summary>Another build of the game clears a never-saw run, as "Try again" does: only a run after that sets it again.
+    /// One kept before builds were takes the build it is next seen with.</summary>
+    [Fact]
+    public void A_never_saw_streamline_run_is_cleared_by_another_build()
+    {
+        var at = DateTimeOffset.Now;
+        var rec = new GameRecord { LastPlay = new PlayWindow(at.AddMinutes(-10), at.AddMinutes(-5)) };
+        Assert.True(ScsKiller.StreamlineBlocks(true, rec, null, ScsKiller.NeverSawNote, "1.0", at));
+        Assert.Equal("1.0", rec.StreamlineNeverSawBuild);
+        Assert.True(ScsKiller.StreamlineBlocks(true, rec, null, null, "1.0", at));   // the same build: kept
+        Assert.False(ScsKiller.StreamlineBlocks(true, rec, null, null, "1.1", at));
+        Assert.Equal(((DateTimeOffset?)null, (string?)null, (DateTimeOffset?)at), (rec.StreamlineNeverSaw, rec.StreamlineNeverSawBuild, rec.StreamlineRetryAt));
+        Assert.False(ScsKiller.StreamlineBlocks(true, rec, null, ScsKiller.NeverSawNote, "1.1", at));   // that run again: not counted
+        rec.LastPlay = new PlayWindow(at.AddMinutes(1), at.AddMinutes(5));
+        Assert.True(ScsKiller.StreamlineBlocks(true, rec, null, ScsKiller.NeverSawNote, "1.1", at));   // a later one
+        rec.StreamlineNeverSawBuild = null;
+        Assert.True(ScsKiller.StreamlineBlocks(true, rec, null, null, "1.2", at));
+        Assert.Equal("1.2", rec.StreamlineNeverSawBuild);
+    }
+
+    /// <summary>"Try again" on a Streamline game the recorder never saw (SkipStreamline) puts the recorder back; the run it
+    /// never saw doesn't count again.</summary>
+    [Fact]
+    public async Task Try_again_puts_the_recorder_back_in_a_streamline_game_it_never_saw()
+    {
+        File.WriteAllBytes(_game.ExePath, DiscoveryAndVendorTests.Exe("sl.interposer.dll"));
+        File.WriteAllBytes(Path.Combine(_exeDir, "sl.interposer.dll"), Planning.MiddlewarePackTests.Pe(null));
+        var dll = Path.Combine(_exeDir, "d3d12.dll");
+        File.Copy(_proxy, dll);
+        File.SetCreationTimeUtc(dll, DateTime.UtcNow.AddHours(-1));
+        var k = Killer(new FakeReader(Unreal), new NeedsRecordingPlanner(), vendor: new FakeVendor(Gpu with { Vendor = GpuVendor.Nvidia }));
+        k.ProcessNames = () => new HashSet<string>();
+        k.ManageRecorders = true;
+        await k.ScanAsync(default);
+        var rec = k.Store.LoadGame(_game.Id);
+        rec.LastPlay = new PlayWindow(DateTimeOffset.Now.AddMinutes(-10), DateTimeOffset.Now.AddMinutes(-5));   // it wrote nothing in this run
+        k.Store.SaveGame(_game.Id, rec);
+        await k.ScanAsync(default);
+        Assert.Equal((ScsKiller.SkipStreamline, true), (k.Games.Single().RecorderSkip, k.Games.Single().StreamlineFirst));
+        Assert.False(File.Exists(dll));
+
+        k.ResetRecorderHealth(_game.Id);
+        var s = k.Games.Single();
+        Assert.Equal(((string?)null, false), (s.RecorderSkip, s.StreamlineFirst));
+        Assert.True(File.Exists(dll));
+        Assert.Null(k.Store.LoadGame(_game.Id).StreamlineNeverSaw);
+        File.SetCreationTimeUtc(dll, DateTime.UtcNow.AddHours(-1));   // even a proxy that never went
+        k.RefreshGame(_game.Id);
+        Assert.Null(k.Games.Single().RecorderSkip);
+        k.StopWatchingInstalls();
+    }
+
     /// <summary>The cached answer follows the DLLs it was read from, not only the exe: sl.interposer.dll removed, or a DLL the
     /// exe imports updated to import d3d12.dll, makes the game recordable again at the next refresh.</summary>
     [Theory]

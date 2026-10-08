@@ -101,6 +101,10 @@ public sealed class GameRecord
     public string? RecorderSessionSeen { get; set; }         // the #session stamp (unix ms) of the last launch judged: never judged again
     public DateTimeOffset? RecorderInstalledAt { get; set; } // when our proxy went in (or was first seen there): only later launches are judged
     public DateTimeOffset? StreamlineNeverSaw { get; set; }  // the start of a watched run of a StreamlineFirst game the recorder, in place, saw no device in: only then SkipStreamline
+    public string? StreamlineNeverSawBuild { get; set; }     // the build that run was of (as RecorderLevelBuild): another one clears StreamlineNeverSaw
+    public DateTimeOffset? StreamlineRetryAt { get; set; }   // StreamlineNeverSaw was cleared ("Try again", another build): only a later run sets it again
+    public string? RecorderFramesOff { get; set; }           // why frame timing is off for the game (the proxy's #frames_off reentry); null = on. "Try again" and another build clear it
+    public DateTimeOffset? RecorderHooksExcused { get; set; } // when a launch at pipelines only that still ran the hooks was let off (ScsKiller.GuardRecorder): one per level
 }
 
 /// <summary>The exe discovery took for a game whose source named <paramref name="Named"/>, its Unreal Shipping exe or the named
