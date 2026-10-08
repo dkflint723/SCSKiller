@@ -2064,7 +2064,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>The community's key list (keys\collection.json in the data folder). Replaceable for tests.</summary>
     public KeyCollection KeyList { get => field ??= new(Store.DataDir); set; }
     /// <summary>A game's names and key check for a lookup (<see cref="UnrealReader.KeyLookupCheck"/>). Replaceable for tests.</summary>
-    internal Func<Game, (string[] Names, Func<string, bool> TrySet)?> KeyCheck { get => field ??= g => UnrealFiles?.KeyLookupCheck(g); set; }
+    internal Func<Game, KeyTrial?> KeyCheck { get => field ??= g => UnrealFiles?.KeyLookupCheck(g); set; }
     /// <summary>The queued key lookups of scans (<see cref="StartKeyLookups"/>) and key imports (<see cref="ImportKeysAsync"/>),
     /// one at a time: never two trying the same game.</summary>
     public Task KeyLookupPass { get; private set; } = Task.CompletedTask;
@@ -2082,7 +2082,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         // the checks open the game's containers: off the caller's thread
         if (await Task.Run(() => KeyCheck(g), ct) is not { } check) return new(KeyLookupOutcome.NoWorkingKey, $"{g.Name} isn't an Unreal game SCSKiller can read.");
-        return await Task.Run(() => KeyList.LookUpAsync(KeyListUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online, stage), ct);
+        using (check) return await Task.Run(() => KeyList.LookUpAsync(KeyListUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online, stage), ct);
     }
 
     // for an encrypted game; reads files: off the caller's thread
@@ -2134,7 +2134,7 @@ public sealed partial class ScsKiller : IScsKiller
                 r = await Task.Run(() =>
                 {
                     if (KeyCheck(g) is not { } check) return null;
-                    return KeyCollection.TryImported(named, unnamed, check.Names, check.TrySet, Log, ct, LookupMemo(g));
+                    using (check) return KeyCollection.TryImported(named, unnamed, check.Names, check.TrySet, Log, ct, LookupMemo(g));
                 }, ct);
             }
             catch (Exception e) when (e is not OperationCanceledException) { r = new(KeyLookupOutcome.NoWorkingKey, $"Trying the keys failed: {e.Message}"); }
@@ -2680,14 +2680,17 @@ public sealed partial class ScsKiller : IScsKiller
         var dir = Store.GameDir(g.Id);
         var community = CommunityInUse(g.Id) != null ? Path.Combine(dir, "community.db") : null;
         var (stateIndependent, sameLayer) = (Vendor.Caps.StateIndependentCache, r.WarmedLayer != null && r.WarmedLayer == LayerNow(g));
-        var shipped = Shipped(g, r);
-        var shippedRs = shipped != null && r.IndexContentHash is { } hash ? Sharing.ShippedRootSignatures(dir, hash) : null;
-        Func<string, bool>? installed = shippedRs == null ? null : h => shipped!.Contains(h) || shippedRs.Contains(h);
-        if (!stateIndependent && !sameLayer && installed == null) return [];
+        // the shipped lists are read only on a miss: a big game's are megabytes (by their headers in the key)
+        var hash = IndexIsInstalled(g, r) && r.IndexContentHash is { } h0 && Sharing.HasShipped(dir, h0) ? h0 : null;
+        if (!stateIndependent && !sameLayer && hash == null) return [];
         string?[] recordings = [RecordingPath(g.Id), community];
         string?[] inputs = [.. recordings, r.Plan?.FilePath, warmKeys, Path.Combine(dir, Sharing.ShippedFile), Path.Combine(dir, Sharing.ShippedRootSignaturesFile)];
-        return KeyFiles.Derived(dir + "|covered", inputs, $"{stateIndependent}|{sameLayer}|{installed != null}", () =>
-            WarmInputs.Covered([.. recordings.OfType<string>()], r.Plan?.FilePath, warmed, stateIndependent, sameLayer, installed));
+        return KeyFiles.Derived(dir + "|covered", inputs, $"{stateIndependent}|{sameLayer}|{hash != null}", () =>
+        {
+            var (shipped, shippedRs) = hash != null ? (Sharing.Shipped(dir, hash), Sharing.ShippedRootSignatures(dir, hash)) : (null, null);
+            Func<string, bool>? installed = shipped == null || shippedRs == null ? null : h => shipped.Contains(h) || shippedRs.Contains(h);
+            return WarmInputs.Covered([.. recordings.OfType<string>()], r.Plan?.FilePath, warmed, stateIndependent, sameLayer, installed);
+        });
     }
 
     /// <summary>The plan's records the planner made: neither a pack entry nor in the recording prepared for it in <paramref name="work"/>.</summary>

@@ -29,6 +29,13 @@ using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.Unreal;
 
+/// <summary>A game's names and key check for a key list lookup (<see cref="UnrealReader.KeyLookupCheck"/>): TrySet stores a
+/// key only if it opens the game's files; <paramref name="Close"/> releases what the checks opened.</summary>
+public sealed record KeyTrial(string[] Names, Func<string, bool> TrySet, Action? Close = null) : IDisposable
+{
+    public void Dispose() => Close?.Invoke();
+}
+
 /// <summary>Cooked UE 4.2x/5.x games: every shader in the shader code libraries (ShaderArchive-*.ushaderbytecode), via
 /// CUE4Parse, or, for games without libraries (bShareMaterialShaderCode=False), carved out of the packages that own them
 /// (<see cref="InlineShaders"/>). Engine version, fork EGame and paks dir are auto-detected; encrypted containers are
@@ -109,15 +116,18 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     /// <summary>For a key list lookup (<see cref="KeyCollection"/>): the names the game may be listed under (store name,
     /// install folder, project, exe) and a check that stores a key as <see cref="SetKey"/> does, only if it opens the game's
-    /// encrypted containers. The containers are surveyed at the first check, once. Null: not a cooked Unreal game.</summary>
-    public (string[] Names, Func<string, bool> TrySet)? KeyLookupCheck(Game game)
+    /// encrypted containers. The containers are surveyed at the first check, once, and each opened once for all the keys
+    /// tried (<see cref="KeyCheck"/>) until the trial is disposed. Null: not a cooked Unreal game.</summary>
+    public KeyTrial? KeyLookupCheck(Game game)
     {
         if (Locate(game) is not { } where) return null;
         var (paks, baseGame, fork, project, _) = where;
         var eg = fork ?? baseGame;
         List<string>? encrypted = null;
-        return ([game.Name, GameFiles.FolderName(game.InstallDir), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
-            key => (encrypted ??= Survey(paks, eg, project, null).Encrypted).Count > 0 && keys.Set(game, key, k => OpensAny(encrypted, eg, k)));
+        KeyCheck? check = null;
+        return new([game.Name, GameFiles.FolderName(game.InstallDir), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
+            key => (encrypted ??= Survey(paks, eg, project, null).Encrypted).Count > 0 && keys.Set(game, key, (check ??= new KeyCheck(encrypted, eg)).Opens),
+            () => check?.Dispose());
     }
 
     /// <summary>Why the automatic key search has no key for an encrypted game (<see cref="UnrealKeys.Miss"/>).</summary>

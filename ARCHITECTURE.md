@@ -347,7 +347,7 @@ open game files read-only and never launch or attach to the game.
   only if none works and the online lookup is on, the list's other candidates; the Why? dialog's lookup goes in the same
   order and says which stage it is in. An import waits for that pass, and the next pass for it (`KeyLookupPass`). Every
   key is stored only if it opens one of the game's encrypted containers (`UnrealReader.KeyCheck`, as the exe scan's
-  keys). Every container reader SCSKiller makes itself gets the game's own encryption on top of AES (Dead by Daylight
+  keys; a lookup or import opens each container once for all the keys it tries, `KeyTrial`). Every container reader SCSKiller makes itself gets the game's own encryption on top of AES (Dead by Daylight
   XORs its index; `UnrealReader.Custom`), as CUE4Parse's file providers give it to theirs, Marvel Rivals' IoStore
   containers excepted as there. A shipped pipeline cache (`*.stable.upipelinecache`, file versions 17 (UE 4.25) and 22-30,
   `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO becomes one exact shader

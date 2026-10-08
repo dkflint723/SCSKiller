@@ -706,6 +706,30 @@ public class UnrealReaderTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, true); }   // no GC needed: the key check closes the files itself when CUE4Parse throws
     }
 
+    /// <summary>A key list lookup tries many keys: the game's encrypted containers are opened at its first check and kept
+    /// open for the rest, not opened again per key, and closed when the trial is.</summary>
+    [Fact]
+    public void A_key_lookup_opens_each_container_once_and_closes_it()
+    {
+        var install = Ff7.TempDir("keys-trial");
+        var paks = Directory.CreateDirectory(Path.Combine(install, "Proj", "Content", "Paks")).FullName;
+        var pak = Path.Combine(paks, "A.pak");
+        EncryptedPak(pak, KeyBytes(1));
+        var game = new Game("test:keys-trial", "Keys", Store.Other, install, "");
+        bool Held() { try { File.Open(pak, FileMode.Open, FileAccess.ReadWrite, FileShare.None).Dispose(); return false; } catch (IOException) { return true; } }
+        var trial = reader.KeyLookupCheck(game)!;
+        Assert.Contains("Keys", trial.Names);
+        Assert.False(Held());   // nothing opened before a key is tried
+        using (trial)
+        {
+            Assert.False(trial.TrySet(Key(33)));
+            Assert.True(Held());
+            Assert.False(trial.TrySet(Key(65)));
+            Assert.True(trial.TrySet(Key(1)));
+        }
+        Assert.False(Held());
+    }
+
     /// <summary>Upstream issue 83: Dead by Daylight XORs its pak index with bytes from the pak's footer on top of AES. The key
     /// check gives its readers the game's own decryption, as a CUE4Parse provider does, so its right key opens it; a wrong
     /// one still doesn't.</summary>

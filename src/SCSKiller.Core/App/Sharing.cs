@@ -294,6 +294,23 @@ public sealed class Sharing
     /// <summary>The root signatures of <see cref="ShippedRootSignaturesFile"/>, null when it's missing or for another build.</summary>
     internal static HashSet<string>? ShippedRootSignatures(string gameDir, string contentHash) => Hashes(Path.Combine(gameDir, ShippedRootSignaturesFile), contentHash);
 
+    /// <summary>Whether <see cref="ShippedFile"/> and <see cref="ShippedRootSignaturesFile"/> are both for this build, by
+    /// their first 20 bytes: what <see cref="Shipped"/> and <see cref="ShippedRootSignatures"/> give then, unread.</summary>
+    internal static bool HasShipped(string gameDir, string contentHash) =>
+        IsFor(Path.Combine(gameDir, ShippedFile), contentHash) && IsFor(Path.Combine(gameDir, ShippedRootSignaturesFile), contentHash);
+
+    static bool IsFor(string path, string contentHash)
+    {
+        try
+        {
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var b = new byte[20];
+            return f.Length >= 20 && f.Length % 20 == 0 && f.ReadAtLeast(b, 20, false) == 20 && Convert.ToHexStringLower(b) == contentHash;
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
     static HashSet<string>? Hashes(string path, string contentHash)
     {
         var b = File.Exists(path) ? File.ReadAllBytes(path) : [];
