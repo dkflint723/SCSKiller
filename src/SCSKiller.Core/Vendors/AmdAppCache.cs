@@ -110,7 +110,7 @@ public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
     public IReadOnlyList<FileInfo> FilesOf(IEnumerable<string> keys)
     {
         var set = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return set.Count == 0 ? [] : All().Where(f => set.Contains(f.Key)).Select(f => new FileInfo(f.Path)).ToList();
+        return set.Count == 0 ? [] : AllFiles().Where(f => set.Contains(f.Key)).Select(f => new FileInfo(f.Path)).ToList();
     }
 
     /// <summary>Bytes of these keys' files. Sizes are current even while the driver has a file mapped (it grows the file;
@@ -119,7 +119,7 @@ public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
 
     /// <summary>Keys of the DxcCache and DxCache files a running process with this exe file name has open now: the
     /// authoritative way to learn a game's key (profiles included).</summary>
-    public IReadOnlySet<string> KeysOpenBy(string exeFileName) => AppCacheFiles.KeysOpenBy(exeFileName, All());
+    public IReadOnlySet<string> KeysOpenBy(string exeFileName) => AppCacheFiles.KeysOpenBy(exeFileName, AllFiles());
 
     public int Delete(IEnumerable<string> keys) => AppCacheFiles.DeleteAll(FilesOf(keys));
 
@@ -152,7 +152,7 @@ public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
             + "The driver then trims the least recently used caches, older games' included, and those games stutter until compiled again.";
     }
 
-    IEnumerable<(string Path, string Key)> All()
+    public IEnumerable<(string Path, string Key)> AllFiles()
     {
         foreach (var (dir, d3d12) in new[] { (DxcDir, true), (DxDir, false) })
         {

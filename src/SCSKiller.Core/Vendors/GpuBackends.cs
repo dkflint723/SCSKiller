@@ -4,10 +4,11 @@ namespace SCSKiller.Core.Vendors;
 
 public static class GpuBackends
 {
-    /// <summary>Backend for the primary discrete adapter. Adding a vendor = one case here.</summary>
-    public static IGpuVendorBackend Detect()
+    /// <summary>Backend for the primary discrete adapter, or the one <paramref name="preferred"/> names (<see cref="Chosen"/>).
+    /// Adding a vendor = one case here.</summary>
+    public static IGpuVendorBackend Detect(string? preferred = null)
     {
-        var gpu = PrimaryAdapter() ?? new GpuInfo(GpuVendor.Unknown, "no D3D adapter", "", 0, 0);
+        var gpu = PrimaryAdapter(preferred) ?? new GpuInfo(GpuVendor.Unknown, "no D3D adapter", "", 0, 0);
         try
         {
             return gpu.Vendor switch
@@ -25,9 +26,31 @@ public static class GpuBackends
 
     /// <summary>The non-software adapter with the most dedicated VRAM (what games render on), the same rule as
     /// scskiller_warm. DriverVersion is the user-mode driver file version (vendor backends replace it).</summary>
-    public static GpuInfo? PrimaryAdapter() => Primary(Adapters());
+    public static GpuInfo? PrimaryAdapter(string? preferred = null) => Primary(Adapters(), preferred);
 
-    public static GpuInfo? Primary(IReadOnlyList<DxgiAdapter> adapters) => adapters.MaxBy(a => a.Gpu.DedicatedVideoMemory)?.Gpu;
+    public static GpuInfo? Primary(IReadOnlyList<DxgiAdapter> adapters, string? preferred = null) => Chosen(adapters, preferred)?.Gpu;
+
+    /// <summary>The adapter of <see cref="Choices"/> that <paramref name="preferred"/> (Settings.GpuAdapter) names, else the
+    /// one with the most VRAM: a choice not listed now (removed, or of another vendor) falls back to it.</summary>
+    public static DxgiAdapter? Chosen(IReadOnlyList<DxgiAdapter> adapters, string? preferred) =>
+        (preferred != null ? Choices(adapters).FirstOrDefault(c => c.Id.Equals(preferred, StringComparison.OrdinalIgnoreCase)).Adapter : null)
+        ?? adapters.MaxBy(a => a.Gpu.DedicatedVideoMemory);
+
+    /// <summary>The adapters compiles may target, with their <see cref="AdapterId"/>s: those of the vendor of the one with the
+    /// most VRAM only. Recordings and shared packs are labelled with the backend's vendor, and games render on that GPU.</summary>
+    public static IReadOnlyList<(string Id, DxgiAdapter Adapter)> Choices(IReadOnlyList<DxgiAdapter> adapters)
+    {
+        if (adapters.MaxBy(a => a.Gpu.DedicatedVideoMemory) is not { } main) return [];
+        var list = new List<(string Id, DxgiAdapter Adapter)>();
+        foreach (var a in adapters.Where(a => a.Gpu.Vendor == main.Gpu.Vendor))
+            list.Add((AdapterId(a, list.Count(c => AdapterId(c.Adapter) == AdapterId(a))), a));
+        return list;
+    }
+
+    /// <summary>"10de:2684:16f310de": vendor, device and subsystem ids, which stay across boots and driver updates (the LUID
+    /// doesn't); "#1", "#2"... for further identical cards, in DXGI's order.</summary>
+    public static string AdapterId(DxgiAdapter a, int twin = 0) =>
+        $"{(int)a.Gpu.Vendor:x4}:{a.DeviceId:x4}:{a.SubSysId:x8}" + (twin > 0 ? $"#{twin}" : "");
 
     /// <summary>The non-software adapters, in DXGI's order.</summary>
     public static unsafe IReadOnlyList<DxgiAdapter> Adapters()

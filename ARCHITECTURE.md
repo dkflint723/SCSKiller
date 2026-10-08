@@ -190,8 +190,17 @@ pipelines, not taken from documentation. `VendorCaps` holds the result per vendo
   the game starts, resuming from its `done` afterwards.
 - The records store an opaque 128-bit key over the whole root signature plus the compiled code; none of the D3D12
   inputs (root signature bytes, shader containers or their hashes) can be recovered from the cache.
-- After a driver update, no D3D12 cache file older than the install remains, which is why SCSKiller recompiles after
-  one.
+- After a driver update the old driver's files stay (measured on 617.14 -> 617.42: a game's 4 GiB D3D12 file, type
+  `0002`, from the old driver was still there and still counted by key; the other types' prefixes changed). A rebuild
+  for the new driver appends into the surviving file, so the game's cache doubled and its 4 GiB file filled up
+  (upstream issue 74). That the old entries serve the new driver nothing is inferred from why SCSKiller recompiles,
+  not measured. So a compile for a new driver (the record warmed for another one, not resuming this driver's, the game
+  not running, `Settings.ClearOldDriverCache`, default on) first deletes the game's files last written and created
+  before the driver became current (`driver.json`: the current `DriverId` and since when, noted at every GPU check),
+  key by key; files the game wrote on the new driver stay. A watched play after the old compile that began earlier
+  moves the cut to its start. A driver already there when `driver.json` was first written has no start: then only a
+  game not seen running since its compile is cleared, whole. Never a key another game shares; once per driver
+  (`GameRecord.OldDriverCleared`). On AMD the file names carry the driver build, and the same rule applies.
 - The D3D12 runtime version is not part of the key: pipelines compiled under the system runtime hit under a game's
   Agility SDK runtime and the reverse. The warm runs on the game's Agility runtime when the game ships one
   (`scskiller_warm --d3d12`: the Agility SDK DLLs of the folder the game exe's `D3D12SDKPath` export names, a relative
@@ -1074,6 +1083,11 @@ scskiller_warm.exe <workdir> <game exe file name> [--threads N] [--priority belo
   AMD's compiler doesn't wait there, and on the segment heap an 84,000-pipeline AMD warm took about 25% longer (147 s
   against 118 s), so AMD and other vendors keep the NT heap.
 - `--adapter-luid <hex>`: `(HighPart << 32) | LowPart`; default the hardware adapter with the most dedicated VRAM.
+  The app always passes its backend's adapter: the one with the most VRAM, or the one `Settings.GpuAdapter` names
+  (upstream issue 43) by PCI vendor, device and subsystem ids (`GpuBackends.AdapterId`, "#1"... for identical cards in
+  DXGI's order; the LUID changes every boot), chosen at the start. Only that vendor's adapters can be picked, since
+  recordings and shared packs are labelled with the backend's vendor; a pick not listed falls back to the most VRAM. A
+  pick changed while the app runs asks for a restart (`GpuRestartNote`).
 - `--package`: run the staged copy with that app's package identity (see [NVIDIA, D3D12](#nvidia-d3d12)). The child
   then gets none of the caller's environment.
 - Exit codes: 0 completed or stopped; 1 failure, after an `error` line; 3 after a `retry` line.
@@ -1230,3 +1244,19 @@ install at materialize time.
 It's refused while the game runs (by process name; no process is opened), and when another game shares one of its
 cache keys: on AMD an app profile or the same name hash, on NVIDIA the same exe name. Anti-cheat games get their
 driver cache cleared only. Clearing also resets the first-launch judgement on AMD.
+
+Settings' "Clean up shader caches" and the CLI's `cache clear --all` / `cache cleanup` delete driver-cache files key
+by key (`AppCacheFiles.DeleteByKey`), each key all or none: a key a running process holds open (the driver keeps a
+running game's, a browser's, Steam's and Discord's files open) is kept and its holders are named, so a whole-cache
+delete never fails on them. Only `*.nvph` and `*.parc` files with a key are touched.
+
+- `ClearDriverCache` (upstream issue 80): every key; refused during a compile. Games whose keys went are reset like
+  Clear cache does (their keys stay).
+- `CleanupItems` (upstream issue 35), listed only after a scan: a folder under `games\` that no listed game has and
+  whose exe (`GameRecord.GameExe`, noted at each evaluation) isn't on disk is a game no longer installed. Its keys no
+  listed game uses or would get (on NVIDIA, none when a listed game's exe has its exe's name) are offered, ticked only
+  when its exe is known (an earlier build's record may be a game on a drive that isn't connected). Its SCSKiller folder
+  (plan, recording) is offered unticked, and never while its record tracks the recorder in a game folder. The other
+  vendor's caches (`%LOCALAPPDATA%\NVIDIA\DXCache`, `%LOCALAPPDATA%\AMD\DxcCache` and `DxCache`) are offered unticked:
+  another GPU of the PC (integrated graphics) may use them. A game's older SCSKiller compiles can't be told apart inside
+  its driver cache file: Clear cache and compile again is the only way to start it over.

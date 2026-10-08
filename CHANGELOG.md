@@ -23,6 +23,21 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **FINAL FANTASY XVI**: SCSKiller reads the game's pipeline list (`ffxvi.pspc`) with every pipeline's shaders and root
   signature. On NVIDIA it compiles all of them without a recording (about 57,000 pipelines); on AMD it needs a
   recording, since AMD's cache also depends on pipeline state the list doesn't give.
+- **"Clean up shader caches"** in Settings: "Clear all…" deletes the whole driver shader cache, every game's and app's,
+  after asking (upstream issue 80). Below it, the caches nothing installed uses, each with its size, to tick and delete:
+  the driver caches of games no longer installed, SCSKiller's data for them, and the other GPU vendor's driver cache
+  (upstream issue 35). Caches that running apps hold open (a game, a browser, Steam, Discord) are kept and named. The
+  Library's cache card links there. On the command line: `scskiller cache clear --all`, `scskiller cache cleanup`.
+- **Pick the GPU to compile for** on a PC with two GPUs of the same vendor (upstream issue 43): "Compile for" in
+  Settings, or `scskiller gpu`. It takes effect at the next start; the default is still the GPU with the most video
+  memory.
+
+### Faster and steadier
+
+- **A rebuild after a driver update no longer doubles a game's cache** (upstream issue 74). The driver keeps the old
+  driver's files, and a rebuild added to them. Now the game's cache files from before the new driver are deleted first;
+  what the game compiled itself on the new driver stays. "Delete a game's cache from the old driver before rebuilding
+  it" in Settings turns it off.
 
 ### Recorder and anti-cheat
 

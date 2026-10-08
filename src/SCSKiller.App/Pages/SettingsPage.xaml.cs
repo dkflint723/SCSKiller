@@ -17,7 +17,7 @@ public sealed partial class SettingsPage : Page
         InitializeComponent();
         var refresh = new Coalesced(DispatcherQueue, Vm.GamesChanged);   // reconcile changes the recorder count
         void OnChanged(GameState _) => refresh.Request();
-        Loaded += (_, _) => { Patreon.Watch(true); App.Core.GameChanged += OnChanged; };
+        Loaded += (_, _) => { Patreon.Watch(true); App.Core.GameChanged += OnChanged; Vm.ReadStorage(); };
         Unloaded += (_, _) => { Patreon.Watch(false); App.Core.GameChanged -= OnChanged; };
         Vm.PropertyChanged += (_, _) => Patreon.Refresh();   // e.g. the share checkbox ticked: the prompt goes
     }
@@ -83,6 +83,44 @@ public sealed partial class SettingsPage : Page
         });
         try { if (rescan != null) await rescan; }
         catch (Exception ex) { ImportKeysStatus.Text = $"{summary} Checking the games again failed: {ex.Message}"; }
+    }
+
+    // Upstream issue 80: every app's driver cache, after the user's OK; what running apps hold is kept and said.
+    async void OnClearDriverCache(object _, RoutedEventArgs __)
+    {
+        if (!await App.ConfirmAsync(this, "Clear the whole driver shader cache?", Vm.ClearCacheQuestion, "Clear all")) return;
+        ClearAllButton.IsEnabled = false;
+        try { (Vm.StorageMessage, Vm.StorageSeverity) = (SettingsVm.Deleted(await Task.Run(App.Core.ClearDriverCache)), InfoBarSeverity.Success); }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            (Vm.StorageMessage, Vm.StorageSeverity) = ("Nothing was cleared: " + ex.Message, InfoBarSeverity.Error);
+        }
+        ClearAllButton.IsEnabled = true;
+        Vm.ReadStorage();
+        Vm.Refresh();   // the cache's use above
+    }
+
+    // Upstream issue 35: the ticked rows of the clean-up list, after the user's OK.
+    async void OnCleanUp(object _, RoutedEventArgs __)
+    {
+        var ticked = Vm.Cleanup.Where(r => r.Checked == true).ToList();
+        if (ticked.Count == 0) { (Vm.StorageMessage, Vm.StorageSeverity) = ("Tick what to delete first.", InfoBarSeverity.Informational); Vm.GamesChanged(); return; }
+        if (!await App.ConfirmAsync(this, $"Delete {Format.Bytes(ticked.Sum(r => r.Item.Bytes))}?",
+                string.Join("\n", ticked.Select(r => $"{r.Name} ({r.Size}): {r.Note}")), "Delete")) return;
+        CleanUpButton.IsEnabled = false;
+        var lines = new List<string>();
+        var failed = false;
+        foreach (var r in ticked)
+            try { lines.Add($"{r.Name}: {SettingsVm.Deleted(await Task.Run(() => App.Core.CleanUp(r.Item.Id)))}"); }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                lines.Add($"{r.Name}: not deleted: {ex.Message}");
+                failed = true;
+            }
+        (Vm.StorageMessage, Vm.StorageSeverity) = (string.Join("\n", lines), failed ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
+        CleanUpButton.IsEnabled = true;
+        Vm.ReadStorage();
+        Vm.Refresh();
     }
 
     public void ScrollToEnd() => Scroller.ChangeView(null, Scroller.ScrollableHeight, null, true);

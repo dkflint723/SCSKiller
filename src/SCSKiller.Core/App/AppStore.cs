@@ -101,6 +101,9 @@ public sealed class GameRecord
     public string? RecorderSessionSeen { get; set; }         // the #session stamp (unix ms) of the last launch judged: never judged again
     public DateTimeOffset? RecorderInstalledAt { get; set; } // when our proxy went in (or was first seen there): only later launches are judged
     public DateTimeOffset? StreamlineNeverSaw { get; set; }  // the start of a watched run of a StreamlineFirst game the recorder, in place, saw no device in: only then SkipStreamline
+    public string? GameName { get; set; }                   // the game's name and exe at its last evaluation: Settings' clean-up names a game
+    public string? GameExe { get; set; }                    // ...no longer installed by them, and tells whether its exe is still there
+    public string? OldDriverCleared { get; set; }           // the DriverId a compile deleted the game's older driver-cache files for (ScsKiller.ClearOldDriverFiles): once
 }
 
 /// <summary>The exe discovery took for a game whose source named <paramref name="Named"/>, its Unreal Shipping exe or the named
@@ -111,6 +114,8 @@ public sealed record ShippingPick(string Named, string? Stamp, string Exe);
 /// <summary>A run of the game as the app's watcher saw it: not running at <paramref name="From"/>, last seen running at
 /// <paramref name="To"/> (both within a poll of the real start and exit).</summary>
 public sealed record PlayWindow(DateTimeOffset From, DateTimeOffset To);
+
+public sealed record DriverSince(string Id, DateTimeOffset? Since);
 
 /// <summary>A launch's driver creates from the recorder's csv (<see cref="SessionLog"/>): cache hits and compiles, started at
 /// <paramref name="At"/>.</summary>
@@ -325,6 +330,10 @@ public sealed class AppStore(string dataDir)
     /// <summary>Vendor -> warm rate (PSO/s) of the first complete warm measured on this PC, for games not warmed yet.</summary>
     public Dictionary<GpuVendor, double> LoadWarmRates() => Load<Dictionary<GpuVendor, double>>(Path.Combine(DataDir, "warmrates.json")) ?? [];
     public void SaveWarmRates(Dictionary<GpuVendor, double> rates) => Save(Path.Combine(DataDir, "warmrates.json"), rates);
+
+    /// <summary>The current driver (ScsKiller.DriverId) and since when it is (null: it was there when this was first noted).</summary>
+    public DriverSince? LoadDriverSince() => Load<DriverSince>(Path.Combine(DataDir, "driver.json"));
+    public void SaveDriverSince(DriverSince d) => Save(Path.Combine(DataDir, "driver.json"), d);
 
     /// <summary>Update channel -> signed_at of the newest signed feed accepted (FeedTrust: no replay of an older feed).</summary>
     public Dictionary<string, DateTimeOffset> LoadFeedTimes() => Load<Dictionary<string, DateTimeOffset>>(Path.Combine(DataDir, "feeds.json")) ?? [];

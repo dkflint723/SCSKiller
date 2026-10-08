@@ -115,7 +115,7 @@ public sealed partial class ScsKiller : IScsKiller
 
     public static ScsKiller CreateDefault()
     {
-        var vendor = GpuBackends.Detect();
+        var vendor = GpuBackends.Detect(new AppStore(AppStore.DefaultDir).LoadSettings().GpuAdapter);   // the user's GPU, else the one with the most VRAM
         var k = new ScsKiller([new SteamSource(), new EpicSource(), new XboxSource(), new GogSource(), new UbisoftSource(), new BattleNetSource(), new PurpleSource(), new HoYoPlaySource(), new EaSource(), new GaijinSource(),
                 new ManualSource(new AppStore(AppStore.DefaultDir))],
             vendor, DefaultReaders(), new Planner(Path.Combine(AppStore.DefaultDir, "packs"), SharedPackDir(AppStore.DefaultDir, vendor.Vendor)), new Warmer(vendor),
@@ -147,12 +147,15 @@ public sealed partial class ScsKiller : IScsKiller
     DxgiAdapter? _known;          // Vendor's adapter as last listed
     bool _resolved;               // the vendor's version read for _known was complete
     DateTimeOffset? _goneSince;   // Vendor's adapter hasn't been listed since
+    string? _startChoice;         // Settings.GpuAdapter at the first detection (_choiceRead)
+    bool _choiceRead;
     readonly object _gpuLock = new();
     /// <summary>A re-detection found another driver or LUID for <see cref="Vendor"/>'s adapter (its Gpu has it), or
     /// <see cref="GpuRestartNote"/> changed. Raised on the detecting thread.</summary>
     public event Action? GpuChanged;
-    /// <summary>Vendor's adapter has been gone for <see cref="GpuGoneAfter"/> while another is there: the backend, its caches,
-    /// the warm exe and the shared packs are chosen when the process starts, so SCSKiller asks for a restart instead.</summary>
+    /// <summary>Vendor's adapter has been gone for <see cref="GpuGoneAfter"/> while another is there, or Settings.GpuAdapter
+    /// now picks another one: the backend, its caches, the warm exe and the shared packs are chosen when the process starts,
+    /// so SCSKiller asks for a restart instead.</summary>
     public string? GpuRestartNote { get; private set; }
     /// <summary>While a driver installs, DXGI lists the adapter without it, or not at all, for a while.</summary>
     public static readonly TimeSpan GpuGoneAfter = TimeSpan.FromMinutes(15);
@@ -163,6 +166,13 @@ public sealed partial class ScsKiller : IScsKiller
     /// <see cref="GpuChanged"/> was raised.</summary>
     public bool RedetectGpu()
     {
+        var changed = Redetect();
+        NoteDriverSince();
+        return changed;
+    }
+
+    bool Redetect()
+    {
         GpuInfo before;
         lock (_gpuLock)
             try
@@ -171,13 +181,17 @@ public sealed partial class ScsKiller : IScsKiller
                 (before, var note, var id) = (Vendor.Gpu, GpuRestartNote, DriverId);
                 if (Followed(all) is { } now)
                 {
-                    (_goneSince, GpuRestartNote) = (null, null);
+                    _goneSince = null;
+                    // a GPU picked in Settings since the start: only the start chooses one (GpuBackends.Detect)
+                    if (!_choiceRead) (_startChoice, _choiceRead) = (Settings.GpuAdapter, true);
+                    GpuRestartNote = Settings.GpuAdapter is var choice && choice != _startChoice && GpuBackends.Chosen(all, choice) is { } pick
+                        && pick.Gpu.AdapterLuid != now.Gpu.AdapterLuid ? $"Restart SCSKiller to use {pick.Gpu.Name}" : null;
                     if (now != _known || !_resolved) (_resolved, _known) = (Vendor is not IRefreshableGpu gpu || gpu.Refresh(now.Gpu), now);
                     if (now.Gpu.DriverVersion.Length > 0)   // none: the last one stays
                         _id = $"{(int)now.Gpu.Vendor:x4}:{now.DeviceId:x4}:{now.SubSysId:x8}:{now.Gpu.DriverVersion}";
                     if (_resolved && _id != null) _completeId = _id;
                 }
-                else if (Clock() - (_goneSince ??= Clock()) >= GpuGoneAfter && GpuBackends.Primary(all) is { } other)
+                else if (Clock() - (_goneSince ??= Clock()) >= GpuGoneAfter && GpuBackends.Primary(all, Settings.GpuAdapter) is { } other)
                     GpuRestartNote = $"Restart SCSKiller to use {other.Name}";
                 if (GpuRestartNote == note && Vendor.Gpu == before && DriverId == id) return false;
             }
@@ -796,7 +810,7 @@ public sealed partial class ScsKiller : IScsKiller
         }
         try
         {
-            if (imported | MergeLaunched(g, rec, marker) | AdoptDriverId(rec, gpuNow) | first != null | earlier | rec.KeysIndexHash != keysOf | rec.KeysPending != keysPending | rec.RtUnseen != rtUnseenWas | rec.RecordedLong != longWas) Store.SaveGame(g.Id, rec);
+            if (imported | MergeLaunched(g, rec, marker) | AdoptDriverId(rec, gpuNow) | NoteIdentity(g, rec) | first != null | earlier | rec.KeysIndexHash != keysOf | rec.KeysPending != keysPending | rec.RtUnseen != rtUnseenWas | rec.RecordedLong != longWas) Store.SaveGame(g.Id, rec);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't save its record: {e.Message}"); }
         long? psos = PlanItems(rec.Plan?.Stats);
@@ -1980,10 +1994,7 @@ public sealed partial class ScsKiller : IScsKiller
             catch (IOException) { }   // not empty: a file appeared meanwhile, left alone
         if (!driver) return true;
         // the keys stay: they are this exe name's, so the cache the game builds by itself still counts in CacheOnDisk
-        if (!IsUnreached(rec)) rec.UnreachedWarm = null;   // a verdict on an older warm: with WarmedAt gone it would apply again
-        (rec.WarmedAt, rec.WarmedDriverVersion, rec.WarmedDriverId, rec.LastWarmTime, rec.LastCacheGrowthBytes, rec.ResumeAt) = (null, null, null, null, null, 0);
-        (rec.LastWarmFailed, rec.LastWarmSkipped, rec.LastWarmNeedsRecording, rec.LastWarmCrashed) = (null, null, null, null);
-        (rec.WarmedCareful, rec.FirstLaunch, rec.WarmedFiles) = (false, null, null);
+        ForgetWarm(rec);
         Store.SaveGame(gameId, rec);
         Refresh(s.Game);
         return true;
@@ -4740,6 +4751,7 @@ public sealed partial class ScsKiller : IScsKiller
                     (rec.ResumeAt, rec.ResumeItems, rec.ResumeSeconds, rec.ResumeFailed) = (0, 0, 0, 0);
                     Store.SaveGame(id, rec);
                 }
+                ClearOldDriverFiles(game, rec, snap);   // a fresh compile for a new driver: the old one's files go first
                 // now, not before the waits (for the game, idle, a pause): ReShade or its add-ons may have changed meanwhile
                 if (BlockingMod(game) is { } mod) throw new NotReadyException($"not ready: {ShaderModReason(mod)}");
                 layer = LayerFor(game, work);

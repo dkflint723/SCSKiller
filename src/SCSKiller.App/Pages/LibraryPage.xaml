@@ -105,8 +105,12 @@
                         <TextBlock Grid.Column="1" Text="{x:Bind Vm.CacheWarnText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource WarnBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
                     </Grid>
-                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit, Mode=OneWay}"
-                                     AutomationProperties.Name="Change the driver shader cache size" />
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit, Mode=OneWay}"
+                                         AutomationProperties.Name="Change the driver shader cache size" />
+                        <HyperlinkButton Content="Clear or clean up" Padding="0" FontSize="12" Click="OnSettings"
+                                         AutomationProperties.Name="Clear or clean up the driver shader cache in Settings" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
             <Border Grid.Column="1" Style="{StaticResource Card}">
