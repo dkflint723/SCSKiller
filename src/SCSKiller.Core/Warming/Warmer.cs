@@ -73,25 +73,51 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
         if (Games.XboxSource.AppUserModelId(game) == null && (stagePath = StagePath(game, workDir, out var why)) == null)
             Log?.Report($"{game.Name}: the compile runs without the install's folder layout: {why}");
         var reg = vendor.Vendor == GpuVendor.Amd ? Ags?.Invoke(game) : null;
-        var ags = AgsArgs(vendor.Vendor, game, reg, reg == null ? null : AmdAgs.DllFor(game, NativeTools.Find(AmdAgs.DllName)), out var agsWhy);
+        var ags = AgsArgs(vendor.Vendor, reg, reg == null ? null : AmdAgs.DllFor(game, NativeTools.Find(AmdAgs.DllName)), out var agsWhy);
         if (agsWhy != null) Log?.Report($"{game.Name}: {agsWhy}");
         if (Layer?.Invoke(game, workDir) is { } layer) ags = [.. ags, "--layer", layer];
+        if (AgilityDir(game.ExePath) is { } d3d12) ags = [.. ags, "--d3d12", d3d12];
         return new WarmRun(vendor, gpu, exe, game, workDir, options, progress, StuckAfter, stagePath, MaxRecoveries, Environment, ags, Log);
     }
 
-    /// <summary>scskiller_warm's --ags arguments: on AMD, for a game that registers with AGS and isn't an Xbox package, the
-    /// child creates its device through <paramref name="agsDll"/> under the game's app and engine names, so the driver keys
-    /// its cache like the game's. Empty otherwise, with the reason when a registration can't be passed.</summary>
-    public static string[] AgsArgs(GpuVendor vendor, Game game, AgsRegistration? reg, string? agsDll, out string? why)
+    /// <summary>scskiller_warm's --ags arguments: on AMD, for a game that registers with AGS (an Xbox app game holds its
+    /// app name's key too, measured), the child creates its device through <paramref name="agsDll"/> under the
+    /// game's app and engine names, so the driver keys its cache like the game's. Empty otherwise, with the reason when a
+    /// registration can't be passed.</summary>
+    public static string[] AgsArgs(GpuVendor vendor, AgsRegistration? reg, string? agsDll, out string? why)
     {
         why = null;
-        if (vendor != GpuVendor.Amd || reg == null || Games.XboxSource.AppUserModelId(game) != null) return [];
+        if (vendor != GpuVendor.Amd || reg == null) return [];
         if (agsDll == null)
         {
             why = $"{AmdAgs.DllName} not found next to the app: the compile fills the exe name's cache, not the one of the game's AGS app name {reg.App}";
             return [];
         }
         return ["--ags", agsDll, "--ags-app", reg.App, "--ags-engine", reg.Engine];
+    }
+
+    /// <summary>scskiller_warm's --d3d12: the folder of the Agility SDK runtime the game's exe asks for (its D3D12SDKPath
+    /// export, relative to the exe), when it holds a D3D12Core.dll; null otherwise. The warm then runs on that runtime, as
+    /// the game does: where the system's is older (Windows 10), it rejects what the game recorded on the newer one.</summary>
+    public static string? AgilityDir(string exePath)
+    {
+        try
+        {
+            using var pe = Carved.PeFile.Open(exePath);
+            return AgilityFolder(Path.GetDirectoryName(Path.GetFullPath(exePath))!, Carved.PeFile.ExportedString(pe, "D3D12SDKPath")) is { } dir
+                   && File.Exists(Path.Combine(dir, "D3D12Core.dll")) ? dir : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException) { return null; }
+    }
+
+    /// <summary>The folder a D3D12SDKPath export names: a relative path that stays inside the exe's folder, as the D3D12
+    /// loader takes it; null for anything else (an absolute path, a drive, a ".." out of it).</summary>
+    public static string? AgilityFolder(string exeDir, string? sdkPath)
+    {
+        if (string.IsNullOrEmpty(sdkPath) || Path.IsPathRooted(sdkPath) || sdkPath.Contains(':')) return null;
+        var dir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(exeDir, sdkPath)));
+        var rel = Path.GetRelativePath(exeDir, dir);
+        return rel == ".." || rel.StartsWith(@"..\", StringComparison.Ordinal) || Path.IsPathRooted(rel) ? null : dir;
     }
 
     const int MaxPath = 260;

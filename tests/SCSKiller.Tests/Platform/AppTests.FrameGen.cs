@@ -138,7 +138,6 @@ public partial class AppTests
     [Fact]
     public async Task Beside_frame_generation_a_game_that_doesnt_need_the_recorder_starts_it_at_pipelines_only()
     {
-        using var _ = new FreshLedger(_root);
         var (k, running, poll, now) = Guarded(new FakeReader(Pspc));
         foreach (var f in new[] { "sl.interposer.dll", "sl.dlss_g.dll" }) File.WriteAllBytes(Path.Combine(_exeDir, f), Planning.MiddlewarePackTests.Pe(f));
         await k.ScanAsync(default);
@@ -248,10 +247,10 @@ public partial class AppTests
         var s = k.Games.Single();
         Assert.Equal((GameStatus.Warmed, 0L, 0L), (s.Status, s.RecordedSinceWarm, s.NewPipelines ?? 0));
 
-        Record("a shader of no plan pipeline"u8.ToArray());   // a pipeline the plan doesn't have: counted
+        Record("a shader of no plan pipeline"u8.ToArray());   // its shader is neither recorded nor in the install: not counted
         using (var f = new FileStream(Path.Combine(_exeDir, "scskiller.db"), FileMode.Append)) PsoDb.Write(f, 'C', PsoDb.Compute(rs, cs2));
         k.RefreshGame(_game.Id);
-        Assert.Equal(2, k.Games.Single().RecordedSinceWarm);
+        Assert.Equal(1, k.Games.Single().RecordedSinceWarm);   // a pipeline the plan doesn't have, its shader in the install: counted
 
         static string Sha(byte[] b) => Convert.ToHexStringLower(SHA1.HashData(b));
     }

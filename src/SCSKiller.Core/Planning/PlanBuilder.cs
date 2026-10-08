@@ -39,6 +39,8 @@ sealed class PlanBuilder
     readonly HashSet<string> have = [];
     readonly Dictionary<string, int> plats = [];
     byte[]? samplers;
+    readonly Dictionary<string, HashSet<string>> settings = [];   // a recorded root signature without its samplers' parameters -> the sampler sets it comes with
+    readonly Dictionary<string, byte[]> samplerSets = [];          // ...each by its hex
     int builtOk, builtN, ownOk, ownN; // own: recorded PSOs whose shaders carry a root signature, and those created with it
 
     // decided from the recording and the caps
@@ -51,6 +53,7 @@ sealed class PlanBuilder
 
     readonly Dictionary<string, string?> rsCache = [];   // null: the runtime won't serialize it
     readonly Dictionary<string, byte[]> rsBlobs = [];
+    readonly Dictionary<string, RootSig.Desc> rsDescs = [];   // the rule's root signatures, to serialize again with other samplers
 
     // the plan
     readonly List<byte[]> items = [];
@@ -205,11 +208,18 @@ sealed class PlanBuilder
                 // the rule's rebuild with these samplers the runtime won't serialize (its ranges overlap them): the rule
                 // doesn't reproduce this one, which still replays as recorded
                 builtN++;
-                var s = samplers ?? RootSig.Samplers(rsBlob);
+                // static samplers follow the player's texture filtering setting: a recording shared by players of other
+                // settings is checked with each record's own (FF7 Rebirth's mixes 1x and 16x anisotropic)
+                var its = RootSig.Samplers(rsBlob);
                 try
                 {
-                    if (RootSig.Serialize(RootSig.Build(rule, st, MeshTier(pso.Stages), maxSrvs), s).AsSpan().SequenceEqual(rsBlob)) builtOk++;
-                    samplers = s;
+                    if (RootSig.Serialize(RootSig.Build(rule, st, MeshTier(pso.Stages), maxSrvs), its).AsSpan().SequenceEqual(rsBlob)) builtOk++;
+                    samplers ??= its;
+                    if (SamplerVariants.Setting(rsBlob) is { } x)
+                    {
+                        (settings.TryGetValue(x.RootSignature, out var with) ? with : settings[x.RootSignature] = []).Add(x.Samplers);
+                        samplerSets.TryAdd(x.Samplers, its);
+                    }
                 }
                 catch (RootSig.SerializeException) { unbuilt++; }
             }
@@ -264,6 +274,7 @@ sealed class PlanBuilder
         plat = !dx12 ? "" : plats.Count > 0 ? plats.MaxBy(p => p.Value).Key // "": no map matches, no PSOs
             : new[] { "PCD3D_SM6", "PCD3D_SM5" }.FirstOrDefault(index.Platforms.Contains) ?? index.Platforms.FirstOrDefault() ?? "";
         embeddedRs = bc.Values.Count(s => s.RootSignature != null);
+        if (!build && embeddedRs == 0 && !maps.Any(m => m.Pooled || m.Rs != null)) Learned();   // shipped root signatures (FFXVI) aren't looked up
         rasterNv = RasterNv(caps, rule, recs, nvRecs);
         if (rasterNv is { } nvs) log?.Report($"NVAPI: synthesized PSOs get shader-extension slot {nvs.Slot} space {nvs.Space} (options {nvs.Options})");
         var shipped = maps.Count(m => m.Rs != null);
@@ -291,6 +302,7 @@ sealed class PlanBuilder
     /// out, not the plan.</summary>
     string? RootSigOf(SortedDictionary<int, string> stages)
     {
+        unbuildable = false;
         if (shippedRs != null) return shippedRs;
         // carved shaders carrying their root signature (RTS0): exact, served by the reader at materialize time
         if (stages.Values.Select(h => bc[h].RootSignature).FirstOrDefault(r => r != null) is { } embedded) return embedded;
@@ -304,6 +316,7 @@ sealed class PlanBuilder
                 var b = RootSig.Serialize(desc, samplers!);
                 rsCache[desc.Key] = h = Hex(SHA1.HashData(b));
                 rsBlobs[h] = b;
+                rsDescs[h] = desc;
             }
             catch (RootSig.SerializeException e)
             {
@@ -311,7 +324,7 @@ sealed class PlanBuilder
                 unserializable ??= e.Message;
             }
         }
-        if (h == null) Count("rs_unserializable");
+        unbuildable = h == null;
         return h;
     }
 
@@ -319,6 +332,31 @@ sealed class PlanBuilder
     /// <summary>The root signature of the shipped pipeline <see cref="StageSets"/> hands its sink (<see cref="ShaderMap.RootSignature"/>);
     /// null otherwise. Part of the stage set's identity: one shader set may ship under several.</summary>
     string? shippedRs;
+    bool unbuildable;         // RootSigOf's last null: the runtime won't serialize it (a pipeline that can't exist, not a gap)
+
+    /// <summary>What a stage set without a root signature counts as.</summary>
+    string NoRs => unbuildable ? "rs_unserializable" : "no_rs";
+
+    // a learned lookup's stage and counts parts (Planner.CountsKey), and of its VS+PS keys the VS parts per PS part
+    HashSet<string>? learnedParts;
+    readonly Dictionary<string, HashSet<string>> learnedVs = [];
+    int unpaired;   // the shaders StageSets left out or paired only in part for it
+
+    static string Part(ShaderInfo s) => $"{(int)s.Stage}:{s.Counts}";
+
+    /// <summary>A learned lookup resolves a stage set only by its counts key, so StageSets pairs only what a recorded key has:
+    /// each shader's part, and a VS->PS pair's two (RE Engine: 13.5M of PRAGMATA's 13.6M stage sets had no root signature,
+    /// 46 s and 5.7 GB to enumerate). Not with a pooled library: whether a PS is fed in its own map counts every VS there.</summary>
+    void Learned()
+    {
+        learnedParts = [];
+        foreach (var parts in rsByCounts.Keys.Select(k => k.Split(';')))
+        {
+            learnedParts.UnionWith(parts);
+            if (parts is [var vs, var ps] && vs.StartsWith($"{(int)Stage.Vertex}:") && ps.StartsWith($"{(int)Stage.Pixel}:"))
+                (learnedVs.TryGetValue(ps, out var l) ? l : learnedVs[ps] = []).Add(vs);
+        }
+    }
 
     readonly Dictionary<string, RootSig.Ranges?> rsRanges = [];
     readonly Dictionary<(string Rs, string Sha, int Stage), bool> covered = [];
@@ -366,7 +404,7 @@ sealed class PlanBuilder
         // the ones not matching fail harmlessly at replay), else a synthesized one
         var cands = gs != null ? gsTopo.Where(t => (topo == 0 || t.Key.Topology == topo) && t.Key.Shape == shape).Select(t => t.Value).ToList() is { Count: > 0 } l ? l : null
             : templates.GetValueOrDefault($"{shape}|{psOut}") ?? templates.GetValueOrDefault(shape);
-        if (rs == null || (cands == null && (!synth || topo == 0))) { Count(rs == null ? "no_rs" : gs != null ? "no_gs_template" : "no_template"); return; }
+        if (rs == null || (cands == null && (!synth || topo == 0))) { Count(rs == null ? NoRs : gs != null ? "no_gs_template" : "no_template"); return; }
         if (!Covers(rs, stages)) { Count("rs_uncovered"); return; }
         if (have.Contains(Tuple(rs, stages))) { Count("already_recorded"); return; }
         usedRs.Add(rs);
@@ -419,7 +457,7 @@ sealed class PlanBuilder
         {
             if (!seen.Add(Tuple(shippedRs ?? "", stages))) return; // shaders shared across maps
             var rs = RootSigOf(stages);
-            if (rs == null) { Count("no_rs"); return; }
+            if (rs == null) { Count(NoRs); return; }
             if (!Covers(rs, stages)) { Count("rs_uncovered"); return; }
             if (rsBlobs.TryGetValue(rs, out var blob)) facts.AddRootSignature(rs, blob); // VS units share PIXEL-only differences
             var l = stages.TryGetValue((int)Stage.Vertex, out var vs) ? layouts.TryGetValue(vs, out var r) ? r : layouts[vs] = facts.Layouts(bc[vs]) : none;
@@ -497,6 +535,9 @@ sealed class PlanBuilder
 
     const int AgsSpace = 0x7FFF0ADE; // AGS_DX12_SHADER_INSTRINSICS_SPACE_ID
 
+    /// <summary>A shader of AMD's AGS permutation (a UAV in <see cref="AgsSpace"/>), off AMD: the game never uses it there.</summary>
+    bool VendorOnly(string h) => !caps.Profile.StartsWith("amd") && bc.TryGetValue(h, out var s) && s.Bindings.Any(b => b.Space == AgsSpace);
+
     /// <summary>The platform in use and, on AMD (32 and 64 lanes), its "&lt;platform&gt; wave&lt;min&gt;[-&lt;max&gt;]" platforms
     /// (the readers' [WaveSize] split) whose range takes 64; NVIDIA runs 32 lanes only.</summary>
     bool OnPlatform(string mapPlat)
@@ -517,11 +558,17 @@ sealed class PlanBuilder
         // AMD's AGS intrinsics (a UAV in AGS_DX12_SHADER_INSTRINSICS_SPACE_ID): an AMD-only permutation, and no UE 4 root
         // signature has that slot (E_INVALIDARG): left out on other vendors, counted once per shader ("vendor_extension")
         var ags = new HashSet<string>();
+        var unpairedShaders = new HashSet<string>();
         bool Usable(string h)
         {
             if (!bc.TryGetValue(h, out var s)) return false;
-            if (caps.Profile.StartsWith("amd") || !s.Bindings.Any(b => b.Space == AgsSpace)) return true;
-            ags.Add(h);
+            if (VendorOnly(h))
+            {
+                ags.Add(h);
+                return false;
+            }
+            if (learnedParts == null || s.Stage == Stage.Library || learnedParts.Contains(Part(s))) return true; // libraries: not raster stage sets
+            unpairedShaders.Add(h);
             return false;
         }
         var fed = new HashSet<string>();
@@ -542,7 +589,7 @@ sealed class PlanBuilder
                 {
                     if (st.Count > 0 && Planner.Positioned(st.ToDictionary(x => (Stage)x.Key, x => bc[x.Value]))) sink(st, Planner.Shape(st), PsOut(st));
                     else if (st.Count > 0 && seen.Add(Tuple(mapRs ?? "", st)))   // a stage set like any other, counted once
-                        Count(RootSigOf(st) is { } rs && have.Contains(Tuple(rs, st)) ? "already_recorded" : "stream_output");
+                        Count(RootSigOf(st) is { } rs && have.Contains(Tuple(rs, st)) ? "already_recorded" : unbuildable ? NoRs : "stream_output");
                 }
                 finally { shippedRs = null; }
                 continue;
@@ -562,11 +609,23 @@ sealed class PlanBuilder
                 if (d.Stage == Stage.Geometry) Planner.Push(gss, Planner.Sig(d.Outputs), d);
             }
             var mss = ds.Where(d => d.Stage == Stage.Mesh).ToList();
+            var byPart = new Dictionary<string, ILookup<string, (int At, ShaderInfo Vs)>>();
+            // the VSs of a PS's input signature, in map order; a PS that loses one to the lookup is left out once (whether the
+            // lost VS links isn't checked: that is the cross product)
+            List<ShaderInfo> Feeding(string pin, ShaderInfo p)
+            {
+                var all = srcs.GetValueOrDefault(pin, []);
+                if (learnedParts == null) return all;
+                if (!byPart.TryGetValue(pin, out var l)) byPart[pin] = l = all.Select((v, i) => (i, v)).ToLookup(x => Part(x.v));
+                var kept = learnedVs.TryGetValue(Part(p), out var parts) ? parts.SelectMany(v => l[v]).OrderBy(x => x.At).Select(x => x.Vs).ToList() : [];
+                if (kept.Count < all.Count) unpairedShaders.Add(p.Sha1);
+                return kept;
+            }
             foreach (var p in ds.Where(d => d.Stage == Stage.Pixel))
             {
                 var pin = Planner.Sig(p.Inputs);
                 var n = 0;
-                foreach (var s in srcs.GetValueOrDefault(pin, []).Where(s => Planner.Rasterizable(s) && Planner.Links(s, p) && Planner.SameRs(s, p))
+                foreach (var s in Feeding(pin, p).Where(s => Planner.Rasterizable(s) && Planner.Links(s, p) && Planner.SameRs(s, p))
                     .Concat(mss.Where(m => Planner.Rasterizable(m) && Planner.MeshFeeds(m, p) && Planner.SameRs(m, p))))
                 {
                     n++;
@@ -670,6 +729,8 @@ sealed class PlanBuilder
         }
 
         if (engine.Family == "Unreal" && engine.Version.StartsWith("5.")) SharedAcrossMaps(sink, Usable);
+        // once per shader, as a stage set left out (the plan's StageSets and LeftOut): its stage sets aren't enumerated
+        if ((unpaired = unpairedShaders.Count) > 0) stats["no_rs"] = stats.GetValueOrDefault("no_rs") + unpaired;
     }
 
     /// <summary>A shader in at least 1 of every <see cref="SharedMaps"/> material maps doesn't depend on the material (a default
@@ -712,7 +773,7 @@ sealed class PlanBuilder
     /// caches collections on their own, <see cref="Planner.RtCollectionCache"/>), one 'Y' record per library no recorded
     /// state object has. The rule comes from the recording's collections when it has some (checked: each one whose library
     /// is recorded is rebuilt byte for byte, names included), else (no recording, or one without state objects: ray tracing
-    /// off as played) for Unreal 4.26/4.27 from UE 4.26's source as Jedi: Survivor confirms it, or Avalanche's 4.27 fork's
+    /// off as played) for Unreal 4.25 <see cref="RtCollections.Ue425Global"/> and no state object config, for Unreal 4.26/4.27 from UE 4.26's source as Jedi: Survivor confirms it, or Avalanche's 4.27 fork's
     /// when its libraries carry the fork's bindless marker (<see cref="RtCollections.GlobalFor"/>), and for Unreal 5.0-5.4
     /// <see cref="RtCollections.Ue51Global"/> (5.4: <see cref="RtCollections.Ue54Global"/>) when the libraries have 5.1's
     /// binding shape (<see cref="RtCollections.Ue5ShapeMismatch"/>; verified on 5.1 only); for Northlight its own global and local root
@@ -725,7 +786,7 @@ sealed class PlanBuilder
         if (libs.Count == 0) return;
         if (engine.NoRtPipelines)
         {
-            log?.Report($"ray tracing: {libs.Count} DXIL libraries; the game's Windows device profile sets r.RayTracing.AllowPipeline=0: none synthesized");
+            log?.Report($"ray tracing: {libs.Count} DXIL libraries; the game's config turns ray tracing pipelines off (r.RayTracing or r.RayTracing.AllowPipeline): none synthesized");
             return;
         }
         if (this.rule == RootSig.Rule.Red3) { Red3HitGroups(libs.Count); return; }
@@ -759,7 +820,16 @@ sealed class PlanBuilder
             if (!rule.Verified) { log?.Report($"ray tracing: {libs.Count} DXIL libraries; collection rule {how}: not the engine's rule, none synthesized"); return; }
         }
         // a recording without state objects (ray tracing off as played) teaches nothing about them: the rules below, as without one
-        else if (engine.Family == "Unreal" && engine.Version is "4.26" or "4.27")
+        else if (engine.Family == "Unreal" && engine.Version == "4.25")
+        {
+            var (h, b) = RtCollections.Serialize(RtCollections.Ue425Global, RootSig.StaticSamplers(RootSig.Rule.Ue425));
+            rsBlobs[h] = b;
+            // no state object config, depth 1, triangle barycentrics, the material payload (64); 2 of Returnal's 403 are only
+            // in a 24-byte pipeline
+            rule = new(h, RtCollections.NoConfig, 1, 64, 8, false);
+            how = "UE 4.25's (Returnal's recording: 401 of its 403 collections rebuilt from its files, the other 2 at a 24-byte payload)";
+        }
+        else if (engine.Family == "Unreal" && engine.Version is "4.26" or "4.27" && RootSig.RuleFor(engine) != null)   // none: a fork with its own root signatures
         {
             var desc = RtCollections.GlobalFor(libs.Select(l => bc[l]));
             var (h, b) = RtCollections.Serialize(desc, RootSig.Ue426Samplers);
@@ -810,6 +880,7 @@ sealed class PlanBuilder
             if ((guessedLocal != null ? (guessedLocal, guessedLocal) : (LocalRs(bc[h], true), LocalRs(bc[h], false))) is not ({ } lg, { } lo))
             {
                 Count("rt_unserializable");
+                rtUnbuildable.Add(h);
                 continue;
             }
             if (global != null && RootSig.Uncovered(new RootSig.Ranges(0, [.. global.Slots, .. RootSig.Parse(rsBlobs[lo]).Slots]), Stage.Library, bc[h]) is { } why)
@@ -826,6 +897,7 @@ sealed class PlanBuilder
     }
 
     readonly List<byte[]> hitGroupItems = [];
+    readonly HashSet<string> rtUnbuildable = [];   // DXIL libraries whose root signature the runtime won't serialize
 
     /// <summary>REDengine 3: one collection per material hit group of the index ('H', <see cref="RedEngine.RedRayTracing"/>),
     /// in the shape of the recording's additions; none without a recorded addition (its global root signature is a version
@@ -853,7 +925,7 @@ sealed class PlanBuilder
                 catch (RootSig.SerializeException e) { unserializable ??= e.Message; }
                 rsCache[desc.Key] = local;
             }
-            if (local == null) { Count("rt_unserializable"); continue; }
+            if (local == null) { Count("rt_unserializable"); rtUnbuildable.UnionWith(m.Shaders); continue; }
             var ranges = new RootSig.Ranges(0, [.. global.Slots, .. RootSig.Parse(rsBlobs[local]).Slots]);
             if (group.Select(l => RootSig.Uncovered(ranges, Stage.Library, l)).FirstOrDefault(w => w != null) is { } why)
             {
@@ -919,6 +991,50 @@ sealed class PlanBuilder
         return h;
     }
 
+    /// <summary>The synthesized PSOs and items again with each other texture filtering setting the recording has
+    /// (<see cref="SamplerVariants"/>): the root signatures the rule built, serialized with that setting's samplers. A
+    /// recording of this PC's left the community's other settings out (ScsKiller.ForeignVariants), so these are the
+    /// settings of a PC without one, where its own is unknown; or two of its own. A copy the recording has is left out.</summary>
+    (List<Rec> Synthesized, List<byte[]> Items) SettingsVariants()
+    {
+        if (!build || samplers is not { Length: > 0 } primary) return ([], []);
+        var others = SamplerVariants.OtherSettings(new HashSet<string> { Convert.ToHexStringLower(primary) }, settings.Values).Select(h => samplerSets[h]).ToList();
+        if (others.Count == 0) return ([], []);
+        List<Rec> synth = [];
+        List<byte[]> its = [];
+        byte[]? Swap(byte[] payload, string rs, Dictionary<string, string?> to, SortedDictionary<int, string> stages)
+        {
+            if (!to.TryGetValue(rs, out var other) || other == null || have.Contains(Tuple(other, stages))) return null;
+            var at = payload.AsSpan().IndexOf(Convert.FromHexString(rs));
+            if (at < 0) return null;
+            var copy = payload.ToArray();
+            Convert.FromHexString(other).CopyTo(copy, at);
+            return copy;
+        }
+        foreach (var v in others)
+        {
+            var to = new Dictionary<string, string?>();
+            foreach (var (h, desc) in rsDescs.Where(d => usedRs.Contains(d.Key)))
+                try
+                {
+                    var b = RootSig.Serialize(desc, v);
+                    to[h] = Hex(SHA1.HashData(b));
+                    rsBlobs[to[h]!] = b;
+                }
+                catch (RootSig.SerializeException) { to[h] = null; }   // this setting's samplers overlap the rule's ranges: not at it
+            foreach (var r in synthesized)
+                if (Parse(r) is var p && Swap(r.Payload, p.Rs, to, p.Stages) is { } c) { synth.Add(new Rec(r.Tag, c)); usedRs.Add(to[p.Rs]!); }
+            foreach (var i in items)
+                if (ParseItem(i) is var p && Swap(i, p.Rs, to, p.Stages) is { } c) { its.Add(c); usedRs.Add(to[p.Rs]!); }
+        }
+        log?.Report($"texture filtering: {others.Count + 1} settings in the recording, {synth.Count + its.Count} PSOs again at the other {(others.Count == 1 ? "one" : "ones")}");
+        return (synth, its);
+    }
+
+    /// <summary>A recorded PSO the warm replays on this GPU: every blob it names is in the recording or the install, and no
+    /// shader is another vendor's permutation (<see cref="VendorOnly"/>). The others aren't counted as the plan's pipelines.</summary>
+    bool Replays(Rec r) => Rehydrate.References([r]).All(h => h == Zero || recBlobs.ContainsKey(h) || bc.ContainsKey(h)) && !Parse(r).Stages.Values.Any(VendorOnly);
+
     /// <summary>The recorded state objects the warm replays (<see cref="Planner.Materialize"/>'s rule): every blob each names in
     /// the recording or the install, and every record it builds on replayable too (a record follows the ones it builds on).</summary>
     List<Rec> ReplayableStateObjects()
@@ -933,16 +1049,17 @@ sealed class PlanBuilder
     /// <summary>The plan file: root signatures, templates, items, D3D11 shaders (proxy db records, no shader bytes).</summary>
     Plan Write()
     {
+        var (synthCopies, itemCopies) = SettingsVariants();
         var body = new List<Rec>();
         foreach (var t in usedTemplates) usedRs.Add(Parse(recByKey[t]).Rs);
         foreach (var h in usedRs)
             if (rsBlobs.TryGetValue(h, out var b) || recBlobs.TryGetValue(h, out b)) body.Add(new Rec('B', [.. Convert.FromHexString(h), .. b]));
         foreach (var (h, b) in packRs) if (!usedRs.Contains(h)) body.Add(new Rec('B', [.. Convert.FromHexString(h), .. b])); // RTS0-only (packs keep no other blobs)
         body.AddRange(usedTemplates.Select(t => recByKey[t]));
-        body.AddRange(synthesized);
-        body.AddRange(items.Select(i => new Rec('P', i)));
+        body.AddRange(synthesized.Concat(synthCopies));
+        body.AddRange(items.Concat(itemCopies).Select(i => new Rec('P', i)));
         if (rasterNv is { } nv)
-            body.AddRange(synthesized.Concat(items.Select(i => new Rec('P', i))).Select(r => new NvState(r.Key, nv.Slot, nv.Space, 1, nv.Options).ToRec()));
+            body.AddRange(synthesized.Concat(synthCopies).Concat(items.Concat(itemCopies).Select(i => new Rec('P', i))).Select(r => new NvState(r.Key, nv.Slot, nv.Space, 1, nv.Options).ToRec()));
         body.AddRange(rtItems.Select(i => new Rec('Y', i)));
         body.AddRange(hitGroupItems.Select(i => new Rec('H', i)));
         body.AddRange(d3d11.Select(h => new Rec('1', D3D11Item(bc[h].Stage, h))));
@@ -955,9 +1072,12 @@ sealed class PlanBuilder
         var rtLibs = rtLibSet.Count;
         // what the plan compiles of them: the libraries of its synthesized collections and of the recorded state objects that replay
         var replayable = ReplayableStateObjects();
+        var replays = recs.Where(Replays).ToList();
+        var pipelines = replays.Select(r => SamplerVariants.Pipeline(r, h => recBlobs.GetValueOrDefault(h)) ?? r.Key).Distinct().Count();   // one per pipeline, at any setting
         var rtCovered = rtItems.Select(i => RtCollections.ParseItem(i).Library)
             .Concat(hitGroupItems.Select(RedEngine.RedRayTracing.ParseItem).SelectMany(h => new[] { h.ClosestHit, h.AnyHit }).OfType<string>())
             .Concat(replayable.SelectMany(r => ParseStateObject(r).Libraries)).Count(rtLibSet.Remove);
+        var rtUnbuilt = rtLibSet.Count(rtUnbuildable.Contains);   // never compiled anywhere: not ray tracing a recording would add
         // traced rays inline (RayQuery) and built no state object: the game's ray tracing is in its PSOs, a recording adds nothing
         var inlineOnly = rtLibs > 0 && stateObjects.Count == 0 && recBlobs.Values.Any(b => Carved.Dxbc.InlineRayTracing(b));
         if (inlineOnly) log?.Report($"ray tracing: the recording traces rays inline and builds no state object: the {rtLibs} DXIL libraries aren't used as played");
@@ -966,11 +1086,11 @@ sealed class PlanBuilder
         var rtInline = engine.Family == "Unreal" && engine.Version.StartsWith('5') && rtLibs > 0
             ? maps.Where(m => m.Platform == plat).SelectMany(m => m.Shas).Distinct().Count(h => bc.TryGetValue(h, out var s) && s.InlineRayTracing) : 0;
         var plan = new Plan(game.Id, index.ContentHash, string.Join(" + ", new[] { plat, n11 > 0 ? $"D3D11 {plat11 ?? "DXBC"}" : "" }.Where(p => p != "")), caps.Profile,
-            new PlanStats(recs.Count + stateObjects.Count, items.Count + synthesized.Count + rtItems.Count + hitGroupItems.Count, synthesized.Count, usedRs.Count, dx12 && (verified || embeddedRs > 0),
+            new PlanStats(pipelines + replayable.Count, items.Count + synthesized.Count + rtItems.Count + hitGroupItems.Count, synthesized.Count, usedRs.Count, dx12 && (verified || embeddedRs > 0),
                 unitsBy[(int)Provenance.Exact], unitsBy[(int)Provenance.Inferred], unitsBy[(int)Provenance.Guessed], layoutCoverage, n11, packNew,
-                stats.GetValueOrDefault("rs_uncovered"), rtLibs, inlineOnly || engine.NoRtPipelines ? 0 : rtLibs - rtCovered,
-                StageSets: seen.Count, LeftOut: new[] { "no_rs", "no_template", "no_gs_template", "rs_uncovered", "stream_output" }.Sum(stats.GetValueOrDefault),
-                MiddlewareSharedItems: packShared, RtStateObjects: replayable.Count, RtInline: rtInline),
+                stats.GetValueOrDefault("rs_uncovered"), rtLibs - rtUnbuilt, inlineOnly || engine.NoRtPipelines ? 0 : rtLibs - rtCovered - rtUnbuilt,
+                StageSets: seen.Count + unpaired - stats.GetValueOrDefault("rs_unserializable"), LeftOut: new[] { "no_rs", "no_template", "no_gs_template", "rs_uncovered", "stream_output" }.Sum(stats.GetValueOrDefault),
+                MiddlewareSharedItems: packShared, RtStateObjects: replayable.Count, RtInline: rtInline, Variants: synthCopies.Count + itemCopies.Count + replays.Count - pipelines),
             Path.Combine(outDir, "plan.bin"));
         PlanFile.Write(plan, body);
         log?.Report($"plan: {items.Count + synthesized.Count} PSOs{(rtItems.Count + hitGroupItems.Count > 0 ? $" + {rtItems.Count + hitGroupItems.Count} ray tracing collections" : "")} ({string.Join(", ", stats.Select(s => $"{s.Key} {s.Value}"))}), "
@@ -978,7 +1098,7 @@ sealed class PlanBuilder
             + (packEntries.Count > 0 ? $", {packEntries.Count} middleware pack PSOs ({packNew} not in the recording)" : "")
             + (n11 > 0 ? $" ({string.Join(", ", d3d11.GroupBy(h => bc[h].Stage).Select(g => $"{g.Count()} {g.Key}").Append(tess11.Count > 0 ? $"{tess11.Count} HS+DS" : "").Where(s => s != ""))})" : "")
             + $", {new FileInfo(plan.FilePath).Length / 1024} KiB -> {plan.FilePath}");
-        if (unserializable != null)   // the stage sets within no_rs
+        if (unserializable != null)
             log?.Report($"warning: {stats.GetValueOrDefault("rs_unserializable")} stage sets and {stats.GetValueOrDefault("rt_unserializable")} DXIL libraries left out: "
                 + $"the runtime won't serialize the root signature the rule builds for them ({unserializable})");
         if (stats.TryGetValue("rs_uncovered", out var nu))

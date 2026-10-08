@@ -89,7 +89,6 @@ public partial class AppTests
     [Fact]
     public async Task A_game_that_closes_early_with_the_recorder_records_pipelines_only_then_loses_it()
     {
-        using var _ = new FreshLedger(_root);
         var (k, running, poll, now) = Guarded();
         await k.ScanAsync(default);
         var (dll, ini, exe) = (Path.Combine(_exeDir, "d3d12.dll"), Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
@@ -145,7 +144,6 @@ public partial class AppTests
     [Fact]
     public async Task Beside_frame_generation_the_recorder_starts_in_full_and_steps_down_on_an_early_failure()
     {
-        using var _ = new FreshLedger(_root);
         var (k, running, poll, now) = Guarded();
         foreach (var f in new[] { "sl.interposer.dll", "sl.dlss_g.dll" }) File.WriteAllBytes(Path.Combine(_exeDir, f), Planning.MiddlewarePackTests.Pe(f));
         await k.ScanAsync(default);
@@ -165,7 +163,6 @@ public partial class AppTests
     [Fact]
     public async Task Another_build_of_the_game_and_try_again_put_the_recorder_back_in_full()
     {
-        using var _ = new FreshLedger(_root);
         var (k, running, poll, now) = Guarded();
         await k.ScanAsync(default);
         var (ini, exe) = (Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
@@ -193,7 +190,6 @@ public partial class AppTests
     [Fact]
     public async Task A_failure_while_the_app_was_closed_is_caught_at_the_next_start()
     {
-        using var _ = new FreshLedger(_root);
         var (k, _, _, now) = Guarded();
         await k.ScanAsync(default);
         var exe = Path.GetFileName(_game.ExePath);
@@ -227,7 +223,6 @@ public partial class AppTests
     [Fact]
     public async Task A_reset_during_an_evaluation_is_never_undone_by_its_guard()
     {
-        using var _ = new FreshLedger(_root);
         var (k, running, poll, now) = Guarded();
         await k.ScanAsync(default);
         var exe = Path.GetFileName(_game.ExePath);
@@ -258,7 +253,6 @@ public partial class AppTests
     [Fact]
     public async Task A_recorder_from_before_the_guard_counts_only_launches_after_it_was_first_seen()
     {
-        using var _ = new FreshLedger(_root);
         var (k, _, _, now) = Guarded();
         await k.ScanAsync(default);
         var rec = k.Store.LoadGame(_game.Id);
@@ -276,7 +270,6 @@ public partial class AppTests
     [Fact]
     public async Task An_interrupted_recorder_write_never_leaves_a_torn_dll_or_ini()
     {
-        using var _ = new FreshLedger(_root);
         var k = Managed();
         var dll = Path.Combine(_exeDir, "d3d12.dll");
         var temp = dll + ".scskiller-new";

@@ -24,8 +24,12 @@ public sealed record EngineInfo(
     string GraphicsApi,     // "D3D12", "D3D11", "Vulkan…" or "D3D11 or D3D12" (see Planner.Check)
     bool Encrypted,         // shader content unreadable without a key
     string? Unsupported,    // why it can't be indexed (e.g. "shaders stored inside materials"); null = indexable
-    bool NoRtPipelines = false,   // the game never builds a ray tracing state object (Unreal: r.RayTracing.AllowPipeline=0): its DXIL libraries go unused
-    bool ShipsRootSignatures = false);   // its files name every pipeline's root signature (ShaderMap.RootSignature): no rule or recording needed where the cache is state-independent
+    bool NoRtPipelines = false,    // the game never builds a ray tracing state object (Unreal: r.RayTracing or r.RayTracing.AllowPipeline=0): its DXIL libraries go unused
+    bool NoRayTracing = false,     // ray tracing is off altogether (Unreal: r.RayTracing=0), inline too; implies NoRtPipelines
+    bool AftermathShaderDebug = false,    // NVIDIA Aftermath shader debug info is on (UnrealRhi.AftermathShaderDebug): the NVIDIA driver files the game's pipelines under another key than a warm's
+    bool VersionGuessed = false,          // Version is a guess (Unreal: UnrealReader.DetectEngine's last fallback)
+    bool ApiGuessed = false,              // GraphicsApi is the engine's default for Version, nothing in the game names one (Unreal: UnrealRhi.Resolve)
+    bool ShipsRootSignatures = false);    // its files name every pipeline's root signature (ShaderMap.RootSignature): no rule or recording needed where the cache is state-independent
 
 /// <summary>Shader stage, numbered like D3D12_PIPELINE_STATE_SUBOBJECT_TYPE (the proxy's db uses the same numbers).</summary>
 public enum Stage { Vertex = 1, Pixel = 2, Domain = 3, Hull = 4, Geometry = 5, Compute = 6, Amplification = 24, Mesh = 25, Library = 100 }
@@ -159,7 +163,7 @@ public sealed record PlanStats(long Recorded, long Generated, long SynthesizedTe
     double LayoutCoverage = 0,    // per-stage plans needing real layouts: share of the index's VSs resolved from a recording
     long D3D11Shaders = 0,        // D3D11 items (each shader once, no pipelines); not in Generated
     long MiddlewareItems = 0,     // recorded middleware PSOs seeded from packs (not in the recording); not in Generated.
-                                  // Warm items = Recorded + Generated + D3D11Shaders + MiddlewareItems (about: a pack entry whose
+                                  // Warm items = Recorded + Generated + D3D11Shaders + MiddlewareItems + Variants (about: a pack entry whose
                                   // shader the install's DLL copy lacks is skipped at materialize; a ray generation library's
                                   // collection may be created once per payload, RtCollections.Payloads)
     long Uncovered = 0,           // stage sets left out: no root signature SCSKiller can build covers their shaders (rs_uncovered)
@@ -170,7 +174,8 @@ public sealed record PlanStats(long Recorded, long Generated, long SynthesizedTe
     long LeftOut = 0,             // of those, the ones not in the plan for any reason (no root signature, no template, Uncovered, stream output)
     long MiddlewareSharedItems = 0, // of MiddlewareItems, the ones only a shared pack (downloaded from the community database) had
     long RtStateObjects = 0,      // ray tracing state objects of the recording the plan replays (0 = none recorded, or a plan from before this was counted)
-    long? RtInline = null);       // Unreal 5: the index's shaders on the plan's platform that trace rays inline (0 elsewhere; null = a plan from before this was counted)
+    long? RtInline = null,        // Unreal 5: the index's shaders on the plan's platform that trace rays inline (0 elsewhere; null = a plan from before this was counted)
+    long Variants = 0);           // PSOs compiled again at other texture filtering settings (Planning.SamplerVariants): a warm item each, never counted as pipelines
 
 /// <summary>Hash-only plan (no game bytes), persisted at <see cref="FilePath"/> in the planner's format.</summary>
 public sealed record Plan(string GameId, string IndexContentHash, string Platform, string VendorProfile, PlanStats Stats, string FilePath);
@@ -229,8 +234,8 @@ public sealed record SessionStats(TimeSpan Duration, long Requests, long FromGam
     long RayQueryRecompiles = 0,    // NVIDIA: creates of compiled RayQuery PSOs at the driver's floor (SessionLog.RayQueryFloorMs), not in Compiles
     long StateObjectsReady = 0,     // ray tracing state object creates (CreateStateObject, AddToStateObject) under SessionLog.StateObjectCompileMs; in Requests only
     long StateObjectsCompiled = 0,  // ...and from it: compiled during play
-    long StartupCompiles = 0,       // compiles while the game started up (FrameLog.StartupEnd), not in Compiles or WorstCompileMs
-    long StateObjectsStartupCompiled = 0);   // state objects compiled while it started up, not in StateObjectsCompiled
+    long StartupCompiles = 0,       // compiles while the game started up or loaded (FrameLog.StartupEnd, LoadSeconds), not in Compiles or WorstCompileMs
+    long StateObjectsStartupCompiled = 0);   // state objects compiled while it started up or loaded, not in StateObjectsCompiled
 
 public sealed record GameState(
     Game Game, EngineInfo? Engine, AntiCheat AntiCheat, GameStatus Status, string StatusReason,
@@ -251,6 +256,7 @@ public sealed record GameState(
     bool RecorderEffective = false,   // should be installed (it may not be yet: RecorderNote)
     string? RecorderSkip = null,      // ScsKiller.Skip*; null = compatible
     string? RecorderNote = null,      // the last reconcile's pending or failed change; null = none
+    string? RecorderRefused = null,   // why the game's last launch wasn't recorded (ScsKiller.Refused, ScsKiller.NeverSaw); null = it recorded, or no launch since
     string? RecorderMod = null,       // what a foreign d3d12.dll in the game folder (or the one chained to it) calls itself; null = none
     bool RecordAlongsideMod = false,  // the user chose to record alongside it (IScsKiller.SetRecordAlongsideMod)
     long? LastWarmNeedsRecording = null,   // of LastWarmSkipped, those the community recording flags as built at run time or by a mod
@@ -263,20 +269,26 @@ public sealed record GameState(
     double? PsoPerSecond = null,   // the game's last complete warm onto a cold cache (ScsKiller.ColdWarm); null = none measured
     FrameReport? LastFrames = null,    // the last launch's frame times (FrameLog); null = none measured
     string? ShaderMod = null,          // a ReShade add-on that changes the game's pipelines (Games.ReShade.Detect); null = none
-    bool ShaderModBlocks = false,      // ...adds to every root signature, with ReShade outside the exe's folder: never compiled, recorded or shared
+    bool ShaderModBlocks = false,      // ...adds to every root signature, in a layer a copy can't reproduce (ReShadeInstall.Block): never compiled, recorded or shared
     bool ShaderModLayer = false,       // ...compiles through a copy of the layer (ScsKiller.LayerFor)
     bool ShaderModAsD3D12 = false,     // ...with ReShade installed as d3d12.dll: the recorder records under it only when chained
     bool RootUnconfirmed = false,      // a game the user added whose folder they haven't confirmed: never recorded (ScsKiller.SkipManual)
+    bool StreamlineFirst = false,      // on NVIDIA, Streamline loads the first d3d12.dll (GameFiles.StreamlineFirst) and a launch showed it (ScsKiller.StreamlineBlocks): never recorded (ScsKiller.SkipStreamline)
     bool RtUnseen = false,             // recorded long enough without ray tracing (GameRecord.RtUnseen) and planned since: its uncovered ray tracing isn't asked for
     bool RtToPlan = false,             // its plan asks for a ray tracing recording and a newer recording waits for the plan check (ScsKiller.RtPlanCheck)
     bool RecordedEnough = false,       // GameRecord.RecordedLong: asking for "5 minutes" again says nothing
-    bool RecorderUnused = false,       // played long enough since the recorder went in, and it saw no device in that run (ScsKiller.RecorderUnusedNote)
     bool ReFramework = false,          // REFramework next to the exe, reporting its dlls from _storage_ (Games.ReFramework); not read in an anti-cheat install
     string? FrameGen = null,           // frame generation's files (Games.FrameGen), on or not: noted; with RecordingNotNeeded the recorder starts at Minimal (ScsKiller.StartLevel); null = none, or not read (anti-cheat)
     bool RecordingNotNeeded = false,   // its files name every pipeline on this GPU's cache (ScsKiller.RecordingNotNeeded): "record all" leaves it out
     bool OfflineEligible = false,      // an EasyAntiCheat game of Games.OfflineEac on D3D12: an offline session may be offered
     bool OfflineRecord = false,        // the user allowed offline sessions for it (IScsKiller.SetOfflineRecording)
     bool OfflineRunning = false,       // a session SCSKiller started runs, or its files aren't out of the game folder yet
+    string? NoStutter = null,          // why it has no shader stutter (Games.GameVerdicts); null = not listed, or KnownStutter is
+    bool CompileUnreached = false,     // NVIDIA: the warm's pipelines didn't serve the game (ScsKiller.IsUnreached): never queued but by hand
+    bool CacheFileFull = false,        // NVIDIA: a cache file of the game's is at 4 GiB and nearly full (NvidiaAppCache.NearlyFull)
+    long? CacheInUse = null,           // of CacheOnDisk, the bytes the driver has filled (NVIDIA pre-sizes its files); null = not known
+    bool NotPlanned = false,           // Unsupported by an "unsupported" verdict, or for a recording its anti-cheat blocks: not planned, unlike "unsupported-yet"
+    bool NewOnly = false,              // Stale only for pipelines its last warm didn't compile (ScsKiller.StaleReason past WarmChanged): the rest still serve
     RecorderLevel RecorderLevel = RecorderLevel.Full,   // the crash guard's step (GameRecord.RecorderLevel), else ScsKiller.StartLevel; Off: RecorderSkip is ScsKiller.SkipCrashed
     string? RecorderLevelReason = null,   // why it isn't Full, for the game page; null = Full
     bool RecorderSteppedDown = false);    // the crash guard set the level (GameRecord.RecorderLevel): "Try again" puts it back to its start
@@ -292,7 +304,8 @@ public sealed record FrameReport(TimeSpan Duration, TimeSpan Startup, long Frame
 public sealed record Hitch(TimeSpan At, double Ms, HitchCause Cause);
 
 /// <summary>Shader: a pipeline compile overlapped the frame. Other: no create did (streaming, the CPU, anything else).
-/// Loading: startup, or a load in play that created many pipelines, all fast; LoadingShaders: a startup frame that cold
+/// Loading: startup, a load in play that created many pipelines, all fast, or one that compiled on many threads, none
+/// the presenting one; LoadingShaders: a startup frame that cold
 /// compiles filled (in play such a frame is a Shader stutter).
 /// Quitting: the last seconds before the game's last frame.</summary>
 public enum HitchCause { Shader, Other, Loading, Quitting, LoadingShaders }
@@ -312,7 +325,7 @@ public enum RecorderOverride { Default, On, Off }
 /// Minimal records pipelines only (no frame-timing or NVAPI hooks); Off takes the recorder out until it is reset.</summary>
 public enum RecorderLevel { Full, Minimal, Off }
 
-/// <summary>A recording downloaded from the community database (docs/plan-db.md): its PSO records, when it came, and
+/// <summary>A recording downloaded from the community database: its PSO records, when it came, and
 /// whether this PC's own recording is merged with it.</summary>
 public sealed record CommunityInfo(int Psos, DateTimeOffset DownloadedAt, bool WithLocalRecording);
 
@@ -339,10 +352,15 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool SharePromptDismissed = false,   // the post-sign-in share prompt was answered, either way (Account.OffersSharing): never asked again
     string? UpdateChannel = null,   // "stable" | "beta" | "alpha" | "internal"; null = the running build's own (UpdateChannels.Effective caps it by entitlement)
     bool RecordAllGames = true,     // unless a game's RecorderOverride says otherwise
-    int RecordingLimitMB = 256,     // per game: the recorder's db plus SCSKiller's copy of it; 0 = unlimited
+    int RecordingLimitMB = 1024,    // per game: the recorder's db plus SCSKiller's copy of it; 0 = unlimited
     bool NotifyNewShaders = true,   // a notification when compiled games have new pipelines to compile (NewShaders)
     bool ActiveCheck = true,        // the anonymous daily check that counts active installs (ScsKiller.ActiveCheck); off = nothing is sent
     string? GpuNoticeDismissed = null,   // the GPU name whose "doesn't compile on this GPU" notice was closed (Format.GpuNotice)
+    bool InstallUpdatesAutomatically = true,   // a downloaded update installs at the next start or quit (AutoInstall); off = only "Restart to update"
+    bool ScanAtStart = true,   // a scan the user didn't ask for reads every game again where it changed; off = the last list (ScsKiller.Listed)
+    bool CloseQuits = false,  // the window's close button quits like the tray's Quit (WindowClose); off = it hides to the notification area
+    bool RecordingLimitChosen = false,   // the user picked RecordingLimitMB: a stored 256 without it is the earlier default (ScsKiller.Settings)
+    bool TrayNoticeShown = false,    // the "still running" notification was shown (App.HideToTray): never again
     bool LookUpKeysOnline = false,   // a scan that finds an encrypted Unreal game without a key looks it up in the key list (Unreal.KeyCollection)
     string? KeyListUrl = null,       // the key list's page; null = KeyCollection.DefaultUrl
     bool HideUnsupported = false);   // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned

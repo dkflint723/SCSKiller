@@ -15,12 +15,20 @@ public sealed partial class DetailPage : Page
     {
         InitializeComponent();
         var refresh = new Coalesced(DispatcherQueue, () => Vm.Refresh());
-        void OnChanged(GameState _) => refresh.Request();
+        void OnChanged(GameState s) { if (s.Game.Id == Vm?.Row.Id) refresh.Request(); }   // a scan raises one per game
         void OnQueue(QueueItem q) { if (q.Stage != QueueStage.Warming) refresh.Request(); }   // "In queue"
         // Refresh too: a change raised while the page wasn't loaded (e.g. the game exited) would show only at the next one
         Loaded += (_, _) => { App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request; App.Account.Changed += refresh.Request; Vm.Refresh(); };
         Unloaded += (_, _) => { App.Core.GameChanged -= OnChanged; App.Core.QueueChanged -= OnQueue; Icons.Failed -= refresh.Request; App.Account.Changed -= refresh.Request; };
     }
+
+    public ContentDialog PartlyWhyDialog() => new()
+    {
+        XamlRoot = XamlRoot, Title = $"Why is {Vm.Name} partly compiled?", CloseButtonText = "Close",
+        Content = new TextBlock { Text = DetailVm.PartlyCompiledWhy, TextWrapping = TextWrapping.Wrap },
+    };
+
+    async void OnPartlyWhy(object _, RoutedEventArgs __) => await App.ShowAsync(PartlyWhyDialog());
 
     void OnDbTeaser(Microsoft.UI.Xaml.Documents.Hyperlink _, Microsoft.UI.Xaml.Documents.HyperlinkClickEventArgs __)
     {
@@ -33,7 +41,7 @@ public sealed partial class DetailPage : Page
         try { Vm = new DetailVm((string)e.Parameter); }
         catch (GameGoneException)   // a scan dropped it between the click and here: back to the library, not a crash
         {
-            DispatcherQueue.TryEnqueue(() => OnCrumbToLibrary());
+            DispatcherQueue.TryEnqueue(() => App.Main.ShowLibrary());
             return;
         }
         Vm.ReadCaches();
@@ -50,7 +58,7 @@ public sealed partial class DetailPage : Page
         try { await Task.Run(() => App.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
         catch (Exception ex)
         {
-            await new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" }.ShowAsync();
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" });
             return;
         }
         Vm.Refresh();
@@ -65,7 +73,7 @@ public sealed partial class DetailPage : Page
         try { await Task.Run(() => App.Core.RemoveManualGame(id)); }   // refused while a compile of it runs
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            await new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't remove the game", Content = ex.Message, CloseButtonText = "OK" }.ShowAsync();
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't remove the game", Content = ex.Message, CloseButtonText = "OK" });
             return;
         }
         App.Main.Navigate(typeof(LibraryPage));
@@ -132,14 +140,7 @@ public sealed partial class DetailPage : Page
 
     void OnCrumb(BreadcrumbBar _, BreadcrumbBarItemClickedEventArgs e)
     {
-        if (e.Index != 0) return;
-        OnCrumbToLibrary();
-    }
-
-    void OnCrumbToLibrary()
-    {
-        if (Frame.CanGoBack && Frame.BackStack[^1].SourcePageType == typeof(LibraryPage)) Frame.GoBack();
-        else App.Main.Navigate(typeof(LibraryPage));
+        if (e.Index == 0) App.Main.ShowLibrary();
     }
 
     async void OnCompile(object _, RoutedEventArgs __)
@@ -180,34 +181,34 @@ public sealed partial class DetailPage : Page
     async void OnClearCache(object _, RoutedEventArgs __)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        IReadOnlyList<CachePart> all;
-        try { all = await Task.Run(() => App.Core.GameCaches(id, gamePrecache: true)); }
-        catch (Exception ex) { vm.Error = ex.Message; vm.Refresh(); return; }
-        static bool Own(CachePart p) => p.Name is Core.App.ScsKiller.PipelinePart or Core.App.ScsKiller.PrecachePart;
-        var (parts, own) = (all.Where(p => !Own(p)).ToList(), all.Where(Own).ToList());
-        var content = new StackPanel { Spacing = 12 };
-        content.Children.Add(new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap,
-            Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : "No cache files on disk now") + ".\n\n"
-                + "The game will compile shaders during play again until you re-warm it."
-                + (!vm.NoAntiCheat ? " Anti-cheat game: only the driver cache is cleared." : ""),
-        });
-        var alsoOwn = new CheckBox
-        {
-            Content = new TextBlock
-            {
-                TextWrapping = TextWrapping.Wrap,
-                Text = $"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.",
-            },
-        };
-        if (own.Count > 0) content.Children.Add(alsoOwn);
-        if (!await App.ConfirmAsync(this, $"Clear the shader cache of {vm.Name}?", content, "Clear cache")) return;
+        var note = "The game will compile shaders during play again until you re-warm it."
+            + (!vm.NoAntiCheat ? " Anti-cheat game: only the driver cache is cleared." : "");
+        var text = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Measuring the cache files…\n\n" + note };
+        var ownText = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var alsoOwn = new CheckBox { Content = ownText, Visibility = Visibility.Collapsed };
+        _ = Measure();
+        if (await App.ShowAsync(App.Confirm(this, $"Clear the shader cache of {vm.Name}?", new StackPanel { Spacing = 12, Children = { text, alsoOwn } }, "Clear cache"))
+            != ContentDialogResult.Primary) return;
         var withOwn = alsoOwn.IsChecked == true;
         try { vm.Error = await Task.Run(() => App.Core.ClearGameCache(id, withOwn)) ? null : "Nothing was cleared: no shader-cache files of this game were found."; }
         catch (Exception ex) { vm.Error = ex.Message; }
         vm.ReadCaches();
         vm.Refresh();
+
+        // the sizes fill in while the dialog is open: reading the Windows cache folders can take seconds; Clear reads them again
+        async Task Measure()
+        {
+            try
+            {
+                var all = await Task.Run(() => App.Core.GameCaches(id, gamePrecache: true));
+                static bool Own(CachePart p) => p.Name is Core.App.ScsKiller.PipelinePart or Core.App.ScsKiller.PrecachePart;
+                var (parts, own) = (all.Where(p => !Own(p)).ToList(), all.Where(Own).ToList());
+                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : "No cache files on disk now") + ".\n\n" + note;
+                ownText.Text = $"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.";
+                alsoOwn.Visibility = own.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            catch (Exception ex) { text.Text = Describe(ex) + "\n\n" + note; }
+        }
     }
 
     async void OnClearRecording(object _, RoutedEventArgs __)

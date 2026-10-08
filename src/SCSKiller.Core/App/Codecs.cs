@@ -1,9 +1,10 @@
+using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
 using CUE4Parse.Compression;
 
 namespace SCSKiller.Core.App;
 
-/// <summary>CUE4Parse's native codecs live in %LOCALAPPDATA%\SCSKiller\codecs (docs/patreon-and-updates.md §4.5 item 4),
+/// <summary>CUE4Parse's native codecs live in %LOCALAPPDATA%\SCSKiller\codecs,
 /// not next to the exe: every update replaces the install folder, and public packages don't ship Oodle. A copy next to the
 /// exe (a zip or dev build) seeds it; otherwise CUE4Parse downloads it there from its GitHub release. A file is loaded
 /// only if its SHA-256 is the pinned one: a new build of either DLL comes with a CUE4Parse update and a new pin.</summary>
@@ -15,16 +16,24 @@ public static class Codecs
         ["zlib-ng2.dll"] = "454be2f3d10f804ace577198401431db5e95d0286b59589bc28a40085388e7c2",           // Zlib-ng.NET 1.0.0
     };
 
-    public static string Dir => Path.Combine(AppStore.DefaultDir, "codecs");
+    public static string Dir => DirOverride ?? Path.Combine(AppStore.DefaultDir, "codecs");
+    // the tests' build-owned cache: they never read the app's data folder
+    internal static string? DirOverride;
     static readonly Lock Gate = new();
 
-    /// <summary>Loads Oodle, and zlib-ng with <paramref name="zlib"/>; a no-op once loaded. Two readers may start at once
-    /// (the lock: they'd race on the same download).</summary>
+    /// <summary>The pinned Oodle build runs AVX2, BMI2 and MOVBE code with no CPU check, which kills the process on a CPU
+    /// without them. Without it CUE4Parse decodes Oodle data in managed code.</summary>
+    public static bool NativeOodle => Avx2.IsSupported && Bmi2.X64.IsSupported;
+
+    public const string NoNativeOodle = "this CPU lacks AVX2/BMI2, which the Oodle library needs";
+
+    /// <summary>Loads Oodle (only where <see cref="NativeOodle"/>), and zlib-ng with <paramref name="zlib"/>; a no-op once
+    /// loaded. Two readers may start at once (the lock: they'd race on the same download).</summary>
     public static void Load(bool zlib = true)
     {
         lock (Gate)
         {
-            if (OodleHelper.Instance == null) OodleHelper.Initialize(Ensure(OodleHelper.OodleFileName, DownloadOodle));
+            if (NativeOodle && OodleHelper.Instance == null) OodleHelper.Initialize(Ensure(OodleHelper.OodleFileName, DownloadOodle));
             if (zlib && ZlibHelper.Instance == null) ZlibHelper.Initialize(Ensure(ZlibHelper.DllName, p => ZlibHelper.DownloadDll(p, null!)));
         }
     }

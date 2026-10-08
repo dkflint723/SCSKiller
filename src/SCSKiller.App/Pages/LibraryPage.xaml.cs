@@ -98,10 +98,10 @@ public sealed partial class LibraryPage : Page
         else if (!listed) await Message("Already in your library", $"{added.Game.Name}: {where}. Refresh the library to see it.");
     }
 
-    Task Message(string title, string text) => new ContentDialog
+    Task Message(string title, string text) => App.ShowAsync(new ContentDialog
     {
         XamlRoot = XamlRoot, Title = title, Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, CloseButtonText = "OK",
-    }.ShowAsync().AsTask();
+    });
 
     void OnAddAll(object _, RoutedEventArgs __) => Vm.AddAllReady();
     void OnAddRecommended(object _, RoutedEventArgs __) => Vm.AddAllRecommended();
@@ -134,14 +134,14 @@ public sealed partial class LibraryPage : Page
                 " A key is checked against the game's files and kept on this PC only." });
             AddKeyLookup(row, panel, box, dialog);
         }
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await App.ShowAsync(dialog) != ContentDialogResult.Primary) return;
         bool ok;
         string why = "It doesn't open this game's files.";
         var key = box.Text.Trim();
         try { ok = await Task.Run(() => App.Core.SetEncryptionKey(row.Id, key)); }   // opens the game's files
         catch (Exception ex) { ok = false; why = $"Checking it failed: {ex.Message}"; }   // the first dialog is closed: say it in this one
         if (ok) Vm.Rescan();
-        else await new ContentDialog { XamlRoot = XamlRoot, Title = "That key didn't work", Content = why, CloseButtonText = "OK" }.ShowAsync();
+        else await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "That key didn't work", Content = why, CloseButtonText = "OK" });
     }
 
     // The Why? dialog's "Look up key online": the community's key list (the key itself is never shown). The forum may ask
@@ -210,7 +210,7 @@ public sealed partial class LibraryPage : Page
                 "Play for about 5 minutes, close the game, then add it to the compile queue. You can remove it any time from the game's page.",
                 "Add recorder", ContentDialogButton.Primary)) return;
         try { await Task.Run(() => App.Core.InstallRecorder(row.Id)); }   // file IO and the game's re-evaluation
-        catch (Exception ex) { await new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't add the recorder", Content = ex.Message, CloseButtonText = "OK" }.ShowAsync(); }
+        catch (Exception ex) { await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't add the recorder", Content = ex.Message, CloseButtonText = "OK" }); }
         Vm.Refresh();
     }
 }

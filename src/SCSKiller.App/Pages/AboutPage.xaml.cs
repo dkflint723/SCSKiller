@@ -55,7 +55,7 @@ public sealed class AboutVm : Bindable
     public string Version { get; } = "Version " + (typeof(AboutVm).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?")
         + $" · {char.ToUpperInvariant(AppVersion.Current.Channel[0])}{AppVersion.Current.Channel[1..]} channel";
 
-    // "Download source code" (docs/patreon-and-updates.md §4.5 item 7): stable opens the public repo's tag; alpha and beta
+    // "Download source code": stable opens the public repo's tag; alpha and beta
     // fetch the source zip served next to the package (with the access token) into Downloads; none on internal/dev builds.
     public bool ShowsSource { get; } = UpdateFeeds.Source(AppVersion.Current) != null && (AppVersion.Current.Channel == UpdateChannels.Stable || App.Account.SignedIn);
     public bool SourceIdle { get; private set; } = true;
@@ -95,10 +95,21 @@ public sealed class AboutVm : Bindable
     public bool CanCheck => !Updater.Checking && !Updater.Restarting;
     public string UpdateNote => Updater.Downloading is { } d ? $"Downloading SCSKiller {d}…"
         : Updater.Checking ? "Checking for updates…"
-        : Updater.Ready is { } v ? $"SCSKiller {v} is ready: it installs when you quit, or use Restart to update at the top."
+        : Updater.Ready is { } v ? AutoInstall.ReadyNote(v, App.Core.Settings)
         : Updater.UpToDate ? "SCSKiller is up to date." : "";
     public string? UpdateProblem => Updater.Problem;
     public bool HasUpdateProblem => Updater.Problem != null;
+
+    public bool? InstallUpdatesAutomatically
+    {
+        get => App.Core.Settings.InstallUpdatesAutomatically;
+        set
+        {
+            if (value is not { } v || v == App.Core.Settings.InstallUpdatesAutomatically) return;
+            App.Core.Settings = App.Core.Settings with { InstallUpdatesAutomatically = v };
+            Changed();   // the note says when it installs
+        }
+    }
 
     readonly Coalesced changed;
     /// <summary>While the page is shown.</summary>

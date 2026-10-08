@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using SCSKiller.Core;
 using SCSKiller.Core.Games;
 using SCSKiller.Core.Vendors;
@@ -60,6 +60,33 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Assert.Equal(["steam:7", "steam:8"], Found());   // not understood
             File.WriteAllBytes(appinfo, AppInfoV28((7, "Tool"), (8, "Game")));
             Assert.Equal(["steam:8"], Found());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>A game listed before keeps its exe while its build is the same, without its folders being looked through
+    /// again; another build looks again.</summary>
+    [Fact]
+    public void Steam_reuses_a_games_exe_while_its_build_is_the_same()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "scskiller-steam-test-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var apps = Directory.CreateDirectory(Path.Combine(root, "steamapps")).FullName;
+            var install = Directory.CreateDirectory(Path.Combine(apps, "common", "SomeGame")).FullName;
+            File.WriteAllBytes(Path.Combine(install, "SomeGame.exe"), new byte[1024]);
+            void Manifest(string build) => File.WriteAllText(Path.Combine(apps, "appmanifest_9.acf"),
+                $"\"AppState\"\n{{\n\t\"appid\"\t\t\"9\"\n\t\"name\"\t\t\"SomeGame\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"SomeGame\"\n\t\"buildid\"\t\t\"{build}\"\n}}\n");
+            Manifest("100");
+            var source = new SteamSource(root);
+            var first = Assert.Single(source.Discover());
+            Assert.EndsWith("SomeGame.exe", first.ExePath);
+
+            File.WriteAllBytes(Path.Combine(install, "Bigger.exe"), new byte[4096]);   // what a look through the folders takes now
+            source.Known = new Dictionary<string, Game> { [first.Id] = first };
+            Assert.Equal(first.ExePath, Assert.Single(source.Discover()).ExePath);
+            Manifest("101");
+            Assert.EndsWith("Bigger.exe", Assert.Single(source.Discover()).ExePath);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -262,6 +289,58 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Nvidia_in_use_bytes_come_from_the_header_else_from_where_the_zero_tail_starts()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "scsk-nv-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string Nvph(string name, int length, ReadOnlySpan<byte> magic, long used)
+        {
+            var b = new byte[length];
+            magic.CopyTo(b);
+            if (length >= 16) BitConverter.TryWriteBytes(b.AsSpan(8), used);
+            var path = Path.Combine(dir, name);
+            File.WriteAllBytes(path, b);
+            return path;
+        }
+        long? Used(string path) => NvidiaAppCache.UsedBytes(new FileInfo(path), 64);
+        try
+        {
+            var valid = Nvph("0002a91d11111111.nvph", 4096, "nvph"u8, 1000);
+            Assert.Equal(1000, Used(valid));
+            Assert.Equal(4096, Used(Nvph("32e6a91d11111111.nvph", 4096, "nvph"u8, 4096)));      // full
+            // not a plausible header: the data ends in the first 64-byte block, the rest is the zero tail
+            Assert.Equal(64, Used(Nvph("7e55a91d22222222.nvph", 4096, "nvph"u8, 1L << 50)));   // past the end
+            Assert.Equal(64, Used(Nvph("7e55a91d33333333.nvph", 4096, "nvph"u8, -5)));
+            Assert.Equal(64, Used(Nvph("0002a91d44444444.nvph", 4096, "xxxx"u8, 1000)));        // not the magic
+            Assert.Equal(64, Used(Nvph("0002a91d55555555.nvph", 4096, "nvph"u8, 0)));
+            Assert.Equal(10, Used(Nvph("0002a91d66666666.nvph", 10, "nvph"u8, 0)));             // truncated
+            Assert.Equal(0, Used(Nvph("0002a91d77777777.nvph", 0, [], 0)));
+            Assert.Equal(0, Used(Nvph("0002a91d99999999.nvph", 4096, [], 0)));                 // all zero
+
+            // the driver's own handle (any sharing that lets a reader in) doesn't stop the read, and the read doesn't
+            // stop the driver writing or deleting meanwhile
+            using (var driver = new FileStream(valid, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+                Assert.Equal(1000, Used(valid));
+            using (var driver = new FileStream(valid, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new FileStream(valid, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                driver.Write(new byte[16]);   // our sharing lets the writer go on
+                driver.Flush();
+                Assert.Equal(0, Used(valid));   // its header now reads as zero, and so does the rest
+            }
+            // locked exclusively by another handle: not known, no exception; the sum counts it whole
+            var locked = Nvph("0002a91d88888888.nvph", 8192, "nvph"u8, 3000);
+            var cache = new NvidiaAppCache(dir);
+            using (new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Assert.Equal((null, 8192L), (Used(locked), cache.UsedOf(["88888888"])));
+            Assert.Equal(3000, Used(locked));
+            Assert.Equal((8192L, 3000L), (cache.SizeOf(["88888888"]), cache.UsedOf(["88888888"])));
+            Assert.Equal((8192L, 4096L), (cache.SizeOf(["11111111"]), cache.UsedOf(["11111111"])));   // an empty file and a full one
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
     public void Amd_cache_file_names_map_to_app_keys()
     {
         // FNV-1a-32 of the UTF-16LE exe name, case-sensitive: keys observed in DxcCache on AMD
@@ -332,7 +411,7 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         if (games.Count == 0) return;   // this machine's Xbox app has no games (or C:/D:\XboxGames don't exist)
 
         // Atomfall's config declares Launcher/Atomfall.exe as Id="Game", an API-picking launcher stub (the "launch" helper
-        // hint rejects it); the real D3D12 exe is Atomfall_dx12.exe (docs/engine-survey.md). Each title is checked only
+        // hint rejects it); the real D3D12 exe is Atomfall_dx12.exe. Each title is checked only
         // where it is installed.
         if (games.SingleOrDefault(g => g.Name == "Atomfall") is { } atomfall)
         {
@@ -347,6 +426,12 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         // Halo MCC lists mcclauncher.exe (a launcher by name) and the direct Shipping exe -> pick the latter
         if (games.SingleOrDefault(g => g.Name.Contains("Master Chief Collection")) is { } mcc)
             Assert.EndsWith("MCCWinStore-Win64-Shipping.exe", mcc.ExePath, StringComparison.OrdinalIgnoreCase);
+
+        // configs that name Unreal's bootstrap stub in Content: discovery takes the Shipping exe it starts (GameExe)
+        foreach (var (title, shipping) in new[] { ("Hellblade 2", @"\Hellblade2\Binaries\WinGDK\Hellblade2-WinGDK-Shipping.exe"),
+                     ("Avowed", @"\Alabama\Binaries\WinGDK\Avowed-WinGDK-Shipping.exe"), ("Dead Island 2", @"\DeadIsland\Binaries\WinGDK\DeadIsland-WinGDK-Shipping.exe") })
+            if (games.SingleOrDefault(g => g.Name.Contains(title)) is { } stubbed)
+                Assert.EndsWith(shipping, GameFiles.GameExe(stubbed.InstallDir, stubbed.ExePath), StringComparison.OrdinalIgnoreCase);
 
         if (games.SingleOrDefault(g => g.Name == "Starfield") is { } starfield)
         {
@@ -447,9 +532,9 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             // a deeper copy named alike, in a folder no rule names: the one nearest the root
             Put(@"Copy\SB\Binaries\Win64\SB-Win64-Shipping.exe", 6000);
             Assert.Equal(At(@"SB\Binaries\Win64\SB-Win64-Shipping.exe"), GameFiles.FindExe(root));
-            // exes named differently: still the largest
+            // a larger exe named differently: the Shipping exe still
             Put(@"SB\Binaries\Win64\SB-Win64-Test.exe", 7000);
-            Assert.Equal(At(@"SB\Binaries\Win64\SB-Win64-Test.exe"), GameFiles.FindExe(root));
+            Assert.Equal(At(@"SB\Binaries\Win64\SB-Win64-Shipping.exe"), GameFiles.FindExe(root));
         }
         finally { Directory.Delete(root, true); }
 
@@ -464,6 +549,39 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Assert.Equal(Path.Combine(root, "game.exe"), GameFiles.FindExe(root));
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>A Ubisoft+ build beside the game's exe (Valhalla's, at their real sizes): the plain exe, though smaller.</summary>
+    [Fact]
+    public void Exe_discovery_takes_the_exe_beside_a_ubisoft_plus_build_whatever_the_sizes()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-plus-test-").FullName;
+        try
+        {
+            void Put(string name, long size)
+            {
+                using var f = File.Create(Path.Combine(root, name));
+                f.SetLength(size);
+            }
+            Put("ACValhalla.exe", 544_294_936);
+            Put("ACValhalla_Plus.exe", 601_040_408);
+            Assert.Equal(Path.Combine(root, "ACValhalla.exe"), GameFiles.FindExe(root));
+            File.Delete(Path.Combine(root, "ACValhalla.exe"));
+            Assert.Equal(Path.Combine(root, "ACValhalla_Plus.exe"), GameFiles.FindExe(root));   // no plain build beside it
+            File.Delete(Path.Combine(root, "ACValhalla_Plus.exe"));
+            Put("game.exe", 100);
+            Put("GAME_PLUS.EXE", 200);
+            Assert.Equal(Path.Combine(root, "game.exe"), GameFiles.FindExe(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void A_folder_name_comes_from_a_path_ending_in_either_separator()
+    {
+        Assert.Equal("Assassin's Creed Valhalla", GameFiles.FolderName("C:/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/games/Assassin's Creed Valhalla/"));
+        Assert.Equal("Valhalla", GameFiles.FolderName(@"D:\Games\Valhalla\"));
+        Assert.Equal("Valhalla", GameFiles.FolderName(@"D:\Games\Valhalla"));
     }
 
     [Fact]
@@ -613,6 +731,95 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         finally { Directory.Delete(root, true); }
     }
 
+    /// <summary>For every store and the manual add, an Unreal game's &lt;Name&gt;-&lt;Platform&gt;-Shipping.exe in a
+    /// &lt;Project&gt;\Binaries\&lt;Platform&gt; folder wins over the stub or launcher the store names, when it is the game's: the
+    /// one there is, or of several the one tied to the stub's name. Tools and servers, and installs that aren't Unreal, never.</summary>
+    [Fact]
+    public void Unreal_shipping_exe_wins_over_the_stub_or_launcher_a_store_names()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-shipping-test-").FullName;
+        try
+        {
+            string Put(string dir, string f, int size)
+            {
+                var path = Path.Combine(root, dir, f);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, new byte[size]);
+                return path;
+            }
+            string Unreal(string dir) => Directory.CreateDirectory(Path.Combine(root, dir, "Engine")).Parent!.FullName;
+
+            // Dead Island 2 from the Xbox app: MicrosoftGame.config names Content\DeadIsland.exe, a 1 MB bootstrap stub
+            var content = Unreal(@"XboxGames\Dead Island 2\Content");
+            File.WriteAllText(Path.Combine(content, "MicrosoftGame.config"),
+                """<Game><Identity Name="DeepSilver.578840CD64788" Version="1.124.4948.0"/><ExecutableList><Executable Name="DeadIsland.exe" TargetDeviceFamily="PC"/></ExecutableList></Game>""");
+            var stub = Put(@"XboxGames\Dead Island 2\Content", "DeadIsland.exe", 1_098_752);
+            var gdk = Put(@"XboxGames\Dead Island 2\Content\DeadIsland\Binaries\WinGDK", "DeadIsland-WinGDK-Shipping.exe", 4096);
+            Put(@"XboxGames\Dead Island 2\Content\EpicOnlineServices", "EpicOnlineServicesInstaller.exe", 8192);
+            var xbox = new XboxSource([root]).Discover().Single();
+            Assert.Equal(stub, xbox.ExePath);   // what the config names
+            Assert.Equal(gdk, GameFiles.GameExe(xbox.InstallDir, xbox.ExePath));
+            Assert.Equal(gdk, GameFiles.FindExe(content));   // the manual add and the stores without a configured exe
+
+            // a Shipping build the config marks dev-only or for another device family is never the game; others are
+            var dev = Unreal(@"Excluded\Content");
+            var devStub = Put(@"Excluded\Content", "Game.exe", 100);
+            Put(@"Excluded\Content\Game\Binaries\WinGDK", "Game-WinGDK-Shipping.exe", 4096);
+            Put(@"Excluded\Content\Console\Binaries\WinGDK", "Console-WinGDK-Shipping.exe", 4096);
+            File.WriteAllText(Path.Combine(dev, "MicrosoftGame.config"), """<Game><Identity Name="Pub.Excluded" Version="1.0.0.0"/><ExecutableList><Executable Name="Game.exe" TargetDeviceFamily="PC"/>"""
+                + """<Executable Name="Game\Binaries\WinGDK\Game-WinGDK-Shipping.exe" IsDevOnly="true"/>"""
+                + """<Executable Name="Console\Binaries\WinGDK\Console-WinGDK-Shipping.exe" TargetDeviceFamily="Scarlett"/></ExecutableList></Game>""");
+            Assert.Equal(devStub, GameFiles.GameExe(dev, devStub));
+            Assert.Equal(devStub, GameFiles.FindExe(dev, devStub));   // nor in the scan after the Shipping lookup
+            Assert.Equal(devStub, GameFiles.FindExe(dev));
+            var pc = Put(@"Excluded\Content\Pc\Binaries\WinGDK", "Game-WinGDK-Shipping.exe", 4096);   // not in the config: the game's
+            Assert.Equal(pc, GameFiles.GameExe(dev, devStub));
+
+            // Steam's Win64 layout, with a launcher a launch option names, Engine's helpers, a 32-bit build and a patcher's copy
+            var steam = Unreal(@"steamapps\common\Game");
+            var launcher = Put(@"steamapps\common\Game", "Game.exe", 300_000);
+            var win64 = Put(@"steamapps\common\Game\Game\Binaries\Win64", "Game-Win64-Shipping.exe", 4096);
+            Put(@"steamapps\common\Game\Engine\Binaries\Win64", "CrashReportClient-Win64-Shipping.exe", 8192);
+            Put(@"steamapps\common\Game\Game\Binaries\Win32", "Game-Win32-Shipping.exe", 8192);
+            Put(@"steamapps\common\Game\PatchData\Game\Binaries\Win64", "Game-Win64-Shipping.exe", 8192);
+            Assert.Equal(win64, GameFiles.GameExe(steam, launcher));
+            Assert.Equal(win64, GameFiles.FindExe(steam, "Game.exe"));
+            Assert.Equal(win64, GameFiles.GameExe(steam, win64));
+
+            // the project folder needn't be named like the exe (Avowed: Alabama), and the platform folder names the suffix
+            var avowed = Unreal("Avowed");
+            var alabama = Put(@"Avowed\Alabama\Binaries\WinGDK", "Avowed-WinGDK-Shipping.exe", 4096);
+            Put(@"Avowed\Alabama\Binaries\WinGDK", "Avowed-Win64-Shipping.exe", 8192);   // not its platform folder's
+            Assert.Equal(alabama, GameFiles.GameExe(avowed, Put("Avowed", "Avowed.exe", 100)));
+            var grts = Put(@"Grts\Proj\Binaries\WinGRTS", "Proj-WinGRTS-Shipping.exe", 4096);
+            Assert.Equal(grts, GameFiles.GameExe(Unreal("Grts"), Put("Grts", "Proj.exe", 100)));
+
+            // a larger tool or server build beside the game is never it
+            var game = Put(@"Tools\Game\Binaries\WinGDK", "Game-WinGDK-Shipping.exe", 4096);
+            Put(@"Tools\Tool\Binaries\WinGDK", "Tool-WinGDK-Shipping.exe", 8192);
+            Put(@"Tools\Game\Binaries\Win64", "GameServer-Win64-Shipping.exe", 8192);
+            Assert.Equal(game, GameFiles.GameExe(Unreal("Tools"), Put("Tools", "Launcher.exe", 100)));
+
+            // several game builds: the one the stub's name ties, by the exe's name or its project's; none tied keeps the store's
+            var two = Unreal("Pair");
+            var tied = Put(@"Pair\Two\Binaries\WinGDK", "Main-WinGDK-Shipping.exe", 4096);
+            Put(@"Pair\Other\Binaries\Win64", "Other-Win64-Shipping.exe", 8192);
+            Assert.Equal(tied, GameFiles.GameExe(two, Put("Pair", "Two.exe", 100)));
+            var untied = Put("Pair", "Neither.exe", 100);
+            var said = new List<string>();
+            Assert.Equal(untied, GameFiles.GameExe(two, untied, said.Add));
+            Assert.Contains("Other-Win64-Shipping.exe", Assert.Single(said));
+
+            // no Engine folder: not an Unreal install, its exe stays whatever is named like a Shipping build
+            var other = Put("Other", "Other.exe", 100);
+            Put(@"Other\Other\Binaries\Win64", "Other-Win64-Shipping.exe", 4096);
+            Assert.Equal(other, GameFiles.GameExe(Path.Combine(root, "Other"), other));
+            Assert.Equal(other, GameFiles.GameExe(Path.Combine(root, "Missing"), other));
+            Assert.False(GameFiles.IsShipping(@"D:\Game-Win64-Shipping.exe"));   // a drive's root has no Binaries folder above
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Trait("Needs", "Game")]
     [Fact]
     public void Gog_finds_cyberpunk_with_the_real_exe_not_the_prelauncher()
@@ -755,6 +962,27 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         finally { Directory.Delete(root, true); }
     }
 
+    /// <summary>A Blizzard game installed by Battle.net but listed by another store, or added by hand, has no battlenet: id:
+    /// Battle.net's own files in its folder mark it.</summary>
+    [Theory]
+    [InlineData(".build.info")]
+    [InlineData(".product.db")]
+    public void BattleNet_install_files_mark_a_game_listed_elsewhere(string marker)
+    {
+        var dir = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        try
+        {
+            var exe = Path.Combine(dir, "_retail_", "Game.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(exe)!);
+            File.WriteAllBytes(exe, [0]);
+            var game = new Game("steam:1", "Blizzard game", Store.Steam, dir, exe);
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
+            File.WriteAllText(Path.Combine(dir, marker), "");
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
     /// <summary>War Thunder's standalone layout: BattlEye sits in the root, the exe in win64, which is the folder suggested.</summary>
     [Theory]
     [InlineData(true)]
@@ -775,6 +1003,83 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Assert.Equal(marked ? AntiCheat.BattlEye : AntiCheat.None, GameFiles.DetectAntiCheat(manual));
             Assert.Equal(marked ? AntiCheat.BattlEye : AntiCheat.None, GameFiles.DetectAntiCheat(manual, quick: true));
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(manual with { Store = Store.Other }));   // a store's install folder is its root
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>Delta Force (Anti-Cheat Expert in the exe's folder) and Zenless Zone Zero (a HoYoverse game: its exe names
+    /// it, whatever its driver is called) as Steam lays them out, and each other marker family on its own.</summary>
+    [Fact]
+    public void Ace_hoyoverse_javelin_and_vanguard_installs_are_anti_cheat()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        try
+        {
+            Game Install(string name, string exe, params string[] files)
+            {
+                var dir = Path.Combine(root, name);
+                foreach (var f in files.Append(exe))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(dir, f))!);
+                    File.WriteAllBytes(Path.Combine(dir, f), [0]);
+                }
+                return new Game($"steam:{name}", name, Store.Steam, dir, Path.Combine(dir, exe));
+            }
+            const string ue = @"Game\Binaries\Win64\Game-Win64-Shipping.exe";
+            var deltaForce = Install("Delta Force", @"Game\DeltaForce\Binaries\Win64\DeltaForceClient-Win64-Shipping.exe",
+                @"Game\DeltaForce\Binaries\Win64\AntiCheatExpert\SGuard\x64\Plugins\ACE-DFS64.dll", @"Game\DeltaForce\Binaries\Win64\AntiCheatExpert\ACE-Setup64.exe");
+            var zzz = Install("Zenless Zone Zero", @"games\ZenlessZoneZero Game\ZenlessZoneZero.exe",
+                @"games\ZenlessZoneZero Game\ZenlessZoneZero_Data\globalgamemanagers", @"games\ZenlessZoneZero Game\UnityPlayer.dll");
+            foreach (var g in new[] { deltaForce, zzz })
+            {
+                Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(g));
+                Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(g, quick: true));
+            }
+            foreach (var marker in new[] { @"SGuard\x64\ACE-DFS64.dll", "SGuard64.exe", "SGuardSvc64.exe", "ACE-Base64.dll", "ACE-Base.dat", "ACE-Service64.exe",
+                         "ACE-ATS64.dll", "ACE-CSI64.dll", @"TenProtect\TPSvc.dll", "TesSafe.sys", "mhyprot.sys", "HYP.exe", "HYPHelper.exe", "HYPWorker.exe",
+                         "EAAntiCheat.GameServiceLauncher.exe", "EAAntiCheat.GameServiceLauncher.dll", "vgk.sys", "vgc.exe" })
+                Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install(marker.Replace('\\', '_'), ue, marker)));
+            foreach (var exe in new[] { "GenshinImpact.exe", "YuanShen.exe", "StarRail.exe", "BH3.exe" })
+                Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install(exe, exe, $@"{Path.GetFileNameWithoutExtension(exe)}_Data\globalgamemanagers")));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(Install("clean", ue, @"Game\SGuardian\readme.txt", "ZenlessZoneZero.exe.bak", "HYP.exe.txt")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>Riot's titles as the Riot Client lays them out, with no Vanguard file in any game folder: each is anti-cheat
+    /// by its "Riot Games" folder and, moved out of it, by its exe's name, from whichever folder it is added or listed with.</summary>
+    [Theory]
+    [InlineData(@"VALORANT\live", @"ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe", @"ShooterGame\Binaries\Win64")]
+    [InlineData(@"VALORANT\live", @"ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe", "")]
+    [InlineData(@"VALORANT\live", "VALORANT.exe", "")]
+    [InlineData("League of Legends", @"Game\League of Legends.exe", "Game")]
+    [InlineData("League of Legends", "LeagueClient.exe", "")]
+    [InlineData(@"LoR\live", @"Game\LoR.exe", "Game")]
+    [InlineData(@"2XKO\Live", @"Lion\Binaries\Win64\Lion-Win64-Shipping.exe", @"Lion\Binaries\Win64")]
+    public void Riot_games_are_anti_cheat_by_their_folder_and_by_their_exe(string title, string exe, string added)
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-riot-test-").FullName;
+        try
+        {
+            foreach (var library in new[] { "Riot Games", "Games" })
+            {
+                var dir = Path.Combine(root, library, title);
+                var path = Path.Combine(dir, exe);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, [0]);
+                if (exe.StartsWith("ShooterGame")) File.WriteAllBytes(Path.Combine(dir, "VALORANT.exe"), [0]);
+                foreach (var store in new[] { Store.Manual, Store.Epic, Store.Other })
+                {
+                    var g = new Game(store == Store.Manual ? ManualSource.IdOf(path) : $"{store}:{title}", title, store, Path.Combine(dir, added), path);
+                    Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(g));
+                    Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(g, quick: true));
+                }
+            }
+            var other = Path.Combine(root, "Riot Games", "Other", "Game.exe");   // any exe in a "Riot Games" folder
+            var clean = Path.Combine(root, "Games", "Other", "Game.exe");
+            foreach (var f in new[] { other, clean }) File.WriteAllBytes(Path.Combine(Directory.CreateDirectory(Path.GetDirectoryName(f)!).FullName, "Game.exe"), [0]);
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(new Game(ManualSource.IdOf(other), "Other", Store.Manual, Path.GetDirectoryName(other)!, other)));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(new Game(ManualSource.IdOf(clean), "Other", Store.Manual, Path.GetDirectoryName(clean)!, clean)));
         }
         finally { Directory.Delete(root, true); }
     }

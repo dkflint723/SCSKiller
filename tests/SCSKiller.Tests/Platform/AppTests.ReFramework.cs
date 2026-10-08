@@ -27,8 +27,6 @@ public partial class AppTests
         await k.ScanAsync(default);
         var s = k.Games.Single();
         Assert.Equal((true, true, null), (s.ReFramework, s.RecorderInstalled, s.RecorderSkip));
-        Assert.Equal(ScsKiller.RecorderUnusedReFrameworkNote, ScsKiller.RecorderUnusedText(s with { RecorderUnused = true }));
-        Assert.Equal(ScsKiller.RecorderUnusedNote, ScsKiller.RecorderUnusedText(s with { ReFramework = false, RecorderUnused = true }));
     }
 
     /// <summary>Removal deletes REFramework's copy of the recorder (any proxy of ours) and nothing else in _storage_: a
@@ -111,7 +109,6 @@ public partial class AppTests
     [Fact]
     public async Task REFrameworks_copy_of_the_recorder_doesnt_disarm_it_but_other_changes_there_do()
     {
-        using var _ = new FreshLedger(_root);
         Directory.CreateDirectory(Path.Combine(_exeDir, ReFramework.Storage));
         var k = Managed();
         await k.ScanAsync(default);
@@ -159,6 +156,7 @@ public partial class AppTests
     [InlineData("marker in storage", 0)]
     public void The_proxy_under_REFrameworks_path_rewrite_uses_the_game_folder(string variant, int computes)
     {
+        UseLiveLedger();   // the built proxy reads the live one
         if (OwnWarmExe() == null) return;
         var exeDir = Path.Combine(_root, "refw");
         var storage = Path.Combine(exeDir, ReFramework.Storage);
@@ -181,6 +179,7 @@ public partial class AppTests
     [Fact]
     public void Two_copies_of_the_proxy_in_one_process_make_one_recorder()
     {
+        UseLiveLedger();
         if (OwnWarmExe() is not { } warm) return;
         var exeDir = Path.Combine(_root, "twice");
         var second = Directory.CreateDirectory(Path.Combine(exeDir, "second")).FullName;

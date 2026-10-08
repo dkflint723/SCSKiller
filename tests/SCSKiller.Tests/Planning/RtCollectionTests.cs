@@ -219,6 +219,66 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.True(Off((project, Ini("[Windows DeviceProfile]", "+CVars=r.RayTracing.AllowPipeline=1")), (platform, townfall)));   // the platform file comes last
     }
 
+    /// <summary>r.RayTracing off in [/Script/Engine.RendererSettings] (DRAGON BALL: Sparking! ZERO's DefaultEngine.ini): off
+    /// only when the last of the Engine ini hierarchy and the user's Engine.ini says off and nothing that outranks it says
+    /// anything else; unset, on or unclear anywhere is not off.</summary>
+    [Fact]
+    public void RayTracingOffOnlyWhenEveryReadableSourceSaysOff()
+    {
+        static string Ini(params string[] lines) => string.Join(Environment.NewLine, lines);
+        const string P = "SparkingZERO";
+        const string baseEngine = "Engine/Config/BaseEngine.ini", basePlatform = "Engine/Platforms/Windows/Config/BaseWindowsEngine.ini",
+            project = P + "/Config/DefaultEngine.ini", enginePlatform = "Engine/Platforms/Windows/Config/WindowsEngine.ini",
+            projectWindows = P + "/Config/Windows/WindowsEngine.ini", projectPlatform = P + "/Platforms/Windows/Config/WindowsEngine.ini",
+            consoleVariables = P + "/Config/ConsoleVariables.ini", profiles = P + "/Config/DefaultDeviceProfiles.ini";
+        static string Renderer(string v) => Ini("[/Script/Engine.RendererSettings]", "r.SkinCache.CompileShaders=True", $"r.RayTracing={v}", "");
+        bool Off(string? user, string launch, params (string Path, string Text)[] files) =>
+            UnrealRhi.RayTracingOff(files.ToDictionary(f => f.Path, f => f.Text, StringComparer.OrdinalIgnoreCase), P, user, launch);
+        bool Project(string v, params (string Path, string Text)[] more) => Off(null, "", [(project, Renderer(v)), .. more]);
+
+        foreach (var path in new[] { basePlatform, enginePlatform, projectWindows, projectPlatform, consoleVariables })
+            Assert.True(UnrealRhi.IsConfig(path, P), path);
+
+        Assert.True(Project("False"));
+        Assert.True(Project("0", (profiles, Ini("[Windows DeviceProfile]", "+CVars=r.RayTracing.AllowPipeline=1"))));
+        Assert.False(Project("True"));
+        Assert.False(Off(null, "", (project, Ini("[/Script/Engine.RendererSettings]", "r.SkinCache.CompileShaders=True"))));   // unset
+        Assert.False(Off(null, "", (project, Ini("[SystemSettings]", "r.RayTracing=0"))));   // no renderer setting
+
+        // the hierarchy: base, project default, Windows platform layers (both layouts), the last that sets it wins
+        Assert.False(Off(null, "", (basePlatform, Renderer("False")), (project, Renderer("True"))));
+        Assert.True(Off(null, "", (baseEngine, Renderer("True")), (project, Renderer("False"))));
+        Assert.False(Project("False", (enginePlatform, Renderer("1"))));
+        Assert.False(Project("False", (projectWindows, Renderer("1"))));
+        Assert.False(Project("False", (projectPlatform, Renderer("True"))));
+        Assert.True(Project("True", (projectPlatform, Renderer("False"))));
+
+        // what outranks the renderer setting: on or unclear there is not off
+        Assert.False(Off(null, "", (project, Renderer("False") + Ini("[SystemSettings]", "r.RayTracing=1"))));
+        Assert.True(Off(null, "", (project, Renderer("False") + Ini("[SystemSettings]", "r.RayTracing=0"))));
+        Assert.False(Off(null, "", (project, Renderer("False") + Ini("[SystemSettings]", "r.RayTracing=2"))));
+        Assert.False(Off(null, "", (baseEngine, Ini("[ConsoleVariables]", "r.RayTracing=True")), (project, Renderer("False"))));
+        Assert.False(Project("False", (consoleVariables, Ini("[Startup]", "r.RayTracing=1"))));
+        Assert.False(Project("False", (profiles, Ini("[Windows DeviceProfile]", "+CVars=r.RayTracing=1"))));
+        Assert.True(Project("False", (profiles, Ini("[Windows DeviceProfile]", "+CVars=r.RayTracing.AllowPipeline=1"))));
+        Assert.False(Off(null, "-dx12 -ini:Engine:[SystemSettings]:r.RayTracing=1", (project, Renderer("False"))));
+        Assert.True(Off(null, "-dx12 -ExecCmds=\"r.RayTracing.AllowPipeline 1\"", (project, Renderer("False"))));
+
+        // the user's Saved config comes last
+        var saved = Ff7.TempDir("rt-user");
+        var config = Directory.CreateDirectory(Path.Combine(saved, "Config", "Windows")).FullName;
+        Assert.True(Off(saved, "", (project, Renderer("False"))));
+        File.WriteAllText(Path.Combine(config, "Engine.ini"), Renderer("True"));
+        Assert.False(Off(saved, "", (project, Renderer("False"))));
+        File.WriteAllText(Path.Combine(config, "Engine.ini"), Renderer("False"));
+        Assert.True(Off(saved, "", (project, Renderer("True"))));
+        File.WriteAllText(Path.Combine(config, "Engine.ini"), Renderer("False") + Ini("[SystemSettings]", "r.RayTracing=1"));
+        Assert.False(Off(saved, "", (project, Renderer("False"))));
+        File.WriteAllText(Path.Combine(config, "Engine.ini"), Renderer("False"));
+        File.WriteAllText(Path.Combine(config, "DeviceProfiles.ini"), Ini("[Windows DeviceProfile]", "+CVars=r.RayTracing=1"));
+        Assert.False(Off(saved, "", (project, Renderer("False"))));
+    }
+
     /// <summary>UE 4.26's local root signature: none for a ray generation shader; the hit group system parameters, then the
     /// shader's tables and root CBVs.</summary>
     [Fact]
@@ -341,6 +401,88 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Contains("HitGroup_Mat_[AO]_[A]", text);
         Assert.Equal("522e9ed9136b1272cc21459abeb883a4a24171e9", new Rec('R', so).Key);
         Assert.Null(SCSKiller.Core.FromSoft.SoulsRayTracing.Collection(ch, item, ch));
+    }
+
+    /// <summary>UE 4.25 creates its collections without a state object config (Returnal: 403 of 403). Such a recorded
+    /// collection reads back as having none, rebuilds byte for byte, and the rule learned from it gives the libraries no
+    /// state object has collections without one.</summary>
+    [Fact]
+    public void CollectionsWithoutAStateObjectConfigRebuild()
+    {
+        var recorded = Lib("rt425-recorded");
+        var other = Lib("rt425-other");
+        var lib = Library((10, "DefaultMainCHS", 24));
+        var (local, localBlob) = RtCollections.Serialize(RtCollections.LocalRs(recorded.Counts, false, recorded.Bindings), []);
+        var (global, globalBlob) = RtCollections.Serialize(RtCollections.Ue426Global, RootSig.Ue426Samplers);
+        const string name = "7ec183cab5332e20";
+        var so = new MemoryStream();
+        var w = new BinaryWriter(so);
+        void Str(string? v) { if (v == null) { w.Write(uint.MaxValue); return; } w.Write((uint)v.Length); w.Write(System.Text.Encoding.Unicode.GetBytes(v)); }
+        w.Write(0u); w.Write(8u);
+        w.Write(5u); w.Write(Convert.FromHexString(recorded.Sha1)); w.Write(1u); Str($"CHS_{name}"); Str("DefaultMainCHS"); w.Write(0u);
+        w.Write(9u); w.Write(24u); w.Write(8u);
+        w.Write(7u); w.Write(1u); w.Write(1u); Str($"CHS_{name}");
+        w.Write(11u); Str($"HitGroup_{name}"); w.Write(0u); Str(null); Str($"CHS_{name}"); Str(null);
+        w.Write(10u); w.Write(1u);
+        w.Write(1u); w.Write(Convert.FromHexString(global));
+        w.Write(2u); w.Write(Convert.FromHexString(local));
+        w.Write(7u); w.Write(6u); w.Write(1u); Str($"CHS_{name}");
+        var rec = new Rec('R', so.ToArray());
+
+        var c = RtCollections.Read(rec)!;
+        Assert.Equal(RtCollections.NoConfig, c.Flags);
+        Assert.Equal(rec.Payload, RtCollections.Collection(lib, c.Library, global, local, local, c.Payload, c.Attributes, c.Depth, c.Flags, c.NameHash));
+
+        var dir = Ff7.TempDir("rt-no-config");
+        var db = Path.Combine(dir, "rec.db");
+        using (var f = File.Create(db))
+        {
+            WriteBlob(f, global, globalBlob);
+            WriteBlob(f, local, localBlob);
+            WriteBlob(f, recorded.Sha1, lib);
+            Write(f, rec.Tag, rec.Payload);
+        }
+        var index = new ShaderIndex("rt425", ["PCD3D_SM5"], new[] { recorded, other }.ToDictionary(s => s.Sha1), [new ShaderMap("m", "Game", "PCD3D_SM5", [recorded.Sha1, other.Sha1])]);
+        var log = new List<string>();
+        var plan = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.25" }, index, new Recording(db), Nvidia, Path.Combine(dir, "plan"), new Log(log.Add), CancellationToken.None);
+        Assert.Contains(log, l => l.Contains("1/1 rebuilt byte for byte"));
+        Assert.Equal([(other.Sha1, RtCollections.NoConfig)], Items(plan).Select(y => (y.Library, y.Flags)));
+    }
+
+    /// <summary>Kuro's 4.26 fork (Wuthering Waves) without a recording: its root signatures aren't 4.26's, so nothing is
+    /// synthesized, ray tracing collections included, where stock 4.26 gets its collection.</summary>
+    [Fact]
+    public void KuroForkSynthesizesNothingWithoutARecording()
+    {
+        var dir = Ff7.TempDir("rt-kuro");
+        var stock = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.26" }, Index(), null, Nvidia, Path.Combine(dir, "stock"), null, CancellationToken.None);
+        Assert.Single(Items(stock));
+        var log = new List<string>();
+        var kuro = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.26", Fork = "GAME_WutheringWaves" }, Index(), null, Nvidia, Path.Combine(dir, "kuro"),
+            new Log(log.Add), CancellationToken.None);
+        Assert.Empty(Items(kuro));
+        Assert.Equal(0, kuro.Stats.Generated);
+        Assert.Contains(log, l => l.Contains("no collection rule"));
+    }
+
+    /// <summary>UE 4.25 without a recording: 4.26's global root signature without the NVAPI slot, with 4.25's static samplers
+    /// (s1000-s1005, space 0), no state object config, payload 64 (Returnal's recording: 401 of its 403 collections rebuilt).</summary>
+    [Fact]
+    public void Ue425CollectionsWithoutARecording()
+    {
+        var dir = Ff7.TempDir("rt-425");
+        var log = new List<string>();
+        var plan = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.25" }, Index(), null, Nvidia, Path.Combine(dir, "plan"), new Log(log.Add), CancellationToken.None);
+        var (global, blob) = RtCollections.Serialize(RtCollections.Ue425Global, RootSig.StaticSamplers(RootSig.Rule.Ue425));
+        var y = Items(plan).Single(i => i.Library == Chs.Sha1);
+        Assert.Equal((global, 64u, 8u, 1u, RtCollections.NoConfig), (y.Global, y.Payload, y.Attributes, y.Depth, y.Flags));
+        Assert.Equal("0,0,0,64,0,1,5", string.Join(',', RtCollections.Ue425Global.Rows[0]));
+        Assert.Contains(log, l => l.Contains("UE 4.25's"));
+        if (D3D12Runtime.Available) Assert.Equal(0, D3D12Runtime.CreateRootSignature(blob));
+        var work = Path.Combine(dir, "work");
+        new Planner().Materialize(plan, Ff7.Game, Ue427 with { Version = "4.25" }, new Shaders(new() { [Chs.Sha1] = HitLib }), null, work, CancellationToken.None);
+        var made = Read(Path.Combine(work, "scskiller_gen.db")).Where(r => r.Tag == 'R').Select(RtCollections.Read).Single()!;
+        Assert.Equal((Chs.Sha1, RtCollections.NoConfig, 64u), (made.Library, made.Flags, made.Payload));
     }
 
     /// <summary>A collection whose one library exports a closest hit AND an any hit shader (Hogwarts Legacy: 290 of its 981)
@@ -486,7 +628,6 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var game = new SCSKiller.Core.Games.SteamSource().Discover().FirstOrDefault(g => g.Id == "steam:990080");
         if (game == null) return;
-        Ff7.Codecs();
         var reader = new UnrealReader(Ff7.TempDir("rt-hogwarts-data"));
         var engine = reader.Detect(game)!;
         if (Ff7.Recording(game, engine, reader, "rt-hogwarts-rec") is not { } db) return;
@@ -529,7 +670,6 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var game = new SCSKiller.Core.Games.XboxSource().Discover().FirstOrDefault(g => g.Id.StartsWith("xbox:BethesdaSoftworks.ProjectAltar"));
         if (game == null) return;
-        Ff7.Codecs();
         var reader = new UnrealReader(Ff7.TempDir("rt-oblivion-data"));
         var engine = reader.Detect(game)!;
         if (Ff7.Recording(game, engine, reader, "rt-oblivion-rec") is not { } db) return;
@@ -573,7 +713,6 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var game = new SCSKiller.Core.Games.SteamSource().Discover().FirstOrDefault(g => g.Id == "steam:2989180");
         if (game == null) return;
-        Ff7.Codecs();
         var reader = new UnrealReader(Ff7.TempDir("rt-darwin-data"));
         var engine = reader.Detect(game)!;
         Assert.Equal(("5.4", null), (engine.Version, engine.Fork));
@@ -593,7 +732,6 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     static readonly Game Jedi = new("ea:198300", "STAR WARS Jedi: Survivor", Store.EA, JediInstall, Path.Combine(JediInstall, @"SwGame\Binaries\Win64\JediSurvivor.exe"));
     static readonly Lazy<(UnrealReader Reader, EngineInfo Engine)> JediReader = new(() =>
     {
-        Ff7.Codecs();
         var reader = new UnrealReader(Ff7.TempDir("rt-jedi-data"));
         return (reader, reader.Detect(Jedi)!);
     });
@@ -690,7 +828,6 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var game = SCSKiller.Tests.FromSoft.FromSoftGameTests.Games["ER"].Game;
         if (!File.Exists(game.ExePath)) return;
-        Ff7.Codecs();
         var reader = new SCSKiller.Core.FromSoft.FromSoftReader(Ff7.TempDir("rt-er-data"));
         var engine = reader.Detect(game)!;
         var index = reader.Index(game, engine, null, CancellationToken.None);
@@ -728,7 +865,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
 
         if (mode == "warp")
         {
-            var luid = Process.Start(new ProcessStartInfo(Path.Combine(Ff7.ProxyBin, "selftest.exe"), "warpluid") { RedirectStandardOutput = true })!.StandardOutput.ReadToEnd().Trim();
+            var luid = Process.Start(new ProcessStartInfo(Path.Combine(Ff7.ProxyBin, "selftest.exe"), "warpluid") { RedirectStandardOutput = true, Environment = { ["SCSKILLER_SELFTEST_UNARMED"] = "1" } })!.StandardOutput.ReadToEnd().Trim();
             var r = Run("scsktrter_warp.exe", "--adapter-luid", luid);
             output.WriteLine($"WARP: {r.Done} created, {r.Failed} failed ({Stats(r.Ms)})");
             Assert.True(r.Done == Read(Path.Combine(work, "scskiller_gen.db")).Count(x => x.Tag == 'R') && r.Failed == 0, r.Log[^Math.Min(r.Log.Length, 3000)..]);

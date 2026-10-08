@@ -175,16 +175,16 @@ public class UnityReaderTests
     }
 
     /// <summary>A UnityFS (format 8) bundle holding one node: blocks info LZ4HC, the data split into an LZ4 and an LZMA block.</summary>
-    static byte[] Bundle(byte[] content, string node) => Bundle(node, (content[..(content.Length / 2)], 2), (content[(content.Length / 2)..], 1));
-
-    /// <summary>The same with the node's data in the given blocks (compression 0 none, 1 LZMA, 2 LZ4).</summary>
-    static byte[] Bundle(string node, params (byte[] Data, int Comp)[] blocks)
+    static byte[] Bundle(byte[] content, string node)
     {
-        var packed = blocks.Select(b => b.Comp switch { 0 => b.Data, 1 => Lzma(b.Data), _ => Lz4(b.Data) }).ToArray();
+        var half = content.Length / 2;
+        byte[] a = content[..half], b = content[half..];
+        var lzA = new byte[LZ4Codec.MaximumOutputSize(a.Length)];
+        lzA = lzA[..LZ4Codec.Encode(a, lzA, LZ4Level.L09_HC)];
+        var lzmaB = Lzma(b);
         var info = new List<byte>(new byte[16]);
-        info.AddRange(Be(blocks.Length));
-        for (var i = 0; i < blocks.Length; i++) info.AddRange([.. Be(blocks[i].Data.Length), .. Be(packed[i].Length), 0, (byte)blocks[i].Comp]);
-        info.AddRange([.. Be(1), .. Be64(0), .. Be64(blocks.Sum(b => (long)b.Data.Length)), .. Be(4), .. Encoding.ASCII.GetBytes(node), 0]);
+        info.AddRange([.. Be(2), .. Be(a.Length), .. Be(lzA.Length), 0, 2, .. Be(b.Length), .. Be(lzmaB.Length), 0, 1]);
+        info.AddRange([.. Be(1), .. Be64(0), .. Be64(content.Length), .. Be(4), .. Encoding.ASCII.GetBytes(node), 0]);
         var infoBytes = info.ToArray();
         var infoLz = new byte[LZ4Codec.MaximumOutputSize(infoBytes.Length)];
         infoLz = infoLz[..LZ4Codec.Encode(infoBytes, infoLz, LZ4Level.L09_HC)];
@@ -196,16 +196,11 @@ public class UnityReaderTests
         while (w.Count % 16 != 0) w.Add(0);
         w.AddRange(infoLz);
         while (w.Count % 16 != 0) w.Add(0);
-        foreach (var p in packed) w.AddRange(p);
+        w.AddRange(lzA);
+        w.AddRange(lzmaB);
         var bytes = w.ToArray();
         BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(sizeAt), bytes.Length);
         return bytes;
-    }
-
-    static byte[] Lz4(byte[] src)
-    {
-        var dst = new byte[LZ4Codec.MaximumOutputSize(src.Length)];
-        return dst[..LZ4Codec.Encode(src, dst, LZ4Level.L09_HC)];
     }
 
     static byte[] Lzma(byte[] src)
@@ -242,45 +237,53 @@ public class UnityReaderTests
         Directory.Delete(dir, true);
     }
 
-    /// <summary>With two blocks cached, reads anywhere (across blocks of any size and compression, past the end: zeros), in
-    /// any order and from several threads, give the bundle's bytes; a block evicted and decompressed again counts once.</summary>
+    /// <summary>A bundle keeps the 16 blocks it read last, not all of them: a block read again after 16 others is
+    /// decompressed again; one still kept isn't. Reads at any offset find their block.</summary>
     [Fact]
-    public void BundleReadsAcrossBlocksWithASmallCache()
+    public void ABundleKeepsOnlyItsLastReadBlocks()
     {
         var dir = Temp();
         var path = Path.Combine(dir, "x.bundle");
-        var rnd = new Random(7);
-        int[] sizes = [1000, 1, 4096, 700, 2500, 3, 1000, 1999, 64, 3000, 1];
-        var blocks = sizes.Select((n, i) => (Enumerable.Range(0, n).Select(_ => (byte)rnd.Next(4)).ToArray(), i % 4 == 3 ? 0 : i == 6 ? 1 : 2)).ToArray();
-        var content = blocks.SelectMany(b => b.Item1).ToArray();
-        File.WriteAllBytes(path, Bundle("CAB-0123", blocks));
-        byte[] Want(long off, int count)
+        const int Size = 100, Kept = 16, Count = 3 * Kept;
+        var content = Enumerable.Range(0, Size * Count).Select(i => (byte)(i * 7 + i / 251)).ToArray();
+        File.WriteAllBytes(path, StoredBundle(content, "CAB-0123", Size));
+        using (var b = UnityFiles.Bundle.Open(path)!)
         {
-            var w = new byte[count];
-            if (off < content.Length) content.AsSpan((int)off, (int)Math.Min(count, content.Length - off)).CopyTo(w);
-            return w;
+            foreach (var at in new[] { 0, 1, 99, 100, 150, 4795 }) Assert.Equal(content[at..(at + 5)], b.Read(at, 5));
+            var before = b.BlocksDecompressed;
+            b.Read(0, 1);
+            Assert.Equal(before, b.BlocksDecompressed);   // block 0 was read just now
+            for (var i = 1; i <= Kept; i++) b.Read(i * Size, 1);
+            before = b.BlocksDecompressed;
+            b.Read(0, 1);
+            Assert.Equal(before + 1, b.BlocksDecompressed);
+            Assert.Equal(content, b.Read(0, content.Length));
         }
-
-        using var b = UnityFiles.Bundle.Open(path, cacheBlocks: 2)!;
-        Assert.Equal(content, b.Read(0, content.Length));
-        Assert.Equal(sizes.Length, b.BlocksDecompressed);
-        var at = 0;
-        foreach (var n in Enumerable.Reverse(sizes)) Assert.Equal(Want(content.Length - (at += n), n), b.Read(content.Length - at, n)); // each block, backwards
-        for (var i = 0; i < 2000; i++)
-        {
-            long off = rnd.Next(content.Length + 100);
-            var count = rnd.Next(6000);
-            Assert.Equal(Want(off, count), b.Read(off, count));
-        }
-        Parallel.For(0, 2000, i =>
-        {
-            var r = new Random(i);
-            long off = r.Next(content.Length + 100);
-            var count = r.Next(6000);
-            Assert.Equal(Want(off, count), b.Read(off, count));
-        });
-        Assert.Equal(sizes.Length, b.BlocksDecompressed);
-        b.Dispose();
         Directory.Delete(dir, true);
+    }
+
+    /// <summary>A UnityFS (format 8) bundle holding one node, its data in uncompressed blocks of <paramref name="size"/> bytes.</summary>
+    static byte[] StoredBundle(byte[] content, string node, int size)
+    {
+        var info = new List<byte>(new byte[16]);
+        var n = (content.Length + size - 1) / size;
+        info.AddRange(Be(n));
+        for (var i = 0; i < n; i++)
+        {
+            var len = Math.Min(size, content.Length - i * size);
+            info.AddRange([.. Be(len), .. Be(len), 0, 0]);
+        }
+        info.AddRange([.. Be(1), .. Be64(0), .. Be64(content.Length), .. Be(4), .. Encoding.ASCII.GetBytes(node), 0]);
+        var w = new List<byte>();
+        w.AddRange([.. Encoding.ASCII.GetBytes("UnityFS"), 0, .. Be(8), .. Encoding.ASCII.GetBytes("5.x.x"), 0, .. Encoding.ASCII.GetBytes("2022.3.1f1"), 0]);
+        var sizeAt = w.Count;
+        w.AddRange([.. Be64(0), .. Be(info.Count), .. Be(info.Count), .. Be(0x40 | 0x200)]);
+        while (w.Count % 16 != 0) w.Add(0);
+        w.AddRange(info);
+        while (w.Count % 16 != 0) w.Add(0);
+        w.AddRange(content);
+        var bytes = w.ToArray();
+        BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(sizeAt), bytes.Length);
+        return bytes;
     }
 }

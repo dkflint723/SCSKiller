@@ -131,10 +131,11 @@ public sealed partial class ScsKiller
             var appIdFile = Path.Combine(dir, SteamAppIdFile);
             var addAppId = !File.Exists(appIdFile);   // else the user's own, with this id: left as it is
             string[] placed = addAppId ? ["d3d12.dll", "scskiller.ini", SteamAppIdFile] : ["d3d12.dll", "scskiller.ini"];
-            string[] created = [.. placed.SelectMany(f => new[] { f, f + TempSuffix }), ArmedFile, .. RecorderDataFiles, Recordings.KeysFile];
+            string[] created = [.. placed.SelectMany(f => new[] { f, f + TempSuffix }), ArmedFile, .. RecorderDataFiles, .. Recordings.AppFiles];
             string? Refusal()
             {
                 if (entry == null) return "offline sessions without EasyAntiCheat aren't available for this game";
+                if (GameVerdicts.Current.Unsupported(g, s.Engine) is { } why) return $"not supported: {why.Text}";
                 if (!rec.OfflineRecord) return "allow offline sessions for this game first";
                 if (OfflineLive(gameId) || rec.OfflineSession != null) return "the last offline session's files are still being removed";
                 if (rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || rec.RecorderExe != null || rec.RecorderMoveFrom != null || rec.RecorderRollback
@@ -176,19 +177,12 @@ public sealed partial class ScsKiller
                     using var helper = Process.Start(new ProcessStartInfo(CleanupHelper, [CleanupArg, gameId]) { UseShellExecute = false, CreateNoWindow = true })
                         ?? throw new InvalidOperationException("its cleanup helper didn't start");
                 }
-                // each to a temp name, then renamed into place: an interrupted write leaves no half file under the real name
-                void Place(string name, Action<string> write)
-                {
-                    var temp = Path.Combine(dir, name + TempSuffix);
-                    write(temp);
-                    File.Move(temp, Path.Combine(dir, name));
-                }
-                Place("d3d12.dll", temp => File.Copy(_proxyDll!, temp));
-                Place("scskiller.ini", temp => WriteNew(temp, ini));
-                if (addAppId) Place(SteamAppIdFile, temp => WriteNew(temp, entry!.AppId));
+                Place(Path.Combine(dir, "d3d12.dll"), temp => File.Copy(_proxyDll!, temp));
+                Place(Path.Combine(dir, "scskiller.ini"), temp => WriteNew(temp, ini));
+                if (addAppId) Place(Path.Combine(dir, SteamAppIdFile), temp => WriteNew(temp, entry!.AppId));
                 if (GameFiles.DetectAntiCheat(g, quick: true, ignore: AntiCheat.EasyAntiCheat) is not AntiCheat.None and var other)
                     throw new InvalidOperationException($"{other} appeared in its folder");
-                File.Delete(LedgerFile(g.ExePath) + ".revoked");   // an earlier revocation's mark: the proxy would refuse on it
+                DeleteRevocationMark(g.ExePath);   // an earlier revocation's mark: the proxy would refuse on it
                 process = StartAttested(g.ExePath, OfflineArguments, (h, pid, started) =>
                 {
                     _offline[gameId] = h;
@@ -216,6 +210,27 @@ public sealed partial class ScsKiller
     }
 
     static string Hex(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
+    /// <summary>Writes a file in a game's folder under a temp name beside it, then renames it into place: a write cut off (a
+    /// full disk, the app closed) leaves no half file under the real name, and one it <paramref name="replace"/>s stays whole
+    /// until the rename. With <paramref name="check"/> (the recorder's d3d12.dll and ini), the temp file must read back as
+    /// written first.</summary>
+    static void Place(string path, Action<string> write, bool replace = false, Func<string, bool>? check = null)
+    {
+        var temp = path + TempSuffix;
+        try
+        {
+            write(temp);
+            if (check != null && !check(temp)) throw new IOException($"{temp} doesn't read back as written");
+            File.Move(temp, path, replace);
+        }
+        catch
+        {
+            try { File.Delete(temp); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            throw;
+        }
+    }
 
     static void WriteNew(string path, string text)
     {
@@ -299,11 +314,8 @@ public sealed partial class ScsKiller
             log($"{name}: the offline session's process {s.Pid} was never resumed: ended");
         }
         var dir = Path.GetDirectoryName(s.Exe)!;
-        var ledger = LedgerFile(s.Exe);
-        if (!Revoke(ledger, "[scskiller]\r\nnonce=\r\n"u8))
-            try { File.WriteAllText(ledger + ".revoked", ""); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        var data = new HashSet<string>([.. RecorderDataFiles, Recordings.KeysFile], StringComparer.OrdinalIgnoreCase);
+        RevokeLedgers(s.Exe);
+        var data = new HashSet<string>([.. RecorderDataFiles, .. Recordings.AppFiles], StringComparer.OrdinalIgnoreCase);
         // the folder's names, listed whole; null when it is gone or can't be read: nothing is known gone then
         HashSet<string>? Listed()
         {

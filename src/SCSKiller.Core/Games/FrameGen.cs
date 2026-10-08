@@ -39,17 +39,26 @@ public static class FrameGen
         return null;
     }
 
-    static bool OptiScalerGenerates(string dir, bool library)
+    /// <summary>As the proxy's opti_fg reads OptiScaler.ini: a newer one's [FrameGen] FGOutput (with Enabled=true) names the
+    /// output, else FGType names the kind; [OptiFG] Enabled=true is an older one's switch.</summary>
+    internal static bool OptiScalerGenerates(string dir, bool library)
     {
-        string? type = null;
+        var ini = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);   // "section.key" -> the last value
         try
         {
-            var ini = Path.Combine(dir, "OptiScaler.ini");
-            if (File.Exists(ini))
-                type = File.ReadLines(ini).Select(l => l.Split(';')[0].Trim()).Where(l => l.StartsWith("FGType", StringComparison.OrdinalIgnoreCase) && l.Contains('='))
-                    .Select(l => l[(l.IndexOf('=') + 1)..].Trim()).LastOrDefault();
+            var path = Path.Combine(dir, "OptiScaler.ini");
+            var section = "";
+            if (File.Exists(path))
+                foreach (var l in File.ReadLines(path).Select(l => l.Split(';')[0].Trim()))
+                    if (l.StartsWith('[') && l.EndsWith(']')) section = l[1..^1].Trim();
+                    else if (l.IndexOf('=') is > 0 and var eq) ini[$"{section}.{l[..eq].Trim()}"] = l[(eq + 1)..].Trim();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return true; }   // unread: taken as on
+        bool Is(string key, string value) => ini.TryGetValue(key, out var v) && v.Equals(value, StringComparison.OrdinalIgnoreCase);
+        if (ini.TryGetValue("FrameGen.FGOutput", out var output) && output.Length > 0)
+            return Is("FrameGen.Enabled", "true") && !output.Equals("auto", StringComparison.OrdinalIgnoreCase) && !output.Equals("nofg", StringComparison.OrdinalIgnoreCase);
+        var type = ini.GetValueOrDefault("FrameGen.FGType") ?? ini.Where(x => x.Key.EndsWith(".FGType", StringComparison.OrdinalIgnoreCase)).Select(x => x.Value).LastOrDefault();
+        if (Is("OptiFG.Enabled", "true") && !"nofg".Equals(type, StringComparison.OrdinalIgnoreCase)) return true;
         return type is null or "" || type.Equals("auto", StringComparison.OrdinalIgnoreCase) ? library : OptiFg.Contains(type, StringComparer.OrdinalIgnoreCase);
     }
 }

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.ExceptionServices;
@@ -22,6 +22,7 @@ using CUE4Parse.UE4.Shaders;
 using CUE4Parse.UE4.Versions;
 using CUE4Parse.UE4.VirtualFileSystem;
 using CUE4Parse.UE4.Objects.Core.Misc;
+using Microsoft.Win32.SafeHandles;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Carved;
 using SCSKiller.Core.Games;
@@ -54,31 +55,44 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     {
         notes = "";
         if (Locate(game) is not { } where) return null;
-        var (paks, baseGame, fork, project) = where;
+        var (paks, baseGame, fork, project, guessed) = where;
         projects[game.InstallDir] = project;
         var eg = fork ?? baseGame;
         var s = Survey(paks, eg, project, null);
+        // a fork planned only from a recording, in an anti-cheat install: no key makes it compilable, so none is asked for
+        var blocked = Planning.RootSig.PlannedOnlyFromARecording(fork?.ToString()) ? GameFiles.DetectAntiCheat(game) : AntiCheat.None;
         var keyNote = "";
         FAesKey? key = null;
-        if (s.Libraries.Count == 0 && s.Encrypted.Count > 0 && (key = keys.Get(game, k => OpensAny(s.Encrypted, eg, k), out keyNote)) != null)
-            s = Survey(paks, eg, project, key);
-        // TOC version 8 is 5.5 to 5.7: the packages tell 5.6. A fork moves along only to its own 5.6 build (Neverness to Everness:
-        // its 5.5 beta's enum matches the folder first); a fork without one keeps its version.
-        var fork56 = baseGame == EGame.GAME_UE5_5 && fork != null ? ForkOf(EGame.GAME_UE5_6, game) : null;
-        if (baseGame == EGame.GAME_UE5_5 && (fork == null || fork56 != null) && HasVerseCells(paks, key))
-            (baseGame, fork) = (EGame.GAME_UE5_6, fork56);
+        if (s.Libraries.Count == 0 && s.Encrypted.Count > 0 && blocked == AntiCheat.None)
+        {
+            using (var check = new KeyCheck(s.Encrypted, eg)) key = keys.Get(game, check.Opens, out keyNote);
+            if (key != null) s = Survey(paks, eg, project, key);
+        }
+        if (baseGame == EGame.GAME_UE5_5 && fork == null && HasVerseCells(paks, key)) baseGame = EGame.GAME_UE5_6;
         ReleaseMemory();
-        var encrypted = s.Libraries.Count == 0 && s.Encrypted.Count > 0;
+        var encrypted = s.Libraries.Count == 0 && s.Encrypted.Count > 0 && blocked == AntiCheat.None;
         var platforms = s.Libraries.Count > 0 ? s.Libraries : s.Globals; // no libraries: the shaders are inside the packages
-        var unsupported = encrypted ? "encrypted game files (needs the game's AES key)"
+        var unsupported = blocked != AntiCheat.None ? $"needs a recording, which {(blocked == AntiCheat.Other ? "its anti-cheat" : blocked)} blocks"   // as ScsKiller words it for an anti-cheat game
+            : encrypted ? "encrypted game files (needs the game's AES key)"
             : platforms.Count == 0 ? "no shaders found (no shader library, no global shader cache)"
             : !platforms.Any(p => p.StartsWith("PCD3D_")) ? $"no D3D shaders ({string.Join(", ", platforms)})"
             : null;
         var version = VersionOf(baseGame);
         var menu = UnrealRhi.LaunchMenu(game);
-        var (api, why) = UnrealRhi.Resolve(version.StartsWith('4') ? 4 : 5, platforms, s.Configs, project, UnrealRhi.UserDir(game, project), UnrealRhi.LaunchOptions(game), menu.Entries, menu.Default);
+        var (userDir, launch) = (UnrealRhi.UserDir(game, project), UnrealRhi.LaunchOptions(game));
+        var (api, why) = UnrealRhi.Resolve(version.StartsWith('4') ? 4 : 5, platforms, s.Configs, project, userDir, launch, out var apiGuessed, menu.Entries, menu.Default, fork?.ToString());
         notes = keyNote.Length > 0 ? $"{why}; AES key: {keyNote}" : why;
-        return new EngineInfo("Unreal", version, fork?.ToString(), api, encrypted, unsupported, UnrealRhi.RtPipelinesOff(s.Configs, project));
+        var rtOff = UnrealRhi.RayTracingOff(s.Configs, project, userDir, launch);
+        return new EngineInfo("Unreal", version, fork?.ToString(), api, encrypted, unsupported, rtOff || UnrealRhi.RtPipelinesOff(s.Configs, project), rtOff,
+            UnrealRhi.AftermathShaderDebug(s.Configs, project, launch) && ShipsAftermath(paks), guessed, apiGuessed);
+    }
+
+    /// <summary>The engine loads Aftermath from Engine\Binaries\ThirdParty\NVIDIA\NVaftermath (some games in a version folder below it).</summary>
+    internal static bool ShipsAftermath(string paks)
+    {
+        var dir = Path.GetFullPath(Path.Combine(paks, "..", "..", "..", "Engine", "Binaries", "ThirdParty", "NVIDIA", "NVaftermath"));
+        try { return Directory.Exists(dir) && Directory.EnumerateFiles(dir, "GFSDK_Aftermath_Lib*.dll", SearchOption.AllDirectories).Any(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>The user supplies the AES key of an encrypted game (hex, "0x" optional): stored for the game if it opens its
@@ -86,31 +100,35 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     public bool SetKey(Game game, string key)
     {
         if (Locate(game) is not { } where) return false;
-        var (paks, baseGame, fork, project) = where;
+        var (paks, baseGame, fork, project, _) = where;
         var s = Survey(paks, fork ?? baseGame, project, null);
-        return s.Encrypted.Count > 0 && keys.Set(game, key, k => OpensAny(s.Encrypted, fork ?? baseGame, k));
+        if (s.Encrypted.Count == 0) return false;
+        using var check = new KeyCheck(s.Encrypted, fork ?? baseGame);
+        return keys.Set(game, key, check.Opens);
     }
 
     /// <summary>For a key list lookup (<see cref="KeyCollection"/>): the names the game may be listed under (store name,
     /// install folder, project, exe) and a check that stores a key as <see cref="SetKey"/> does, only if it opens the game's
     /// encrypted containers. The containers are surveyed at the first check, once. Null: not a cooked Unreal game.</summary>
-    public (string[] Names, Func<string, bool> TrySet)? KeyCheck(Game game)
+    public (string[] Names, Func<string, bool> TrySet)? KeyLookupCheck(Game game)
     {
         if (Locate(game) is not { } where) return null;
-        var (paks, baseGame, fork, project) = where;
+        var (paks, baseGame, fork, project, _) = where;
         var eg = fork ?? baseGame;
         List<string>? encrypted = null;
-        return ([game.Name, Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
+        return ([game.Name, GameFiles.FolderName(game.InstallDir), project, ExeBase(Path.GetFileNameWithoutExtension(game.ExePath))],
             key => (encrypted ??= Survey(paks, eg, project, null).Encrypted).Count > 0 && keys.Set(game, key, k => OpensAny(encrypted, eg, k)));
     }
 
     /// <summary>Why the automatic key search has no key for an encrypted game (<see cref="UnrealKeys.Miss"/>).</summary>
     public KeyMiss KeyMiss(Game game) => keys.Miss(game);
 
-    /// <summary>Whether <paramref name="key"/> opens any of the encrypted containers: the first in path order may be one of a
-    /// chunk under its own key (a non-zero key GUID), and one that can't be read at all is not a wrong key either.</summary>
-    internal static bool OpensAny(IEnumerable<string> paths, EGame game, FAesKey key) =>
-        paths.Any(p => { try { return Opens(p, game, key); } catch (Exception) { return false; } });
+    /// <summary>Whether <paramref name="key"/> opens any of the encrypted containers, as <see cref="KeyCheck"/> decides it.</summary>
+    internal static bool OpensAny(IReadOnlyList<string> paths, EGame game, FAesKey key)
+    {
+        using var check = new KeyCheck(paths, game);
+        return check.Opens(key);
+    }
 
     /// <summary>Paks dir, engine version, fork, project folder; null = not a cooked Unreal game.</summary>
     public string DetectStamp(Game game, EngineInfo? engine)
@@ -124,29 +142,72 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     static string ProjectOf(string paks) => Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(paks)))!; // <Project>\Content\Paks
 
-    static (string Paks, EGame Base, EGame? Fork, string Project)? Locate(Game game)
+    /// <summary>Guessed: the version is <see cref="DetectEngine"/>'s guess and no fork names it.</summary>
+    static (string Paks, EGame Base, EGame? Fork, string Project, bool Guessed)? Locate(Game game)
     {
         if (PaksDir(game.InstallDir) is not { } paks) return null;
-        var baseGame = DetectEngine(game, paks);
-        return (paks, baseGame, ForkOf(baseGame, game), ProjectOf(paks));
+        var baseGame = DetectEngine(game, paks, out var upTo, out var fromContainers, out var guessed);
+        var fork = DetectFork(baseGame, upTo, Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), Path.GetFileNameWithoutExtension(game.ExePath), fromContainers, game.Name);
+        return (paks, fork is { } f ? (EGame)((uint)f & 0xFFFF0000) : baseGame, fork, ProjectOf(paks), guessed && fork == null);
     }
 
-    static EGame? ForkOf(EGame baseGame, Game game) =>
-        DetectFork(baseGame, Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), Path.GetFileNameWithoutExtension(game.ExePath));
-
-    /// <summary>Whether <paramref name="key"/> decrypts the index of the encrypted container at <paramref name="path"/>.</summary>
-    static bool Opens(string path, EGame game, FAesKey key)
+    /// <summary>Whether a key opens any of a game's encrypted containers, each opened once, when first asked (the exe scan
+    /// tries many keys): the first in path order may be a chunk with a key of its own. An encrypted index must decrypt; a
+    /// readable index with encrypted entries takes any key (CUE4Parse's TestAesKey), so there one of its entries must decrypt
+    /// into what its type starts with. A container that can't be read says nothing about a key.</summary>
+    sealed class KeyCheck(IReadOnlyList<string> paths, EGame game) : IDisposable
     {
-        // our own streams: CUE4Parse's path constructors leave the file open when they throw (a damaged container) until a GC
-        var utoc = path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase);
-        var casPath = Path.ChangeExtension(path, ".ucas");
-        if (utoc && !File.Exists(casPath)) { using var whole = OpenContainer(path, new VersionContainer(game)); return whole.TestAesKey(key); }
-        using var toc = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var cas = utoc ? File.Open(casPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete) : null;
-        using AbstractAesVfsReader r = utoc
-            ? new IoStoreReader(path, toc, cas!, EIoStoreTocReadOptions.ReadDirectoryIndex, new VersionContainer(game))
-            : new PakFileReader(path, toc, new VersionContainer(game));
-        return r.TestAesKey(key);
+        readonly (AbstractAesVfsReader Reader, GameFile? Probe)?[] opened = new (AbstractAesVfsReader, GameFile?)?[paths.Count];
+        readonly bool[] tried = new bool[paths.Count];
+
+        (AbstractAesVfsReader Reader, GameFile? Probe)? Open(int i)
+        {
+            if (tried[i]) return opened[i];
+            tried[i] = true;
+            AbstractAesVfsReader? r = null;
+            try
+            {
+                r = OpenContainer(paths[i], new VersionContainer(game));
+                if (r.IsEncrypted) return opened[i] = (r, null);
+                r.Mount(StringComparer.OrdinalIgnoreCase);
+                // the smallest encrypted package, else shader library: a wrong key decrypts it into noise
+                var probe = r.Files.Values.Where(f => f.IsEncrypted && f.Extension is "uasset" or "umap").MinBy(f => f.Size)
+                    ?? r.Files.Values.Where(f => f.IsEncrypted && f.Extension == "ushaderbytecode").MinBy(f => f.Size);
+                return opened[i] = (r, probe);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                r?.Dispose();
+                return null;
+            }
+        }
+
+        static bool Takes((AbstractAesVfsReader Reader, GameFile? Probe) c, FAesKey key)
+        {
+            try
+            {
+                if (c.Reader.IsEncrypted) return c.Reader.TestAesKey(key);
+                if (c.Probe is not { } f) return false;
+                c.Reader.AesKey = key;
+                var b = f.Read();
+                return f.Extension == "ushaderbytecode"
+                    ? b.Length >= 4 && BitConverter.ToUInt32(b) switch { 1 => OpenV1(b) != null, 2 => LibraryEnd(b, 20, false) == b.Length || LibraryEnd(b, 8, false) == b.Length, _ => false }
+                    : b.Length >= 4 && BitConverter.ToUInt32(b) == 0x9E2A83C1;   // PACKAGE_FILE_TAG
+            }
+            catch (Exception e) when (e is not OutOfMemoryException) { return false; }
+        }
+
+        public bool Opens(FAesKey key)
+        {
+            for (var i = 0; i < paths.Count; i++)
+                if (Open(i) is { } c && Takes(c, key)) return true;
+            return false;
+        }
+
+        public void Dispose()
+        {
+            foreach (var c in opened) c?.Reader.Dispose();
+        }
     }
 
     static AbstractAesVfsReader OpenContainer(string path, VersionContainer versions) => path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase)
@@ -222,6 +283,11 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     ShaderIndex IndexCore(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct)
     {
         using var provider = Mount(PaksDir(game.InstallDir) ?? throw new DirectoryNotFoundException($"no Content/Paks under {game.InstallDir}"), GameOf(engine), keys.Stored(game));
+        return IndexCore(provider, game, engine, log, ct);
+    }
+
+    internal ShaderIndex IndexCore(DefaultFileProvider provider, Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct)
+    {
         var ue5 = engine.Version.StartsWith('5') || engine.Version.StartsWith('6');
         var ue58 = Version.TryParse(engine.Version, out var v) && v >= new Version(5, 8); // RootSig.Rule.Ue58
         if (!Libraries(provider).Any()) return IndexInline(provider, game, log, ct, ue5, ue58);
@@ -232,22 +298,16 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         var byKey = new Dictionary<string, (string Sha, string Platform)>(); // version-1 archives: archive hash -> shader
         var lanes = new ConcurrentDictionary<string, string>(); // shader -> its [WaveSize] platform suffix
         var byHash = new Dictionary<string, (string Sha, string Platform)>(); // library hash -> shader
-        var (undecodable, opened, unreadable) = (0, 0, 0);
+        var undecodable = 0;
         string? why = null;
-        ExceptionDispatchInfo? first = null;
+        var opener = new LibraryOpener();
         using var content = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         foreach (var lib in Libraries(provider))
         {
             var sw = Stopwatch.StartNew();
-            using var arc = TryOpen(provider, lib.File, out var error);
-            if (error != null)
-            {
-                (first, unreadable) = (first ?? ExceptionDispatchInfo.Capture(error), unreadable + 1);
-                log?.Report($"{lib.File.Path}: unreadable, skipped ({error.Message})");
-                continue;
-            }
+            using var arc = opener.Open(provider, lib.File, out var error);
+            if (error != null) { log?.Report($"{lib.File.Path}: unreadable, skipped ({error.Message})"); continue; }
             if (arc == null) { log?.Report($"{lib.File.Path}: unsupported shader archive layout, skipped"); continue; }
-            opened++;
             var sha = new string[arc.Count];
             var (bad, failed) = (0, 0);
             Parallel.ForEach(arc.Codes, new ParallelOptions { CancellationToken = ct }, work =>
@@ -291,8 +351,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             }
             log?.Report($"{lib.File.Name}: {(arc.Keys != null ? "version 1 (no maps)" : $"{arc.MapHashes.Length} shader maps")}, {arc.Count} shaders{(bad > 0 ? $", {bad} unparseable" : "")}{(failed > 0 ? $", {failed} code blocks that don't decompress, skipped" : "")} ({sw.Elapsed.TotalSeconds:F1}s)");
         }
-        if (opened == 0) first?.Throw();   // none read: the game is broken, not indexed with nothing
-        if (unreadable > 0) log?.Report($"{unreadable} unreadable shader {(unreadable == 1 ? "library" : "libraries")} skipped: their shaders aren't compiled");
+        opener.ThrowIfNoneOpened();
         if (shaders.IsEmpty && undecodable > 0) throw new InvalidDataException($"none of the game's shader code decompresses ({undecodable} blocks): {why}");
         if (byKey.Count > 0) // version-1 archives: maps from the packages that reference their shaders
         {
@@ -339,17 +398,19 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     void ReadShadersCore(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
     {
         using var provider = Mount(PaksDir(game.InstallDir) ?? throw new DirectoryNotFoundException($"no Content/Paks under {game.InstallDir}"), GameOf(engine), keys.Stored(game));
+        ReadShadersCore(provider, game, sha1s, sink, ct);
+    }
+
+    internal void ReadShadersCore(DefaultFileProvider provider, Game game, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
+    {
         if (!Libraries(provider).Any()) { ReadInline(provider, game, sha1s, sink, ct); return; }
         var left = new ConcurrentDictionary<string, bool>(sha1s.Select(s => KeyValuePair.Create(s, true)));
-        var opened = 0;
-        ExceptionDispatchInfo? first = null;
+        var opener = new LibraryOpener();
         foreach (var lib in Libraries(provider))
         {
             if (left.IsEmpty) break;
-            using var arc = TryOpen(provider, lib.File, out var error);
-            if (error != null) first ??= ExceptionDispatchInfo.Capture(error);   // skipped at indexing too: the plan has none of its own
+            using var arc = opener.Open(provider, lib.File, out _);   // skipped at indexing too
             if (arc == null) continue;
-            opened++;
             Parallel.ForEach(arc.Codes, new ParallelOptions { CancellationToken = ct }, work =>
             {
                 IEnumerable<(int, byte[])> codes;
@@ -363,7 +424,37 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
                 }
             });
         }
-        if (opened == 0) first?.Throw();   // as Index: none read
+        opener.ThrowIfNoneOpened();
+    }
+
+    /// <summary>Opens a game's libraries one by one: one that doesn't read (a layout CUE4Parse rejects, a broken or
+    /// oversized pak entry) is skipped, so the others still compile; when none opens, the first one's error is thrown.</summary>
+    sealed class LibraryOpener
+    {
+        int opened;
+        ExceptionDispatchInfo? first;
+
+        public Archive? Open(AbstractVfsFileProvider provider, GameFile file, out Exception? error)
+        {
+            error = null;
+            try
+            {
+                var arc = UnrealReader.Open(provider, file);
+                if (arc != null) opened++;
+                return arc;
+            }
+            catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+            {
+                error = e;
+                first ??= ExceptionDispatchInfo.Capture(e);
+                return null;
+            }
+        }
+
+        public void ThrowIfNoneOpened()
+        {
+            if (opened == 0) first?.Throw();
+        }
     }
 
     /// <summary>Class-name suffixes of the objects that carry inline shader maps: Material, MaterialInstanceConstant (and
@@ -377,7 +468,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     /// else PCD3D_SM5). ContentHash: every carved package's
     /// path and location (container, offset, size) in the paks, so a patch that touches one changes it. Where each shader
     /// was found goes to games\&lt;id&gt;\inline.idx for <see cref="ReadShaders"/>.</summary>
-    ShaderIndex IndexInline(DefaultFileProvider provider, Game game, IProgress<string>? log, CancellationToken ct, bool ue5 = false, bool ue58 = false)
+    internal ShaderIndex IndexInline(DefaultFileProvider provider, Game game, IProgress<string>? log, CancellationToken ct, bool ue5 = false, bool ue58 = false)
     {
         var sw = Stopwatch.StartNew();
         provider.MappingsContainer = new NoMappings(); // headers of unversioned packages parse without property types
@@ -389,35 +480,33 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         var stamps = new ConcurrentBag<string>();
         long read = 0;
         int carved = 0, unparsed = 0, unreadable = 0, undecoded = 0, bad = 0;
+        var budget = ByteBudget.FromFreeMemory();
         Parallel.ForEach(files, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, f =>
         {
             var global = IsGlobalCache(f);
             var owns = global ? true : OwnsShaderMaps(provider, f);
             if (owns == false) return;
             if (owns == null) Interlocked.Increment(ref unparsed); // a header that doesn't parse: carve it whole
-            byte[] data;
+            using var held = budget.Take(PackageSize(provider, f));
+            byte[][] parts;
             string stamp;
-            try { data = PackageBytes(provider, f, out stamp); }
+            try { parts = PackageParts(provider, f, out stamp); }
             catch (Exception) { Interlocked.Increment(ref unreadable); return; } // e.g. an encrypted entry
-            Interlocked.Add(ref read, data.Length);
+            Interlocked.Add(ref read, parts.Sum(p => (long)p.Length));
             Interlocked.Increment(ref carved);
             stamps.Add(stamp);
-            var found = InlineShaders.Carve(data, out var und);
-            Interlocked.Add(ref undecoded, und);
-            foreach (var m in found.GroupBy(e => e.Map))
+            var lists = new Dictionary<int, List<string>>();
+            Interlocked.Add(ref undecoded, InlineShaders.Carve(parts, e =>
             {
-                var list = new List<string>();
-                foreach (var e in m)
-                {
-                    var (h, container) = Hash(e.Code);
-                    list.Add(h);
-                    where.TryAdd(h, $"{e.Format} {e.Offset} {f.Path}");
-                    if (shaders.ContainsKey(h)) continue;
-                    try { if (ShaderContainer.Parse(container.Span, h, ShaderContainer.UeCounts(e.Code, ue5, ue58)) is { } info && shaders.TryAdd(h, info) && !ue5) wide.See(e.Code, info); }
-                    catch (Exception x) when (x is ArgumentException or IndexOutOfRangeException) { Interlocked.Increment(ref bad); } // malformed container: not usable anyway
-                }
-                maps.Add(new ShaderMap($"{f.Path}#{m.Key}", global ? "Global" : f.Path, "", list.Distinct().ToList()));
-            }
+                var (h, container) = Hash(e.Code);
+                if (!lists.TryGetValue(e.Map, out var list)) lists[e.Map] = list = [];
+                list.Add(h);
+                where.TryAdd(h, $"{e.Format} {e.Offset} {f.Path}");
+                if (shaders.ContainsKey(h)) return;
+                try { if (ShaderContainer.Parse(container.Span, h, ShaderContainer.UeCounts(e.Code, ue5, ue58)) is { } info && shaders.TryAdd(h, info) && !ue5) wide.See(e.Code, info); }
+                catch (Exception x) when (x is ArgumentException or IndexOutOfRangeException) { Interlocked.Increment(ref bad); } // malformed container: not usable anyway
+            }));
+            foreach (var (m, list) in lists) maps.Add(new ShaderMap($"{f.Path}#{m}", global ? "Global" : f.Path, "", list.Distinct().ToList()));
         });
         wide.Apply(shaders);
         var d3d = files.Where(IsGlobalCache).Select(f => f.NameWithoutExtension["GlobalShaderCache-".Length..]).Where(p => p.StartsWith("PCD3D_")).Distinct().ToList();
@@ -440,7 +529,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     /// <summary>Re-reads each package that holds a requested shader (inline.idx, else a fresh index) and decodes just those
     /// entries; a shader whose bytes no longer hash the same (game patched since) is skipped: it fails at replay.</summary>
-    void ReadInline(DefaultFileProvider provider, Game game, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
+    internal void ReadInline(DefaultFileProvider provider, Game game, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
     {
         var idx = Path.Combine(store.GameDir(game.Id), "inline.idx");
         if (!File.Exists(idx)) IndexInline(provider, game, null, ct);
@@ -448,14 +537,20 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         using (var r = new StreamReader(new GZipStream(File.OpenRead(idx), CompressionMode.Decompress)))
             for (var line = r.ReadLine(); line != null; line = r.ReadLine())
                 if (line.Split(' ', 4) is [var h, var fmt, var off, var path] && sha1s.Contains(h)) at[h] = (fmt[0], int.Parse(off), path);
+        var budget = ByteBudget.FromFreeMemory();
         Parallel.ForEach(at.GroupBy(a => a.Value.Path), new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, g =>
         {
-            byte[] data;
-            try { data = PackageBytes(provider, provider.Files[g.Key], out _); }
-            catch (Exception) { return; } // gone or unreadable since indexing: those items fail at replay
+            if (!provider.Files.TryGetValue(g.Key, out var f)) return; // gone since indexing: those items fail at replay
+            using var held = budget.Take(PackageSize(provider, f));
+            byte[][] parts;
+            try { parts = PackageParts(provider, f, out _); }
+            catch (Exception) { return; } // unreadable since indexing: those items fail at replay
             foreach (var (h, (fmt, off, _)) in g)
-                if (InlineShaders.Decode(data, off, fmt) is { } code && Hash(code) is var (hh, container) && hh == h)
+            {
+                var (part, local) = parts.Length == 2 && off >= parts[0].Length ? (parts[1], off - parts[0].Length) : (parts[0], off);
+                if (InlineShaders.Decode(part, local, fmt) is { } code && Hash(code) is var (hh, container) && hh == h)
                     lock (at) sink(h, container.ToArray());
+            }
         });
     }
 
@@ -485,13 +580,56 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             catch (Exception) { return null; }
     }
 
-    /// <summary>A package's bytes (.uasset + .uexp) and where they sit in the paks ("path|container:offset:size" per file).</summary>
-    static byte[] PackageBytes(DefaultFileProvider provider, GameFile f, out string stamp)
+    /// <summary>A package's files (.uasset, then .uexp when split; not concatenated: a copy would double the largest
+    /// allocation) and where they sit in the paks ("path|container:offset:size" per file).</summary>
+    static byte[][] PackageParts(DefaultFileProvider provider, GameFile f, out string stamp)
     {
         provider.Files.FindPayloads(f, out var uexp, out _, out _);
         static string At(GameFile g) => g is VfsEntry v ? $"{g.Path}|{v.Vfs.Name}:{v.Offset}:{g.Size}" : $"{g.Path}|{g.Size}";
         stamp = uexp == null ? At(f) : $"{At(f)}|{At(uexp)}";
-        return uexp == null ? f.Read() : [.. f.Read(), .. uexp.Read()];
+        return uexp == null ? [f.Read()] : [f.Read(), uexp.Read()];
+    }
+
+    static long PackageSize(DefaultFileProvider provider, GameFile f)
+    {
+        provider.Files.FindPayloads(f, out var uexp, out _, out _);
+        return f.Size + (uexp?.Size ?? 0);
+    }
+
+    /// <summary>Bounds the package bytes held at once, not the thread count: a material package can be hundreds of MB, and
+    /// one per core fills the memory. A package larger than the budget runs alone.</summary>
+    internal sealed class ByteBudget(long limit)
+    {
+        long used;
+
+        /// <summary>A quarter of the memory free now, 256 MB to 2 GB.</summary>
+        public static ByteBudget FromFreeMemory()
+        {
+            var m = GC.GetGCMemoryInfo();
+            return new(Math.Clamp((m.TotalAvailableMemoryBytes - m.MemoryLoadBytes) / 4, 256L << 20, 2L << 30));
+        }
+
+        public Held Take(long bytes)
+        {
+            lock (this)
+            {
+                while (used > 0 && used + bytes > limit) Monitor.Wait(this);
+                used += bytes;
+            }
+            return new(this, bytes);
+        }
+
+        public readonly struct Held(ByteBudget budget, long bytes) : IDisposable
+        {
+            public void Dispose()
+            {
+                lock (budget)
+                {
+                    budget.used -= bytes;
+                    Monitor.PulseAll(budget);
+                }
+            }
+        }
     }
 
     /// <summary>Empty type mappings: package headers parse, property data is never read.</summary>
@@ -510,18 +648,9 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     internal sealed record Archive(string[] MapHashes, (int Off, int Num)[] Maps, uint[] Indices, int Count, Func<IEnumerable<(int, byte[])>>[] Codes,
         string[]? Keys = null, // version 1: each shader's archive hash (packages reference it); no maps
         string[]? Hashes = null, // each shader's library hash (FSHAHash), which pipeline caches name it by
-        Microsoft.Win32.SafeHandles.SafeFileHandle? Pak = null) : IDisposable // OpenLarge: the pak Codes read from, once they are done
+        SafeFileHandle? Pak = null) : IDisposable // the pak Codes read from (OpenLarge)
     {
         public void Dispose() => Pak?.Dispose();
-    }
-
-    /// <summary><see cref="Open"/>, with what it threw instead: one library that doesn't read (a layout CUE4Parse rejects, a
-    /// broken pak entry) is skipped, not the game.</summary>
-    static Archive? TryOpen(AbstractVfsFileProvider provider, GameFile file, out Exception? error)
-    {
-        error = null;
-        try { return Open(provider, file); }
-        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException)) { error = e; return null; }
     }
 
     static IEnumerable<Library> Libraries(AbstractFileProvider provider) =>
@@ -540,14 +669,41 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     /// <see cref="InvalidDataException"/> naming the file when none fits or CUE4Parse rejects it.</summary>
     internal static FShaderCodeArchive ReadLibrary(string path, byte[] bytes, EGame game)
     {
+        var version = bytes.Length >= 4 ? BitConverter.ToUInt32(bytes) : 0;
         var pick = PickLayout(path, bytes, bytes.Length, game);
+        if (version == 2 && FormatName(bytes, bytes.Length, pick) is { } f)
+            bytes = [.. bytes.AsSpan(0, (int)f.At), .. bytes.AsSpan((int)(f.At + f.Length))];
         try { return new FShaderCodeArchive(new FByteArchive(path, bytes, new VersionContainer(pick))); }
         catch (Exception e) when (e is not OutOfMemoryException) { throw new InvalidDataException($"{path}: not a shader library this reads as UE {VersionOf(pick)} ({e.Message})", e); }
     }
 
+    /// <summary>The shader compression format a fork writes as an FString between a version-2 library's header and its code
+    /// (Dead Island 2: "Zstd"): where it starts and its length in bytes. Null without one. <paramref name="b"/> may hold only
+    /// the start of a <paramref name="length"/>-byte library.</summary>
+    static (long At, int Length)? FormatName(byte[] b, long length, EGame pick) =>
+        Layout(b, pick >= EGame.GAME_UE5_8 ? 8 : 20, ioStore: false) is { } l && length - l.End is > 5 and <= 68 and var extra && l.Header + extra <= b.Length
+            && BitConverter.ToInt32(b, (int)l.Header) == extra - 4 && b[l.Header + extra - 1] == 0 ? (l.Header, (int)extra) : null;
+
+    /// <summary>The layout <see cref="ReadLibrary"/> reads a <paramref name="length"/>-byte library as; <paramref name="bytes"/>
+    /// may hold only its start.</summary>
+    static EGame PickLayout(string path, byte[] bytes, long length, EGame game)
+    {
+        var version = bytes.Length >= 4 ? BitConverter.ToUInt32(bytes) : 0;
+        var ue5 = game >= EGame.GAME_UE5_0;
+        EGame[] layouts = ue5 ? [game, game >= EGame.GAME_UE5_8 ? EGame.GAME_UE5_7 : EGame.GAME_UE5_8] : [game];
+        long? End(EGame g) => LibraryEnd(bytes, g >= EGame.GAME_UE5_8 ? 8 : 20, ioStore: version == 1);
+        // pre-4.25 version 1 (OpenV1 parses it), versions CUE4Parse skips, and forks with their own header: as detected
+        return version is not (1 or 2) || version == 1 && !ue5 || game is EGame.GAME_MarvelRivals or EGame.GAME_ArenaBreakoutMobile ? game
+            : layouts.Where(g => End(g) == length).Concat(layouts.Where(g => End(g) != null)).Cast<EGame?>().FirstOrDefault()
+              ?? throw new InvalidDataException($"{path}: not a shader library this reads as UE {VersionOf(game)}{(ue5 ? $" or {VersionOf(layouts[1])}" : "")} (its counts run past the file)");
+    }
+
     /// <summary>Where a version-2 (pak era: header, then the code) or IoStore (header only) shader library with
     /// <paramref name="width"/>-byte hashes ends; null when an array count is negative or runs past the file.</summary>
-    internal static long? LibraryEnd(byte[] b, int width, bool ioStore)
+    internal static long? LibraryEnd(byte[] b, int width, bool ioStore) => Layout(b, width, ioStore)?.End;
+
+    /// <summary>Where the header of a library laid out as in <see cref="LibraryEnd"/> ends, and where its code does.</summary>
+    static (long Header, long End)? Layout(byte[] b, int width, bool ioStore)
     {
         // element sizes: hashes, hashes, then IoStore: chunk ids, map entries, code entries, group entries, indices;
         // pak era: map entries, code entries (FShaderCodeEntry, packed: u64 offset, u32 size, u32 uncompressed size, u8), preloads, indices
@@ -563,80 +719,12 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             if (!ioStore && i == 3)
                 for (var e = start; e < p; e += 17) code += BitConverter.ToUInt32(b, (int)e + 8);
         }
-        return p + code;
+        return (p, p + code);
     }
 
-    /// <summary>The layout <see cref="ReadLibrary"/> reads a library as; <paramref name="bytes"/> may be just its start (the
-    /// header) of a <paramref name="length"/>-byte file.</summary>
-    static EGame PickLayout(string path, byte[] bytes, long length, EGame game)
+    internal static Archive? Open(AbstractVfsFileProvider provider, GameFile file)
     {
-        var version = bytes.Length >= 4 ? BitConverter.ToUInt32(bytes) : 0;
-        var ue5 = game >= EGame.GAME_UE5_0;
-        EGame[] layouts = ue5 ? [game, game >= EGame.GAME_UE5_8 ? EGame.GAME_UE5_7 : EGame.GAME_UE5_8] : [game];
-        long? End(EGame g) => LibraryEnd(bytes, g >= EGame.GAME_UE5_8 ? 8 : 20, ioStore: version == 1);
-        // pre-4.25 version 1 (OpenV1 parses it), versions CUE4Parse skips, and forks with their own header: as detected
-        return version is not (1 or 2) || version == 1 && !ue5 || game is EGame.GAME_MarvelRivals or EGame.GAME_ArenaBreakoutMobile ? game
-            : layouts.Where(g => End(g) == length).Concat(layouts.Where(g => End(g) != null)).Cast<EGame?>().FirstOrDefault()
-              ?? throw new InvalidDataException($"{path}: not a shader library this reads as UE {VersionOf(game)}{(ue5 ? $" or {VersionOf(layouts[1])}" : "")} (its counts run past the file)");
-    }
-
-    /// <summary>A pak-era library too big for one byte array (CUE4Parse's pak Extract casts the entry size to int: past 2 GB
-    /// it throws OverflowException; Ready or Not's ShaderArchive-ReadyOrNot_Chunk0-PCD3D_SM6 is 2.9 GB). Its header is read
-    /// from the pak, each shader's code from the pak on demand. Only an uncompressed, unencrypted pak entry; smaller ones keep the
-    /// whole-file read, which also handles compressed and encrypted entries.</summary>
-    const long LargeLibrary = int.MaxValue;
-
-    static Archive OpenLarge(FPakEntry entry, EGame game)
-    {
-        if (entry.IsCompressed || entry.IsEncrypted || entry.Vfs is not PakFileReader { Path: var pak })
-            throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(entry.Size)} shader library that is compressed or encrypted in its pak, not read");
-        var (start, size) = (entry.Offset + entry.StructSize, entry.Size);
-        // one handle for the header and every shader's code (RandomAccess.Read is safe across threads); the Archive owns it
-        var file = File.OpenHandle(pak, FileMode.Open, FileAccess.Read, FileShare.Read);
-        try
-        {
-            byte[] head;
-            for (var n = Math.Min(size, 1L << 20); ; n = Math.Min(Math.Min(size, Array.MaxLength), n * 4))
-            {
-                head = new byte[n];
-                ReadAt(file, head, start);
-                // the header has to fit: LibraryEnd is null until it does, then the code it sizes has to end at the file's end
-                if (LibraryEnd(head, 20, false) == size || LibraryEnd(head, 8, false) == size || n == Math.Min(size, Array.MaxLength)) break;
-            }
-            if (BitConverter.ToUInt32(head) != 2) throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(size)} shader library of version {BitConverter.ToUInt32(head)}, not read");
-            var ar = new FByteArchive(entry.Path, head, new VersionContainer(PickLayout(entry.Path, head, size, game)));
-            ar.Position = 4;
-            FSerializedShaderArchive lib;
-            try { lib = new FSerializedShaderArchive(ar); }
-            catch (Exception e) when (e is not OutOfMemoryException) { throw new InvalidDataException($"{entry.Path}: not a shader library ({e.Message})", e); }
-            var code0 = start + ar.Position;
-            return new Archive(lib.ShaderMapHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(),
-                lib.ShaderMapEntries.Select(e => ((int)e.ShaderIndicesOffset, (int)e.NumShaders)).ToArray(), lib.ShaderIndices, lib.ShaderEntries.Length,
-                Enumerable.Range(0, lib.ShaderEntries.Length).Select(i => (Func<IEnumerable<(int, byte[])>>)(() =>
-                {
-                    var e = lib.ShaderEntries[i];
-                    if (code0 + (long)e.Offset + e.Size > start + size) throw new InvalidDataException($"{entry.Path}: shader {i}'s code runs past the file");
-                    var raw = new byte[e.Size];
-                    ReadAt(file, raw, code0 + (long)e.Offset);
-                    return [(i, e.Size == e.UncompressedSize ? raw : Decompress(raw, (int)e.UncompressedSize))];
-                })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(), Pak: file);
-        }
-        catch
-        {
-            file.Dispose();
-            throw;
-        }
-    }
-
-    static void ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle h, byte[] into, long offset)
-    {
-        for (int got = 0, n; got < into.Length; got += n)
-            if ((n = RandomAccess.Read(h, into.AsSpan(got), offset + got)) == 0) throw new InvalidDataException("the pak ends early");
-    }
-
-    static Archive? Open(AbstractVfsFileProvider provider, GameFile file)
-    {
-        if (file is FPakEntry { Size: > LargeLibrary } big) return OpenLarge(big, provider.Versions.Game);
+        if (file is FPakEntry { Size: > int.MaxValue } big) return OpenLarge(big, provider.Versions.Game);
         var arc = ReadLibrary(file.Path, file.Read(), provider.Versions.Game);
         switch (arc.SerializedShaders)
         {
@@ -668,6 +756,102 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             default:
                 return null;
         }
+    }
+
+    /// <summary>The most of a large library's start <see cref="OpenLarge"/> reads looking for the end of its header.</summary>
+    const long LargeHeaderMax = 512L << 20;
+
+    /// <summary>The most of a large library's code <see cref="OpenLarge"/> reads through CUE4Parse at once.</summary>
+    const long LargeRange = 4L << 20;
+
+    /// <summary>A pak-era library in a pak entry over 2 GB (Ready or Not's ShaderArchive-ReadyOrNot_Chunk0-PCD3D_SM6: 2.9 GB,
+    /// Wuthering Waves' ShaderArchive-Client_Chunk-PCD3D_SM6: 5.6 GB), which CUE4Parse can't extract whole: it sizes one array
+    /// by the entry. The header is read first, each shader's code when asked. A plain entry is read through a handle the
+    /// archive owns. An encrypted or compressed one goes through CUE4Parse's ranged extract, which decrypts as the game's
+    /// pak format has it (Wuthering Waves encrypts part of an entry), its code in ranges of up to
+    /// <see cref="LargeRange"/>: each extract opens the pak anew.</summary>
+    static Archive OpenLarge(FPakEntry entry, EGame game)
+    {
+        var size = entry.Size;
+        if (entry.Vfs is not PakFileReader { Path: var pak })
+            throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(size)} shader library outside a pak, not read");
+        var start = entry.Offset + entry.StructSize;
+        var file = entry.IsEncrypted || entry.IsCompressed ? null : File.OpenHandle(pak, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        byte[] Read(long at, long n)
+        {
+            if (file != null)
+            {
+                var b = new byte[n];
+                ReadAt(file, b, start + at);
+                return b;
+            }
+            byte[] got;
+            try { got = entry.Read(new FByteBulkDataHeader(default, 0, checked((uint)n), at, default)); }
+            catch (Exception e) when (e is not (OutOfMemoryException or InvalidDataException)) { throw new InvalidDataException($"{entry.Path}: {e.Message}", e); }
+            return got.Length == n ? got : throw new InvalidDataException($"{entry.Path}: {got.Length} bytes read at {at}, not {n}");
+        }
+        try
+        {
+            byte[] head;
+            var cap = Math.Min(size, LargeHeaderMax);
+            for (var n = Math.Min(cap, 1L << 20); ; n = Math.Min(cap, n * 4))
+            {
+                head = Read(0, n);
+                // grown until the header's arrays, and a format name after them (FormatName), fit as the detected engine lays them out
+                if (Layout(head, game >= EGame.GAME_UE5_8 ? 8 : 20, ioStore: false) is { } l && l.Header + 68 <= n || n == cap) break;
+            }
+            if (BitConverter.ToUInt32(head) is var version && version != 2)
+                throw new InvalidDataException($"{entry.Path}: a {Format.Bytes(size)} shader library of version {version}, not read");
+            var pick = PickLayout(entry.Path, head, size, game);
+            var ar = new FByteArchive(entry.Path, head, new VersionContainer(pick)) { Position = 4 };
+            FSerializedShaderArchive lib;
+            try { lib = new FSerializedShaderArchive(ar); }
+            catch (Exception e) when (e is not OutOfMemoryException) { throw new InvalidDataException($"{entry.Path}: not a shader library ({e.Message})", e); }
+            var code = ar.Position + (FormatName(head, size, pick)?.Length ?? 0);
+            var end = (ulong)(size - code);
+            var entries = lib.ShaderEntries;
+            bool Fits(int i) => entries[i].Size <= int.MaxValue && entries[i].Size <= end && entries[i].Offset <= end - entries[i].Size;
+            var groups = file != null ? Enumerable.Range(0, entries.Length).Select(i => new[] { i }).ToList() : Ranges();
+            return new Archive(lib.ShaderMapHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(),
+                lib.ShaderMapEntries.Select(e => ((int)e.ShaderIndicesOffset, (int)e.NumShaders)).ToArray(), lib.ShaderIndices, entries.Length,
+                groups.Select(g => (Func<IEnumerable<(int, byte[])>>)(() =>
+                {
+                    if (!Fits(g[0])) throw new InvalidDataException($"{entry.Path}: shader {g[0]}'s code runs past the library");
+                    var from = (long)entries[g[0]].Offset;
+                    var raw = Read(code + from, g.Max(i => (long)(entries[i].Offset + entries[i].Size)) - from);
+                    return g.Select(i =>
+                    {
+                        var e = entries[i];
+                        var bytes = g.Length == 1 ? raw : raw.AsSpan((int)((long)e.Offset - from), (int)e.Size).ToArray();
+                        return (i, e.Size == e.UncompressedSize ? bytes : Decompress(bytes, (int)e.UncompressedSize));
+                    }).ToList();
+                })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(), Pak: file);
+
+            // shaders by where their code sits, each group within LargeRange of its first (a larger shader alone); one that doesn't fit, alone
+            List<int[]> Ranges()
+            {
+                var all = Enumerable.Range(0, entries.Length);
+                var list = all.Where(i => !Fits(i)).Select(i => new[] { i }).ToList();
+                var order = all.Where(Fits).OrderBy(i => entries[i].Offset).ToArray();
+                for (int s = 0, e; s < order.Length; s = e)
+                {
+                    for (e = s + 1; e < order.Length && (long)(entries[order[e]].Offset + entries[order[e]].Size - entries[order[s]].Offset) <= LargeRange; e++) { }
+                    list.Add(order[s..e]);
+                }
+                return list;
+            }
+        }
+        catch
+        {
+            file?.Dispose();
+            throw;
+        }
+    }
+
+    static void ReadAt(SafeFileHandle file, byte[] into, long offset)
+    {
+        for (int got = 0, n; got < into.Length; got += n)
+            if ((n = RandomAccess.Read(file, into.AsSpan(got), offset + got)) == 0) throw new InvalidDataException("the pak ends early");
     }
 
     /// <summary>A version-1 shader code archive (pre-4.25 ShaderCodeLibrary, e.g. Tiny Tina's Wonderlands, 4.21): u32 version,
@@ -709,20 +893,23 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         }
         var maps = new ConcurrentBag<ShaderMap>();
         var n = 0;
+        var budget = ByteBudget.FromFreeMemory();
         Parallel.ForEach(provider.Files.Values.Where(f => f.IsUePackage || IsGlobalCache(f)).ToList(), new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, f =>
         {
             var global = IsGlobalCache(f);
             if (!global && OwnsShaderMaps(provider, f) == false) return;
-            byte[] data;
-            try { data = PackageBytes(provider, f, out _); }
+            using var held = budget.Take(PackageSize(provider, f));
+            byte[][] parts;
+            try { parts = PackageParts(provider, f, out _); }
             catch (Exception) { return; }
             Interlocked.Increment(ref n);
             var list = new List<string>();
             var platform = "";
-            for (var i = 0; i + 20 <= data.Length; i++)
-                if (prefix.TryGetValue(BitConverter.ToUInt64(data, i), out var cands))
-                    foreach (var c in cands)
-                        if (data.AsSpan(i, 20).SequenceEqual(c.Key)) { list.Add(c.Sha); platform = c.Platform; i += 19; break; }
+            foreach (var data in parts)
+                for (var i = 0; i + 20 <= data.Length; i++)
+                    if (prefix.TryGetValue(BitConverter.ToUInt64(data, i), out var cands))
+                        foreach (var c in cands)
+                            if (data.AsSpan(i, 20).SequenceEqual(c.Key)) { list.Add(c.Sha); platform = c.Platform; i += 19; break; }
             if (list.Count > 0) maps.Add(new ShaderMap(f.Path, global ? "Global" : f.Path, platform, list.Distinct().ToList()));
         });
         scanned = n;
@@ -742,13 +929,18 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         return (Convert.ToHexStringLower(SHA1.HashData(container.Span)), container);
     }
 
-    // Shader code may be compressed with the project's shader format (Oodle in UE5, LZ4 or Oodle in UE4): try in turn.
+    // Shader code may be compressed with the project's shader format (Oodle in UE5, LZ4 or Oodle in UE4, a fork's Zstd): try in turn.
     internal static byte[] Decompress(byte[] src, int size)
     {
-        foreach (var m in new[] { CompressionMethod.Oodle, CompressionMethod.LZ4, CompressionMethod.Zlib })
+        foreach (var m in new[] { CompressionMethod.Oodle, CompressionMethod.LZ4, CompressionMethod.Zlib, CompressionMethod.Zstd })
             try { return Compression.Decompress(src, size, m); } catch { }
-        throw new InvalidDataException($"cannot decompress {src.Length} -> {size} bytes with Oodle/LZ4/Zlib (starts {Convert.ToHexString(src.AsSpan(0, Math.Min(8, src.Length)))})");
+        // an Oodle block the managed decoder couldn't read, which stands in for the native one on such a CPU
+        var cpu = !Codecs.NativeOodle && OodleBlock(src) ? "; " + Codecs.NoNativeOodle : "";
+        throw new InvalidDataException($"cannot decompress {src.Length} -> {size} bytes with Oodle/LZ4/Zlib/Zstd (starts {Convert.ToHexString(src.AsSpan(0, Math.Min(8, src.Length)))}){cpu}");
     }
+
+    // Oodle's LZ block header: low 6 bits 0x0C (version 4), then a compressor id below 13
+    static bool OodleBlock(byte[] b) => b.Length >= 2 && (b[0] & 0x3F) == 0x0C && (b[1] & 0x7F) < 13;
 
     static void InitCodecs() => Codecs.Load();
 
@@ -759,18 +951,11 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         provider.Initialize();
         provider.Mount(); // unencrypted containers
         if (key != null) provider.SubmitKey(new FGuid(), key); // encrypted ones the key opens
-        PostMount(provider);
-        return provider;
-    }
-
-    /// <summary>CUE4Parse's PostMount parses the game's DefaultGame/DefaultEngine.ini (LoadIniConfigs) unguarded: a
-    /// "+CultureMappings=" without ';' throws IndexOutOfRangeException (Scarlet Nexus, upstream issue #12). The reader reads
-    /// the configs it needs itself (Survey), and its one key is submitted to every container, so a config CUE4Parse can't
-    /// read is skipped.</summary>
-    internal static void PostMount(AbstractVfsFileProvider provider)
-    {
+        // PostMount parses DefaultGame.ini unguarded: a "+CultureMappings=" without ';' throws IndexOutOfRangeException
+        // (Scarlet Nexus). Nothing here uses what it loads (Survey reads the configs itself).
         try { provider.PostMount(); }
         catch (Exception e) when (e is not OutOfMemoryException) { }
+        return provider;
     }
 
     /// <summary>The largest &lt;Project&gt;/Content/Paks (by .pak + .ucas bytes); null = not a cooked UE game.</summary>
@@ -788,24 +973,49 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     // Engine version: "++UE4+Release-4.26" style build string in the exe (UTF-16, streamed: exes run to 500 MB; not read
     // for anti-cheat games, whose files we only read paks/ini of; Xbox app games' exes can't be opened at all), else the
-    // containers' format versions (approximate), else the PE version.
-    static EGame DetectEngine(Game game, string paks)
+    // containers' format versions (approximate), else the packages' UE5 tag, else a guess (guessed): the exe's numeric
+    // version for UE5, else 4.27. upTo: the latest version a TOC version allows.
+    static EGame DetectEngine(Game game, string paks, out EGame upTo, out bool fromContainers, out bool guessed)
     {
         var exePath = game.ExePath;
-        if (File.Exists(exePath) && GameFiles.DetectAntiCheat(game) == AntiCheat.None && BuildString(exePath) is { } built) return built;
+        (upTo, fromContainers, guessed) = (0, false, false);
+        if (File.Exists(exePath) && GameFiles.DetectAntiCheat(game) == AntiCheat.None && BuildString(exePath) is { } built) return upTo = built;
+        fromContainers = true;
         var toc = Directory.EnumerateFiles(paks, "*.utoc").Select(TocVersion).DefaultIfEmpty(0).Max();
         // EIoStoreTocVersion (IoStore.h, Latest at each release tag): 2 = 4.26, 3 = 4.27 (High on Life), 5 = 5.0-5.3 (the UE5
         // default: 5.1), 6 = 5.4 (REANIMAL, Darwin's Paradox: their shaders use 5.4's root constants), 8 = 5.5-5.7 (Detect tells 5.6),
         // 9 (AddedSourceHashes) and 10 (ContainerEncryptionMethod) = 5.8+ (Fortnite: 10, 8-byte shader library hashes)
+        upTo = toc switch { 4 or 5 => EGame.GAME_UE5_3, 7 or 8 => EGame.GAME_UE5_7, _ => 0 };
         if (toc > 0)
             return toc switch { <= 2 => EGame.GAME_UE4_26, 3 => EGame.GAME_UE4_27, <= 5 => EGame.GAME_UE5_1, 6 => EGame.GAME_UE5_4, <= 8 => EGame.GAME_UE5_5, _ => EGame.GAME_UE5_8 };
         var pak = Directory.EnumerateFiles(paks, "*.pak").Select(PakVersion).DefaultIfEmpty(0).Max();
         if (pak is > 0 and < 11) // EPakFileVersion: 7 = 4.21, 8 = 4.22-4.24, 9 = 4.25, 10 = 4.26; 11 = 4.26.2 to 5.x: the PE version below
             return pak switch { <= 7 => EGame.GAME_UE4_21, 8 => EGame.GAME_UE4_24, 9 => EGame.GAME_UE4_25, _ => EGame.GAME_UE4_26 };
-        string pe;
-        try { pe = File.Exists(exePath) ? FileVersionInfo.GetVersionInfo(exePath).FileVersion ?? "" : ""; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { pe = ""; }
-        return pe.StartsWith("UE5") ? EGame.GAME_UE5_1 : EGame.GAME_UE4_27;
+        if (PackagesAreUe5(paks)) return EGame.GAME_UE5_1;
+        guessed = true;
+        FileVersionInfo? pe = null;
+        try { if (File.Exists(exePath)) pe = FileVersionInfo.GetVersionInfo(exePath); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        // stock Unreal stamps its own version here (5.1.1.0), a studio may stamp the game's
+        return pe?.FileMajorPart == 5 ? Clamp(5, pe.FileMinorPart) : EGame.GAME_UE4_27;
+    }
+
+    /// <summary>Whether the first package in the smallest pak that has one is a UE5 package: FPackageFileSummary starts with
+    /// the tag 0x9E2A83C1, then LegacyFileVersion, -7 in UE4 and -8 or lower in UE5. False when no unencrypted package is found.</summary>
+    internal static bool PackagesAreUe5(string paks)
+    {
+        InitCodecs(); // a package may be compressed
+        foreach (var path in Directory.EnumerateFiles(paks, "*.pak").OrderBy(p => new FileInfo(p).Length))
+            try
+            {
+                using var r = OpenContainer(path, new VersionContainer(EGame.GAME_UE4_27));
+                if (r.IsEncrypted) continue;
+                r.Mount(StringComparer.OrdinalIgnoreCase);
+                if (r.Files.Values.FirstOrDefault(f => f.Extension is "uasset" or "umap" && !f.IsEncrypted && f.Size is >= 8 and < 1 << 20) is { } package)
+                    return package.Read() is var b && BitConverter.ToUInt32(b) == 0x9E2A83C1 && BitConverter.ToInt32(b, 4) <= -8;
+            }
+            catch (Exception) { } // a pak CUE4Parse can't read
+        return false;
     }
 
     /// <summary>The engine version in the exe's "++UE4+Release-4.26" build string; null if absent or the exe can't be read.</summary>
@@ -832,12 +1042,13 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // Xbox app games: the exe is encrypted at rest
         return null;
+    }
 
-        static EGame Clamp(int major, int minor)
-        {
-            for (; minor >= 0; minor--) if (Enum.TryParse<EGame>($"GAME_UE{major}_{minor}", out var g)) return g;
-            return major == 5 ? EGame.GAME_UE5_0 : EGame.GAME_UE4_27;
-        }
+    /// <summary>The latest CUE4Parse version at or below major.minor.</summary>
+    static EGame Clamp(int major, int minor)
+    {
+        for (; minor >= 0; minor--) if (Enum.TryParse<EGame>($"GAME_UE{major}_{minor}", out var g)) return g;
+        return major == 5 ? EGame.GAME_UE5_0 : EGame.GAME_UE4_27;
     }
 
     static int PakVersion(string pak)
@@ -897,14 +1108,30 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         return b;
     }
 
+    /// <summary>Forks on an older engine than their containers tell, with the version those tell and the names (normalized as
+    /// <see cref="DetectFork"/> does) a folder, exe or store title must equal: Dead Island 2 is Dambuster's 4.25 (its root
+    /// signatures carry 4.25's static samplers, s1000-s1005 in space 0) in 4.27's IoStore containers. Wuthering Waves is Kuro's
+    /// 4.26 in paks of version 11 or later, which tell 4.27: CUE4Parse decodes its pak entries only as that fork.</summary>
+    static readonly (EGame Fork, EGame Containers, string[] Names)[] OlderBase =
+    [
+        (EGame.GAME_DeadIsland2, EGame.GAME_UE4_27, ["deadisland2", "deadisland"]),
+        (EGame.GAME_WutheringWaves, EGame.GAME_UE4_27, ["wutheringwaves", "wutheringwavesgame"]),
+    ];
+
     /// <summary>Known forks: a CUE4Parse EGame whose name matches the install folder or exe name (roman numerals as digits)
-    /// and shares the base engine version.</summary>
-    internal static EGame? DetectFork(EGame baseGame, string folder, string exeName)
+    /// and whose base engine version is <paramref name="baseGame"/>'s, or up to <paramref name="upTo"/>'s when the containers
+    /// tell a range. A name equal to the folder's or exe's wins over a longer one (a beta's), then the base version's. With
+    /// none, and the version only from the containers (<paramref name="fromContainers"/>), an <see cref="OlderBase"/> fork
+    /// whose name the folder, exe or <paramref name="title"/> equals.</summary>
+    internal static EGame? DetectFork(EGame baseGame, EGame upTo, string folder, string exeName, bool fromContainers = false, string title = "")
     {
+        uint lo = (uint)baseGame & 0xFFFF0000, hi = Math.Max(lo, (uint)upTo & 0xFFFF0000);
         var names = new[] { Norm(folder), Norm(ExeBase(exeName)) }.Where(n => n.Length >= 4).ToList();
-        return Enum.GetValues<EGame>().Where(g => ((uint)g & 0xFFFF) != 0 && ((uint)g & 0xFFFF0000) == ((uint)baseGame & 0xFFFF0000))
+        return Enum.GetValues<EGame>().Where(g => ((uint)g & 0xFFFF) != 0 && ((uint)g & 0xFFFF0000) is var b && b >= lo && b <= hi)
             .Select(g => (g, n: Norm(g.ToString()[5..]))).Where(x => x.n.Length >= 4 && names.Any(n => n.StartsWith(x.n) || x.n.StartsWith(n)))
-            .OrderByDescending(x => x.n.Length).Select(x => (EGame?)x.g).FirstOrDefault();
+            .OrderByDescending(x => names.Contains(x.n)).ThenByDescending(x => ((uint)x.g & 0xFFFF0000) == lo).ThenByDescending(x => x.n.Length)
+            .Select(x => (EGame?)x.g).FirstOrDefault()
+            ?? (fromContainers ? OlderBase.Where(o => lo == (uint)o.Containers && names.Append(Norm(title)).Any(o.Names.Contains)).Select(o => (EGame?)o.Fork).FirstOrDefault() : null);
     }
 
     /// <summary>A game name compared loosely: roman numerals as digits, letters and digits only, lower case.</summary>

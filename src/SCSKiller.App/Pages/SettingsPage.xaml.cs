@@ -76,11 +76,11 @@ public sealed partial class SettingsPage : Page
         var list = new StackPanel { Spacing = 8, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap,
             Text = summary + (rescan != null ? " The unlocked games are checked again now." : r.Games.Count == 0 ? " There are no Unreal games in your library." : "") } } };
         foreach (var g in r.Games) list.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Text = $"{g.Name}: {g.Message}" });
-        await new ContentDialog
+        await App.ShowAsync(new ContentDialog
         {
             XamlRoot = XamlRoot, Title = r.Unlocked > 0 ? "Keys imported" : "No game unlocked", CloseButtonText = "OK",
             Content = new ScrollViewer { Content = list, MaxHeight = 420 },
-        }.ShowAsync();
+        });
         try { if (rescan != null) await rescan; }
         catch (Exception ex) { ImportKeysStatus.Text = $"{summary} Checking the games again failed: {ex.Message}"; }
     }

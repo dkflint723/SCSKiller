@@ -30,6 +30,42 @@ public static class PeFile
         for (var i = 0; i < count && names.RemainingBytes >= 4; i++) yield return Str(pe, names.ReadInt32());
     }
 
+    /// <summary>The forwarded exports' targets ("dll.Function", "dll.#ordinal"), in table order.</summary>
+    public static IEnumerable<string> Forwarders(PEReader pe)
+    {
+        if (ExportDirectory(pe) is not { } d) yield break;
+        var dir = pe.PEHeaders.PEHeader!.ExportTableDirectory;
+        d.Offset = 20;
+        var count = d.ReadInt32();
+        d.Offset = 28;
+        var functions = Data(pe, d.ReadInt32());
+        for (var i = 0; i < count && functions.RemainingBytes >= 4; i++)
+            if (functions.ReadInt32() is var rva && rva >= dir.RelativeVirtualAddress && rva < dir.RelativeVirtualAddress + dir.Size)
+                yield return Str(pe, rva);   // an RVA inside the export directory is a forwarder string
+    }
+
+    /// <summary>The data an exported variable's RVA points at (e.g. the Agility SDK's D3D12SDKVersion); null if not exported.</summary>
+    public static BlobReader? ExportData(PEReader pe, string name)
+    {
+        if (ExportDirectory(pe) is not { } d) return null;
+        d.Offset = 24;
+        var count = d.ReadInt32();
+        var (functions, names, ordinals) = (d.ReadInt32(), d.ReadInt32(), d.ReadInt32());   // AddressOfFunctions, Names, NameOrdinals
+        var n = Data(pe, names);
+        for (var i = 0; i < count && n.RemainingBytes >= 4; i++)
+            if (Str(pe, n.ReadInt32()) == name)
+                return Data(pe, Data(pe, functions + 4 * Data(pe, ordinals + 2 * i).ReadUInt16()).ReadInt32());
+        return null;
+    }
+
+    /// <summary>The string a `const char*` export points at (e.g. the Agility SDK's D3D12SDKPath); null if not exported.</summary>
+    public static string? ExportedString(PEReader pe, string name)
+    {
+        if (ExportData(pe, name) is not { } p) return null;
+        var va = pe.PEHeaders.PEHeader!.Magic == PEMagic.PE32Plus ? p.ReadUInt64() : p.ReadUInt32();
+        return Str(pe, (int)(va - pe.PEHeaders.PEHeader.ImageBase));
+    }
+
     /// <summary>The NUL-terminated string at an RVA, at most 256 characters.</summary>
     internal static string Str(PEReader pe, int rva)
     {
