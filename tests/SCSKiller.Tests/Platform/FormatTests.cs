@@ -210,4 +210,32 @@ public class FormatTests
         Assert.Equal("UE 5.4", Format.Engine(E("Unreal", "5.4"), "UE"));
         Assert.Equal(["Carved", "FromSoft", "Unity", "Carved"], new[] { E("Carved", "-"), E("FromSoft", "-"), E("Unity", "?"), E("Carved", "") }.Select(e => Format.Engine(e)));
     }
+
+    /// <summary>Upstream issue 45 (the small step): the notification area's menu says what the queue does and compiles what
+    /// the Library's "Add all ready" would add.</summary>
+    [Fact]
+    public void The_tray_says_what_the_queue_does_and_compiles_what_add_all_ready_adds()
+    {
+        var was = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        try
+        {
+            QueueItem Q(QueueStage stage, WarmProgress? p = null, bool check = false) => new("g", stage, p, null, PlanCheck: check);
+            Assert.Equal(["SCSKiller: idle", "SCSKiller: finishing, the driver is saving the shader cache", "SCSKiller: checking games for more to compile",
+                    "SCSKiller: paused (Game)", "Compiling Game, 45%", "Compiling Game"],
+                new[] { Format.TrayStatus(null, null, false), Format.TrayStatus(Q(QueueStage.Warming), "Game", true), Format.TrayStatus(Q(QueueStage.Planning, check: true), "Game", false),
+                    Format.TrayStatus(Q(QueueStage.Paused), "Game", false), Format.TrayStatus(Q(QueueStage.Warming, new(45, 100, 0, 1)), "Game", false),
+                    Format.TrayStatus(Q(QueueStage.Planning), "Game", false) });
+        }
+        finally { CultureInfo.CurrentCulture = was; }
+
+        static GameState S(string id, GameStatus status) =>
+            new(new Game(id, id, Store.Steam, "", ""), null, AntiCheat.None, status, "", null, null, null, null, null, null, null, false, null);
+        GameState[] games = [S("ready", GameStatus.Ready), S("stale", GameStatus.Stale), S("warmed", GameStatus.Warmed), S("needs", GameStatus.NeedsRecording),
+            S("queued", GameStatus.Ready), S("done", GameStatus.Ready), S("calm", GameStatus.Ready) with { NoStutter = "no shader stutter" },
+            S("far", GameStatus.Ready) with { CompileUnreached = true }, S("check", GameStatus.Stale)];
+        // a plan check isn't a compile the user queued: the Library lists the game to add, and adding it makes it the compile
+        Assert.Equal(["ready", "stale", "done", "check"], Format.ReadyToAdd(games, [new("queued", QueueStage.Waiting, null, null), new("done", QueueStage.Done, null, null),
+            new("check", QueueStage.Planning, null, null, PlanCheck: true)]));
+    }
 }

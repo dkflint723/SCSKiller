@@ -31,6 +31,7 @@ public partial class App : Application
     static bool notifications, quitting, checkingDriver, checkAgain;
     static string? toldDriver;   // the driver and games the last driver-update notification was about
     static Dictionary<string, string>? told;   // NewShaders' notified store
+    static Dictionary<string, string>? autoQueued;   // NewShaders.WhenIdle's queued store
     static TaskCompletionSource? quitNow;   // set while quitting waits for the compile to finish: the tray's Quit again ends it
     static readonly CancellationTokenSource stopWatching = new();
     static Task watcher = Task.CompletedTask;
@@ -144,7 +145,8 @@ public partial class App : Application
             if (activation.Kind == ExtendedActivationKind.Launch) _ = Updater.ApplyAtStartAsync(args[1..]);
             if (Core is ScsKiller k && !driverUpdated)
             {
-                var check = new Coalesced(Main.DispatcherQueue, () => NotifyNewShaders(k.Store));
+                // a game queued isn't told about; a scan's list before its last game lacks the games not read yet, which the stores would forget
+                var check = new Coalesced(Main.DispatcherQueue, () => { if (k.Scanning) return; QueueNewShaders(k.Store); NotifyNewShaders(k.Store); });
                 Core.GameChanged += _ => check.Request();
             }
             if (Updater.HasResume)   // restarted by "Restart to update": the queue goes on once the games are known
@@ -324,6 +326,10 @@ public partial class App : Application
         var t = new Tray(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))
         {
             Open = ShowWindow,
+            Status = StatusText,
+            ReadyCount = () => quitting || Core is ScsKiller { Scanning: true } ? 0 : Format.ReadyToAdd(Core.Games, Core.Queue).Count,   // 0: shown disabled
+            CompileAllReady = CompileAllReady,
+            OpenQueue = () => { Main.Navigate(typeof(QueuePage)); ShowWindow(); },
             PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? "Resume" : "Pause compiling",
             PauseOrResume = () => Fmt.PauseOrResume(Running()),
             Quit = () => _ = QuitAsync(),
@@ -351,14 +357,22 @@ public partial class App : Application
     static void UpdateTip()
     {
         if (tray == null) return;
+        tray.Tip = StatusText();
+    }
+
+    static string StatusText()
+    {
         var q = Running();
-        var name = q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId;
-        tray.Tip = quitting ? "SCSKiller: finishing, the driver is saving the shader cache"
-            : q == null ? "SCSKiller: idle"
-            : q.PlanCheck ? "SCSKiller: checking games for more to compile"
-            : q.Stage == QueueStage.Paused ? $"SCSKiller: paused ({name})"
-            : q is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? $"Compiling {name}, {100.0 * p.Done / p.Total:0}%"
-            : $"Compiling {name}";
+        return Format.TrayStatus(q, q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quitting);
+    }
+
+    /// <summary>The notification area's "Compile all ready": what the Library's "Add all ready" queues, started without the
+    /// window as each game's Compile starts it: a stopped compile stays stopped, "when idle" items keep waiting. Not while
+    /// quitting (it waits for the compile to end) nor while a scan reads its games (the Library's button waits too).</summary>
+    static void CompileAllReady()
+    {
+        if (quitting || Core is ScsKiller { Scanning: true }) return;
+        foreach (var id in Format.ReadyToAdd(Core.Games, Core.Queue)) Core.Compile(id);
     }
 
     static QueueItem? Running() => Core.Queue.FirstOrDefault(Format.Running);
@@ -431,6 +445,18 @@ public partial class App : Application
         if (due.Count == 0 && notified.Count == told.Count && notified.All(e => told.GetValueOrDefault(e.Key) == e.Value)) return;
         store.SaveNotified(told = notified);   // before showing: never twice
         if (due.Count > 0) AppNotificationManager.Default.Show(NewShadersToast(due));
+    }
+
+    /// <summary>Settings' "Compile new shaders when idle": the games <see cref="NewShaders.WhenIdle"/> picks go into the queue
+    /// "when idle", with no notification (one queued isn't told about).</summary>
+    static void QueueNewShaders(AppStore store)
+    {
+        if (!Core.Settings.CompileNewShadersWhenIdle || quitting) return;   // quitting waits for the compile to end
+        autoQueued ??= store.LoadAutoQueued();
+        var (due, queued) = NewShaders.WhenIdle(Core.Games, Core.Queue, autoQueued, Core.DriverStaleGames().Select(s => s.Game.Id).ToHashSet());
+        if (due.Count == 0 && queued.Count == autoQueued.Count && queued.All(e => autoQueued.GetValueOrDefault(e.Key) == e.Value)) return;
+        store.SaveAutoQueued(autoQueued = queued);   // before queueing: a failed compile isn't queued again
+        foreach (var s in due) Core.EnqueueWhenIdle(s.Game.Id);
     }
 
     static AppNotification NewShadersToast(IReadOnlyList<GameState> games)

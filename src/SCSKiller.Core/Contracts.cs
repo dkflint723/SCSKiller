@@ -379,7 +379,8 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     string? KeyListUrl = null,       // the key list's page; null = KeyCollection.DefaultUrl
     bool HideUnsupported = false,    // the Library leaves out Unsupported games (App.LibraryFilter); they're still scanned
     bool ClearOldDriverCache = true,   // a compile for a new driver first deletes the game's cache files from before it (ScsKiller.ClearOldDriverFiles)
-    string? GpuAdapter = null)       // the GPU compiles target (GpuBackends.AdapterId: PCI ids, not the LUID); null = the one with the most VRAM
+    string? GpuAdapter = null,       // the GPU compiles target (GpuBackends.AdapterId: PCI ids, not the LUID); null = the one with the most VRAM
+    bool CompileNewShadersWhenIdle = false)   // compiled games with enough new pipelines queue "when idle" by themselves (NewShaders.WhenIdle)
 {
     /// <summary>settings.json's keys this build doesn't know (another build's sharing the data folder, such as an upstream
     /// release's): written back as they were, so switching builds loses no setting. Null = none.</summary>

@@ -27,6 +27,9 @@ session), plans which pipelines to create, and replays them in a separate proces
    WinGRTS) in an install with an `Engine` folder, never a bootstrap stub or launcher: the one such build there is, else
    the one the named exe's name ties; tools and servers never (`GameFiles.GameExe`, applied to every game discovery lists,
    its pick kept in `discovered.json` while the store's build and the install root's entries are unchanged).
+   CD PROJEKT RED's `REDprelauncher.exe` is replaced by the game its `launcher-configuration.json` names, else, with
+   no usable configuration, by the largest exe in `bin\x64_dx12`, then `bin\x64` (`GameFiles.RedBinExe`); Steam looks
+   again rather than keep that launcher from an earlier scan of the same build.
    `ManualSource` lists the games the user added by their exe (`manual-games.json` in the data folder): the pick is resolved like a store's install
    (a launcher stub to its Shipping exe) and a game folder is suggested from its layout (above `Engine\` or `bin\`, else
    the exe's folder; nothing above it is read, since the folders beside it may be other games). The user confirms or
@@ -59,6 +62,17 @@ session), plans which pipelines to create, and replays them in a separate proces
    With `Settings.ScanAtStart` off, a scan the user didn't ask for shows the last list (`games.json`, kept by every scan
    and every game's exit) and lists again only Steam's, the Xbox app's and the user's games, reading one again only
    when it isn't the one listed; another SCSKiller build or GPU driver scans as usual.
+   A scan lists each game as soon as it's read (`GameChanged` per game), the games not read yet as they were shown
+   before (at a start, `games.json` of the same build and driver), and says which game it reads (`ScanProgress`,
+   "Reading Cyberpunk 2077 (3 of 15)"); a read over 10 s is logged with its time. A game whose read takes longer than
+   `ReadBudget` (2 minutes) is listed as not supported ("still reading its files") with its recorder left as it is,
+   and the scan goes on; the read continues in the background and its state replaces that one when it ends, unless a
+   later evaluation is in place. It is stored together with clearing the game's unread mark, so `Reconcile` never acts
+   on the placeholder, and then gets what the scan did for the game: its plan check, its recorder, its key lookup. A
+   scan (or a kept list's re-read, which lists each read as it ends too) that finds a read still running shows the game
+   still reading at once and has that read report under its own ticket, never reading the same files twice. While a
+   scan reads its games (`Scanning`) its list lacks the ones not read yet: the app's new-shaders notification and "when
+   idle" queueing wait for the whole list, and `NewShaders` keeps the entries of a game listed unread.
 2. **Index.** An `IEngineReader` per engine family detects the engine and lists every shader the build ships (stage,
    SHA-1, signatures, root signature if embedded), grouped in shader maps that say which shaders can be drawn together
    (an exact pipeline's map may name its root signature).
@@ -702,7 +716,11 @@ After a build:
   file) are, after a newer planner rebuilt the plan, "SCSKiller can now compile N more pipelines"; otherwise they add to
   "N new pipelines; compile again to include them" ("recorded" when all are); their sum is the new-shaders
   notification's count (`NewShaders`). That notification needs 1% of the plan, at least 100 and at most 1,000, and
-  comes at most once a day per game; "can now compile more" is told whatever its count. The result is cached on every input (each by size, write time and a hash of its first and last
+  comes at most once a day per game; "can now compile more" is told whatever its count. With "Compile new shaders when
+  the PC is idle" (`Settings.CompileNewShadersWhenIdle`, off by default) the app queues such a game "when idle" instead,
+  at any time of day but not while a game runs, and so tells nothing about it (`NewShaders.WhenIdle`); a compile that
+  adds more than 16 GB is still told about. `auto-queued.json` in the data folder keeps the compile and count each game
+  was queued for, so one that failed is queued again only when as many again are new. The result is cached on every input (each by size, write time and a hash of its first and last
   4 KB), in memory and in the game's record for the next start. A key file is read only when its contents hash to its name; one damaged, missing or unreadable, or none (a
   warm from before warms kept one), is an unknown baseline, under which everything counts and the game
   is Stale ("compile again: what the last compile replayed is no longer known"). Key files are written, and the plan and
@@ -938,7 +956,8 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   switch allows offline sessions for such a game, and while it is on the card has the ban-risk warning and the button.
 - **Shader mods** (`Games.ReShade.Detect`): ReShade in the exe's folder, else the install root: any DLL there whose
   version resource names ReShade, or one of its usual names (dxgi.dll, d3d12.dll, ...) holding its description or its
-  add-on export. Only the build with full add-on support loads add-on files; the standard one is known by its "only
+  add-on export while its version resource names no other product (Special K's dxgi.dll looks ReShade up and names
+  it, and isn't ReShade). Only the build with full add-on support loads add-on files; the standard one is known by its "only
   limited add-on functionality" warning, and its add-ons never count. Its add-ons (`*.addon`, `*.addon64`) are the ones
   in ReShade.ini's `[ADDON] AddonPath`, else its folder, less `DisabledAddons`; each is classed by what it does to the
   game's pipelines. One that replaces shaders is known by a string its release builds always log where they register

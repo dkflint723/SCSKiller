@@ -433,14 +433,18 @@ public sealed class LibraryVm : Bindable
     }
 
 
-    // The scan message waits 300 ms so a cached scan doesn't flicker it; the list fills when the scan ends.
+    // The scan message waits 300 ms so a cached scan doesn't flicker it; the list fills as each game is read.
     bool slowScan, forced;
+    string? scanStep;
+    /// <summary>The scan's step (ScsKiller.ScanProgress): "Reading Cyberpunk 2077 (3 of 15)".</summary>
+    public string? ScanStep { get => scanStep; set { scanStep = value; Changed(); } }
     public bool ScanEmpty => slowScan && Games.Count == 0;
     public bool ScanBusy => slowScan && Games.Count > 0;
-    public string ScanEmptyNote => "Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. "
+    public string ScanEmptyNote => (ScanStep is { } step ? step + ". " : "")
+        + "Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. "
         + "The first scan reads every game's files, so it can take a minute.";
-    public string ScanBusyNote => forced ? "Re-reading every game's engine and anti-cheat; the list updates when it's done."
-        : "The list updates when it's done.";
+    public string ScanBusyNote => (ScanStep is { } step ? step + ". " : "") + (forced ? "Re-reading every game's engine and anti-cheat; each game updates once it's read."
+        : "Each game updates once it's read.");
 
     public async void Rescan(bool force = true, bool userRequested = false)
     {
@@ -486,7 +490,7 @@ public sealed class LibraryVm : Bindable
         ApplyFilter();
 
         int ready = list.Count(g => g.Status is GameStatus.Ready or GameStatus.Stale);
-        ReadyCount = Games.Count(r => r.IsAdd && !r.Queued && !r.IsNoStutter);
+        ReadyCount = Format.ReadyToAdd(list, core.Queue).Count;   // the notification area's "Compile all ready" counts the same
         RecommendedCount = RecommendedToAdd().Count;
         WaitingCount = queue.Count(q => q.Stage == QueueStage.Waiting);
         var stores = Fmt.Stores.Where(n => n != Fmt.AddedByYou && Games.Any(r => r.StoreName == n)).ToList();
@@ -560,7 +564,7 @@ public sealed class LibraryVm : Bindable
 
     public void AddAllReady()
     {
-        foreach (var g in Games.Where(r => r.IsAdd && !r.Queued && !r.IsNoStutter).ToList()) App.Core.Enqueue(g.Id);
+        foreach (var id in Format.ReadyToAdd(App.Core.Games, App.Core.Queue)) App.Core.Enqueue(id);
         Refresh();
     }
 }
@@ -986,7 +990,8 @@ public sealed class DetailVm(string id) : Bindable
     public bool CanToggleRecord => ShowOffline ? OfflinePending == null && !s.OfflineRunning
         : RecordPending == null && AlongsidePending == null && NoAntiCheat && s.RecorderSkip == null;
     public bool ShowUseDefault => RecordPending == null && s.RecorderOverride != RecorderOverride.Default && s.RecorderSkip == null;
-    public string UseDefaultText => $"Use default ({(App.Core.Settings.RecordAllGames && s.NoStutter == null && !s.RecordingNotNeeded ? "on" : "off")})";
+    public bool DefaultOn => ScsKiller.RecordsByDefault(App.Core.Settings.RecordAllGames, s);   // also the switch while "Use default" runs
+    public string UseDefaultText => $"Use default ({(DefaultOn ? "on" : "off")})";
     public string RecordNote => ShowOffline
         ? $"{Fmt.AntiCheatName(s.AntiCheat)} blocks the recorder, but you can enable it at your own risk with an offline session."
         : !NoAntiCheat
@@ -1370,6 +1375,7 @@ public sealed class SettingsVm : Bindable
         }
     }
     public bool? NotifyNewShaders { get => S.NotifyNewShaders; set { if (value is { } v && v != S.NotifyNewShaders) S = S with { NotifyNewShaders = v }; } }
+    public bool? CompileNewShadersWhenIdle { get => S.CompileNewShadersWhenIdle; set { if (value is { } v && v != S.CompileNewShadersWhenIdle) S = S with { CompileNewShadersWhenIdle = v }; } }
     public bool? ScanAtStart { get => S.ScanAtStart; set { if (value is { } v && v != S.ScanAtStart) S = S with { ScanAtStart = v }; } }
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) S = S with { CloseQuits = v }; } }
 

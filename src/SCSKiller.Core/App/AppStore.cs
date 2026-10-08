@@ -340,6 +340,10 @@ public sealed class AppStore(string dataDir)
     public Dictionary<string, string> LoadNotified() => Load<Dictionary<string, string>>(Path.Combine(DataDir, "notified.json")) ?? [];
     public void SaveNotified(Dictionary<string, string> notified) => Save(Path.Combine(DataDir, "notified.json"), notified);
 
+    /// <summary>Game id -> the compile and count it was last queued "when idle" for by itself (<see cref="NewShaders.WhenIdle"/>).</summary>
+    public Dictionary<string, string> LoadAutoQueued() => Load<Dictionary<string, string>>(Path.Combine(DataDir, "auto-queued.json")) ?? [];
+    public void SaveAutoQueued(Dictionary<string, string> queued) => Save(Path.Combine(DataDir, "auto-queued.json"), queued);
+
     /// <summary>Vendor -> warm rate (PSO/s) of the first complete warm measured on this PC, for games not warmed yet.</summary>
     public Dictionary<GpuVendor, double> LoadWarmRates() => Load<Dictionary<GpuVendor, double>>(Path.Combine(DataDir, "warmrates.json")) ?? [];
     public void SaveWarmRates(Dictionary<GpuVendor, double> rates) => Save(Path.Combine(DataDir, "warmrates.json"), rates);

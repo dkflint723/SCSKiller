@@ -494,8 +494,8 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             File.WriteAllText(config, RedConfig("Vulkan", ("DirectX 11", @"bin\\x64"), ("DirectX 12", @"bin\\x64_dx12")));
             Assert.Equal(Dx(@"bin\x64"), GameFiles.FindExe(root));   // no entry is the fallback: the first
 
-            // a target that's missing or outside the install, or a config that doesn't parse: the launcher stays (two exes import a graphics API)
-            // a junction inside the install that leads to another folder: as outside
+            // a target that's missing or outside the install, or a config that doesn't parse: the bin folder's game, DirectX 12's first
+            // (two exes import a graphics API); a junction inside the install that leads to another folder: as outside
             using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe",
                        $"/c mklink /J \"{Path.Combine(root, "linked")}\" \"{Path.Combine(tmp, "Other")}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!)
             {
@@ -507,14 +507,48 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
                          RedConfig("DirectX 12", ("DirectX 12", "linked")), "{ not json" })
             {
                 File.WriteAllText(config, bad);
-                Assert.Equal(Path.Combine(root, "REDprelauncher.exe"), GameFiles.FindExe(root));
+                Assert.Equal(Dx(@"bin\x64_dx12"), GameFiles.FindExe(root));
             }
+            Directory.Delete(Path.Combine(root, @"bin\x64_dx12"), true);
+            Assert.Equal(Dx(@"bin\x64"), GameFiles.FindExe(root));
+            Directory.Delete(Path.Combine(root, "bin"), true);
+            Assert.Equal(Path.Combine(root, "REDprelauncher.exe"), GameFiles.FindExe(root));   // no game beside it: the launcher stays
         }
         finally
         {
             if (Directory.Exists(Path.Combine(root, "linked"))) Directory.Delete(Path.Combine(root, "linked"));   // the junction, not its target
             Directory.Delete(tmp, true);
         }
+    }
+
+    /// <summary>Upstream issue 102: Cyberpunk 2077 from Steam was listed as its launcher, so the recorder went beside
+    /// REDprelauncher.exe, where the game never loads it. Without a launcher configuration naming the game (missing or another
+    /// schema), the game in bin\x64 is taken, also over an exe Steam's last scan kept for the same build.</summary>
+    [Fact]
+    public void Exe_discovery_takes_cyberpunk_2077_in_bin_x64_over_cdpr_s_launcher_without_its_configuration()
+    {
+        var steam = Directory.CreateTempSubdirectory("scskiller-cyberpunk-test-").FullName;
+        var root = Path.Combine(steam, "steamapps", "common", "Cyberpunk 2077");
+        try
+        {
+            void Put(string rel, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, rel))!); File.WriteAllBytes(Path.Combine(root, rel), bytes); }
+            Put("REDprelauncher.exe", Exe("Qt5Core.dll", 100));
+            Put(@"bin\x64\Cyberpunk2077.exe", Exe("d3d12.dll", 5000));
+            Put(@"bin\x64\REDEngineErrorReporter.exe", Exe(null, 200));
+            Put(@"tools\redmod\bin\redMod.exe", Exe("d3d11.dll", 9000));   // larger, and a second exe importing a graphics API
+            var game = Path.Combine(root, @"bin\x64\Cyberpunk2077.exe");
+            Assert.Equal(game, GameFiles.FindExe(root));
+            File.WriteAllText(Path.Combine(root, "launcher-configuration.json"), """{ "revision": 9, "launch": { "path": "somewhere" } }""");
+            Assert.Equal(game, GameFiles.FindExe(root));
+            Assert.Equal(game, GameFiles.FindExe(root, "REDprelauncher.exe"));
+
+            File.WriteAllText(Path.Combine(steam, "steamapps", "appmanifest_1091500.acf"),
+                "\"AppState\"\n{\n\t\"appid\"\t\t\"1091500\"\n\t\"name\"\t\t\"Cyberpunk 2077\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"Cyberpunk 2077\"\n\t\"buildid\"\t\t\"7\"\n}\n");
+            var kept = new Game("steam:1091500", "Cyberpunk 2077", Store.Steam, root, Path.Combine(root, "REDprelauncher.exe"), "7");
+            var source = new SteamSource(steam) { Known = new Dictionary<string, Game> { [kept.Id] = kept } };
+            Assert.Equal(game, source.Discover().Single().ExePath);   // the same build: found again, not kept
+        }
+        finally { Directory.Delete(steam, true); }
     }
 
     [Fact]

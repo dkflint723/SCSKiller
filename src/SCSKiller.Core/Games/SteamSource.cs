@@ -44,7 +44,8 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
                 var install = Path.Combine(apps, "common", dir);
                 var build = V("buildid");
                 var exe = Known?.GetValueOrDefault($"steam:{id}") is { Version: { } was } k && was == build && k.InstallDir.Equals(install, StringComparison.OrdinalIgnoreCase)
-                    && File.Exists(k.ExePath) ? k.ExePath : GameFiles.FindExe(install);
+                    && File.Exists(k.ExePath) && !Path.GetFileName(k.ExePath).Equals(GameFiles.RedLauncher, StringComparison.OrdinalIgnoreCase)   // found again: the launcher was kept before it knew the game
+                    ? k.ExePath : GameFiles.FindExe(install);
                 if (exe == null) continue;
                 installed.Add((id, new Game($"steam:{id}", V("name") ?? dir, Store.Steam, install, exe, build)));
             }

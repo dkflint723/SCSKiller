@@ -37,6 +37,7 @@ public static class NewShaders
     /// queued for a compile isn't told about, and one is told again only when its new pipelines grew by
     /// <see cref="Enough"/> since it was told (since its compile, for a game compiled since), and not within a day of the
     /// last time. A rebuilt plan's (<see cref="PlannerChanged"/>) is told once per compile whatever the count and the day.
+    /// A game listed unread (Unsupported: its read failed or is still going) keeps its entry.
     /// <paramref name="driverStale"/>: ids of the games warmed for another driver (ScsKiller.DriverStaleGames).</summary>
     public static (IReadOnlyList<GameState> Due, Dictionary<string, string> Notified) Due(IEnumerable<GameState> games,
         IEnumerable<QueueItem> queue, IReadOnlyDictionary<string, string> notified, IReadOnlySet<string> driverStale, DateTimeOffset now)
@@ -47,6 +48,11 @@ public static class NewShaders
         var keep = new Dictionary<string, string>();
         foreach (var s in games)
         {
+            if (s.Status == GameStatus.Unsupported)   // its read failed or is still going: what it was told stays for when it's read
+            {
+                if (notified.GetValueOrDefault(s.Game.Id) is { } entry) keep[s.Game.Id] = entry;
+                continue;
+            }
             var told = Told.Parse(notified.GetValueOrDefault(s.Game.Id), now);
             var recent = told is { } r && now.UtcTicks - r.At < TimeSpan.TicksPerDay;
             var warm = s.WarmedAt?.UtcTicks;
@@ -70,6 +76,41 @@ public static class NewShaders
             }
             due.Add(s);
             keep[s.Game.Id] = new Told(warm!.Value, n, now.UtcTicks, plannerDue || same && told!.Value.Planner).ToString();
+        }
+        return (due, keep);
+    }
+
+    /// <summary>Settings.CompileNewShadersWhenIdle (upstream issue 98): the games to queue "when idle" now, and the queued store
+    /// to keep (game id -> the <see cref="Key"/> it was queued for). A game qualifies as one would be told about, by
+    /// <see cref="Enough"/> new pipelines or a rebuilt plan, but at any time of day; none while a game runs; not one
+    /// queued already, nor one queued before since its last compile (one that failed or was removed) unless <see cref="Enough"/>
+    /// more are new since, nor one whose compile adds more than <see cref="ScsKiller.LargeCompile"/> to the
+    /// cache (its notification asks). A game listed unread (Unsupported) keeps its entry.</summary>
+    public static (IReadOnlyList<GameState> Queue, Dictionary<string, string> Queued) WhenIdle(IEnumerable<GameState> games,
+        IEnumerable<QueueItem> queue, IReadOnlyDictionary<string, string> queuedBefore, IReadOnlySet<string> driverStale)
+    {
+        var list = games.ToList();
+        var active = queue.Where(q => !q.PlanCheck && q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped))   // queued, a plan check becomes the compile
+            .Select(q => q.GameId).ToHashSet();
+        var playing = list.Any(s => s.Playing);
+        var due = new List<GameState>();
+        var keep = new Dictionary<string, string>();
+        foreach (var s in list)
+        {
+            if (s.Status == GameStatus.Unsupported && queuedBefore.GetValueOrDefault(s.Game.Id) is { } unread)   // its read failed or is still going
+            {
+                keep[s.Game.Id] = unread;
+                continue;
+            }
+            if (Key(s, driverStale) is not { } key) continue;   // compiled since, or nothing new: forgotten
+            var before = queuedBefore.GetValueOrDefault(s.Game.Id);
+            if (before != null) keep[s.Game.Id] = before;
+            // queued for this compile before: again only for as many more again
+            var since = before?.Split('|') is [var w, var n] && w == $"{s.WarmedAt!.Value.UtcTicks}" && long.TryParse(n, out var was) ? was : (long?)null;
+            if (playing || active.Contains(s.Game.Id) || ScsKiller.CacheGrowth(s) > ScsKiller.LargeCompile
+                || (since is { } m ? Count(s) - m < Enough(s) : Count(s) < Enough(s) && !PlannerChanged(s))) continue;
+            due.Add(s);
+            keep[s.Game.Id] = key;
         }
         return (due, keep);
     }

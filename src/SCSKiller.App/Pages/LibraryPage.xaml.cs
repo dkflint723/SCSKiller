@@ -17,8 +17,18 @@ public sealed partial class LibraryPage : Page
         var refresh = new Coalesced(DispatcherQueue, Vm.Refresh);
         void OnChanged(GameState _) => refresh.Request();
         void OnQueue(QueueItem q) { if (q.Stage != QueueStage.Warming) refresh.Request(); }   // progress ticks change nothing here
-        Loaded += (_, _) => { App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request; Vm.Load(); };
-        Unloaded += (_, _) => { App.Core.GameChanged -= OnChanged; App.Core.QueueChanged -= OnQueue; Icons.Failed -= refresh.Request; };
+        void OnStep(string? step) => DispatcherQueue.TryEnqueue(() => Vm.ScanStep = step);   // which game the scan reads
+        Loaded += (_, _) =>
+        {
+            App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request;
+            if (App.Core is Core.App.ScsKiller k) k.ScanProgress += OnStep;
+            Vm.Load();
+        };
+        Unloaded += (_, _) =>
+        {
+            App.Core.GameChanged -= OnChanged; App.Core.QueueChanged -= OnQueue; Icons.Failed -= refresh.Request;
+            if (App.Core is Core.App.ScsKiller k) k.ScanProgress -= OnStep;
+        };
     }
 
     void OnSearch(AutoSuggestBox box, AutoSuggestBoxTextChangedEventArgs _) => Vm.Filter = box.Text;
