@@ -115,7 +115,10 @@ public sealed record ShippingPick(string Named, string? Stamp, string Exe);
 /// <paramref name="To"/> (both within a poll of the real start and exit).</summary>
 public sealed record PlayWindow(DateTimeOffset From, DateTimeOffset To);
 
-public sealed record DriverSince(string Id, DateTimeOffset? Since);
+/// <summary>The current driver (ScsKiller.DriverId): first seen at <paramref name="Since"/> (null: there when first noted, or
+/// another GPU's), last seen at <paramref name="SeenAt"/>; the previous driver of the same GPU last seen at
+/// <paramref name="PrevSeenAt"/> (null: unknown). The update came between PrevSeenAt and Since.</summary>
+public sealed record DriverSince(string Id, DateTimeOffset? Since, DateTimeOffset? SeenAt = null, DateTimeOffset? PrevSeenAt = null);
 
 /// <summary>A launch's driver creates from the recorder's csv (<see cref="SessionLog"/>): cache hits and compiles, started at
 /// <paramref name="At"/>.</summary>
@@ -331,7 +334,7 @@ public sealed class AppStore(string dataDir)
     public Dictionary<GpuVendor, double> LoadWarmRates() => Load<Dictionary<GpuVendor, double>>(Path.Combine(DataDir, "warmrates.json")) ?? [];
     public void SaveWarmRates(Dictionary<GpuVendor, double> rates) => Save(Path.Combine(DataDir, "warmrates.json"), rates);
 
-    /// <summary>The current driver (ScsKiller.DriverId) and since when it is (null: it was there when this was first noted).</summary>
+    /// <summary>The current driver (ScsKiller.DriverId), since when it is and when the previous one was last seen.</summary>
     public DriverSince? LoadDriverSince() => Load<DriverSince>(Path.Combine(DataDir, "driver.json"));
     public void SaveDriverSince(DriverSince d) => Save(Path.Combine(DataDir, "driver.json"), d);
 

@@ -1432,7 +1432,8 @@ public sealed class SettingsVm : Bindable
         set { if (value >= 0 && value != GpuIndex) S = S with { GpuAdapter = value == 0 ? null : Gpus[value - 1].Id }; }
     }
     public string GpuNote => GpuBackends.Chosen([.. Gpus.Select(g => g.Adapter)], S.GpuAdapter) is { } pick && pick.Gpu.AdapterLuid != V.Gpu.AdapterLuid
-        ? $"Restart SCSKiller to compile on {pick.Gpu.Name}." : $"Compiles target {V.Gpu.Name}. Pick the GPU your games run on: the driver cache is per GPU.";
+        ? $"Restart SCSKiller to compile on {pick.Gpu.Name}." : $"Compiles target {V.Gpu.Name}. Pick the GPU your games run on: the driver cache is per GPU."
+        + (Gpus.Any(g => g.Id.Contains('#')) ? " Identical cards are listed in Windows' order, the one with the main display first: moving the monitor to the other card swaps them." : "");
 }
 
 /// <summary>A row of Settings' clean-up list; ticked as <see cref="CleanupItem.Suggested"/>.</summary>

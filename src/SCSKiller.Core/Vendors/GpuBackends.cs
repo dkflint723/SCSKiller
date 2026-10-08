@@ -48,7 +48,8 @@ public static class GpuBackends
     }
 
     /// <summary>"10de:2684:16f310de": vendor, device and subsystem ids, which stay across boots and driver updates (the LUID
-    /// doesn't); "#1", "#2"... for further identical cards, in DXGI's order.</summary>
+    /// doesn't); "#1", "#2"... for further identical cards, in DXGI's order, which lists the card driving the main display
+    /// first: moving the monitor to the other card swaps them (DXGI gives no PCI location to tell them apart by).</summary>
     public static string AdapterId(DxgiAdapter a, int twin = 0) =>
         $"{(int)a.Gpu.Vendor:x4}:{a.DeviceId:x4}:{a.SubSysId:x8}" + (twin > 0 ? $"#{twin}" : "");
 

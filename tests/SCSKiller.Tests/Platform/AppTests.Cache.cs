@@ -40,8 +40,9 @@ public partial class AppTests
     public async Task A_compile_for_a_new_driver_first_deletes_the_games_files_from_before_it_and_keeps_what_came_since()
     {
         var (k, _) = await WarmedThenUpdated();
-        Assert.Equal(new DriverSince("0000:0010:00000020:101.00", null), k.Store.LoadDriverSince()! with { Since = null });
-        Assert.NotNull(k.Store.LoadDriverSince()!.Since);   // a change seen: since now
+        var noted = k.Store.LoadDriverSince()!;
+        Assert.Equal("0000:0010:00000020:101.00", noted.Id);
+        Assert.True(noted is { Since: not null, SeenAt: not null, PrevSeenAt: not null });   // a change seen: since now; the old one seen before
         var old = DateTime.UtcNow.AddDays(-2);
         string[] before = [CacheFileAt("33cba91d33333333.nvph", old), CacheFileAt("0002a91d33333333.nvph", old)];
         var since = CacheFileAt("408da91d33333333.nvph", DateTime.UtcNow.AddMinutes(5));   // the game ran on the new driver
@@ -56,6 +57,121 @@ public partial class AppTests
         var again = CacheFileAt("33cba91d33333333.nvph", old);   // the next compile on this driver deletes nothing
         await WarmOnce(k, _game.Id);
         Assert.True(File.Exists(again));
+    }
+
+    /// <summary>The usual sequence: compile, play, driver update, rebuild. A play that ended before the old driver was last
+    /// seen ran on it: what it wrote goes. One that ended after may have run on the new one: the cut moves to its start.
+    /// With the old driver's last sighting unknown, any play since the compile moves it.</summary>
+    [Theory]
+    [InlineData("old driver")]
+    [InlineData("maybe new driver")]
+    [InlineData("sighting unknown")]
+    public async Task A_play_on_the_old_driver_before_the_update_doesnt_keep_its_files(string play)
+    {
+        var (k, _) = await WarmedThenUpdated();
+        var now = DateTimeOffset.Now;
+        var rec = k.Store.LoadGame(_game.Id);
+        rec.WarmedAt = now.AddDays(-3);
+        var from = play == "maybe new driver" ? now.AddHours(-12) : now.AddDays(-2);
+        (rec.LastPlay, rec.FirstLaunch) = (new(from, from.AddHours(1)), new(from.AddMinutes(1), 10, 90));
+        k.Store.SaveGame(_game.Id, rec);
+        var id = k.Store.LoadDriverSince()!.Id;
+        k.Store.SaveDriverSince(new(id, now, now, play == "sighting unknown" ? null : now.AddDays(-1)));
+        var compiled = CacheFileAt("0002a91d33333333.nvph", now.AddDays(-3).AddMinutes(-5).UtcDateTime);
+        var played = CacheFileAt("33cba91d33333333.nvph", from.AddMinutes(30).UtcDateTime);   // appended to by the play
+
+        await WarmOnce(k, _game.Id);
+        Assert.False(File.Exists(compiled));
+        Assert.Equal(play != "old driver", File.Exists(played));
+        Assert.Equal(id, k.Store.LoadGame(_game.Id).OldDriverCleared);
+    }
+
+    /// <summary>The new driver's compile failed without a resume point: the record still names the old driver, and the next
+    /// compile must not take what the failed one wrote for the old driver's.</summary>
+    [Fact]
+    public async Task The_old_drivers_files_go_once_per_driver()
+    {
+        var (k, _) = await WarmedThenUpdated();
+        var id = k.Store.LoadDriverSince()!.Id;
+        k.Store.SaveDriverSince(new(id, null));   // its start unknown: the first clear takes everything up to now
+        var old = CacheFileAt("0002a91d33333333.nvph", DateTime.UtcNow.AddDays(-2));
+        await WarmOnce(k, _game.Id);
+        Assert.False(File.Exists(old));
+        Assert.Equal(id, k.Store.LoadGame(_game.Id).OldDriverCleared);
+
+        var rec = k.Store.LoadGame(_game.Id);
+        (rec.WarmedDriverId, rec.ResumeAt) = ("0000:0010:00000020:100.01", 0);   // as a failed compile leaves it
+        k.Store.SaveGame(_game.Id, rec);
+        var failed = CacheFileAt("0002a91d33333333.nvph", DateTime.UtcNow.AddMinutes(-1));   // written by the failed compile
+        await WarmOnce(k, _game.Id);
+        Assert.True(File.Exists(failed));
+    }
+
+    /// <summary>Upstream issue 43 beside 74: another GPU picked is no driver update. Its first compile keeps the cache the
+    /// game has for the GPU it was compiled for before.</summary>
+    [Fact]
+    public async Task Picking_another_gpu_deletes_no_cache_before_a_compile()
+    {
+        var k = Killer(new FakeReader(Unreal));
+        k.AppCache = new NvidiaAppCache(Path.Combine(_root, "DXCache"));
+        await k.ScanAsync(default);
+        await WarmOnce(k, _game.Id);
+        var rec = k.Store.LoadGame(_game.Id);
+        rec.CacheKeys.Add("33333333");
+        k.Store.SaveGame(_game.Id, rec);
+        var other = CacheFileAt("0002a91d33333333.nvph", DateTime.UtcNow.AddDays(-2));
+
+        var picked = Killer(new FakeReader(Unreal));   // restarted with the other card picked: its device id differs
+        picked.Adapters = () => [Listed(Gpu, 0x11)];
+        picked.AppCache = new NvidiaAppCache(Path.Combine(_root, "DXCache"));
+        await picked.ScanAsync(default);
+        Assert.Equal(new DriverSince("0000:0011:00000020:100.01", null), picked.Store.LoadDriverSince()! with { SeenAt = null });
+        picked.Store.SaveDriverSince(picked.Store.LoadDriverSince()! with { Since = DateTimeOffset.Now });   // even with a start
+        await WarmOnce(picked, _game.Id);
+        Assert.True(File.Exists(other));
+        Assert.Null(picked.Store.LoadGame(_game.Id).OldDriverCleared);
+        Assert.Equal("0000:0011:00000020:100.01", picked.Store.LoadGame(_game.Id).WarmedDriverId);
+    }
+
+    /// <summary>A compile refused as not ready compiles nothing: the old driver's files stay for the game to play on.</summary>
+    [Fact]
+    public async Task A_compile_refused_as_not_ready_deletes_nothing()
+    {
+        var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var (k, _) = await WarmedThenUpdated(k => k.RunningGameExes = () => { lock (running) return running.ToHashSet(StringComparer.OrdinalIgnoreCase); });
+        lock (running) running.Add("Fake-Win64-Shipping.exe");
+        var old = CacheFileAt("0002a91d33333333.nvph", DateTime.UtcNow.AddDays(-2));
+        k.Enqueue(_game.Id);
+        k.StartQueue();
+        await Until(() => k.Queue.Single().Stage == QueueStage.Paused);   // waits for the game to exit
+        File.WriteAllBytes(Path.Combine(_game.InstallDir, "dxgi.dll"), ReShadeDll);   // meanwhile a blocking mod came
+        File.WriteAllBytes(Path.Combine(_game.InstallDir, "renodx-ff7rebirth.addon64"), RenoDxAddon);
+        lock (running) running.Clear();
+        await k.WhenQueueIdle().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(QueueStage.Failed, k.Queue.Single().Stage);
+        Assert.True(File.Exists(old));
+        Assert.Null(k.Store.LoadGame(_game.Id).OldDriverCleared);
+    }
+
+    /// <summary>A cache that can't be listed skips the clean-up; the compile goes ahead.</summary>
+    [Fact]
+    public async Task An_unreadable_driver_cache_doesnt_stop_the_compile()
+    {
+        var (k, _) = await WarmedThenUpdated();
+        var old = CacheFileAt("0002a91d33333333.nvph", DateTime.UtcNow.AddDays(-2));
+        k.AppCache = new UnreadableCache(k.AppCache!);
+        await WarmOnce(k, _game.Id);
+        Assert.True(File.Exists(old));
+        Assert.Null(k.Store.LoadGame(_game.Id).OldDriverCleared);
+    }
+
+    sealed class UnreadableCache(IAppCache inner) : IAppCache
+    {
+        public IReadOnlyList<FileInfo> FilesOf(IEnumerable<string> keys) => inner.FilesOf(keys);
+        public long SizeOf(IEnumerable<string> keys) => inner.SizeOf(keys);
+        public IReadOnlySet<string> KeysOpenBy(string exeFileName) => inner.KeysOpenBy(exeFileName);
+        public int Delete(IEnumerable<string> keys) => inner.Delete(keys);
+        public IEnumerable<(string Path, string Key)> AllFiles() => throw new UnauthorizedAccessException("Access to the path is denied.");
     }
 
     [Fact]
@@ -172,6 +288,16 @@ public partial class AppTests
         Gone("steam:4", "here.exe", "88888888");   // its exe is on disk: maybe a game this scan missed, not offered
         CacheFile("0002a91d88888888.nvph", 4096);
         Assert.DoesNotContain(k.CleanupItems(), i => i.Id.EndsWith("steam_4"));
+
+        // on a drive that isn't connected (an external one unplugged): offered, not ticked
+        var drive = Enumerable.Range('G', 20).Select(c => $"{(char)c}:\\").Last(d => !Directory.Exists(d));
+        var unplugged = new GameRecord { GameName = "Unplugged", GameExe = Path.Combine(drive, "Games", "unplugged.exe") };
+        unplugged.CacheKeys.Add("99999999");
+        k.Store.SaveGame("steam:5", unplugged);
+        CacheFile("0002a91d99999999.nvph", 4096);
+        var item = k.CleanupItems().Single(i => i.Id == "cache|steam_5");
+        Assert.False(item.Suggested);
+        Assert.Equal($"Its drive ({drive}) isn't connected: if the game is still on it, it compiles again later.", item.Note);
     }
 
     static DxgiAdapter Adapter(GpuVendor vendor, string name, ulong vram, uint device, uint subsys, long luid) =>

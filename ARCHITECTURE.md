@@ -196,11 +196,17 @@ pipelines, not taken from documentation. `VendorCaps` holds the result per vendo
   (upstream issue 74). That the old entries serve the new driver nothing is inferred from why SCSKiller recompiles,
   not measured. So a compile for a new driver (the record warmed for another one, not resuming this driver's, the game
   not running, `Settings.ClearOldDriverCache`, default on) first deletes the game's files last written and created
-  before the driver became current (`driver.json`: the current `DriverId` and since when, noted at every GPU check),
-  key by key; files the game wrote on the new driver stay. A watched play after the old compile that began earlier
-  moves the cut to its start. A driver already there when `driver.json` was first written has no start: then only a
-  game not seen running since its compile is cleared, whole. Never a key another game shares; once per driver
-  (`GameRecord.OldDriverCleared`). On AMD the file names carry the driver build, and the same rule applies.
+  before the driver became current (`driver.json`: the current `DriverId`, since when, when it was last seen and when
+  the previous one of the same adapter was, noted at GPU checks, the last sighting at most every 30 minutes), key by
+  key; files the game wrote on the new driver stay. The update came between the previous driver's last sighting and
+  the new one's first: a watched play that ended (or a first launch that began) after that last sighting may have run on
+  the new driver and moves the cut to its start; an earlier one ran on the old driver, and its files go. With the last
+  sighting unknown, any play since the old compile moves the cut. A driver already there when `driver.json` was first
+  written, or another adapter's (a GPU picked, upstream issue 43: a pick is no driver update, and a record compiled for
+  another adapter keeps its files), has no start: then only a game not seen running since its compile is cleared, whole.
+  Never a key another game shares; once per driver (`GameRecord.OldDriverCleared`, set once the files were judged).
+  It runs just before the warm starts, after the not-ready checks; a cache that can't be read skips it, and the compile
+  goes ahead. On AMD the file names carry the driver build, and the same rule applies.
 - The D3D12 runtime version is not part of the key: pipelines compiled under the system runtime hit under a game's
   Agility SDK runtime and the reverse. The warm runs on the game's Agility runtime when the game ships one
   (`scskiller_warm --d3d12`: the Agility SDK DLLs of the folder the game exe's `D3D12SDKPath` export names, a relative
@@ -1085,7 +1091,9 @@ scskiller_warm.exe <workdir> <game exe file name> [--threads N] [--priority belo
 - `--adapter-luid <hex>`: `(HighPart << 32) | LowPart`; default the hardware adapter with the most dedicated VRAM.
   The app always passes its backend's adapter: the one with the most VRAM, or the one `Settings.GpuAdapter` names
   (upstream issue 43) by PCI vendor, device and subsystem ids (`GpuBackends.AdapterId`, "#1"... for identical cards in
-  DXGI's order; the LUID changes every boot), chosen at the start. Only that vendor's adapters can be picked, since
+  DXGI's order, which lists the card driving the main display first: moving the monitor swaps them, and DXGI gives no
+  PCI location to tell them apart by; the LUID changes every boot), chosen at the start. The CLI's `cache` and NVIDIA
+  commands detect the same pick. Only that vendor's adapters can be picked, since
   recordings and shared packs are labelled with the backend's vendor; a pick not listed falls back to the most VRAM. A
   pick changed while the app runs asks for a restart (`GpuRestartNote`).
 - `--package`: run the staged copy with that app's package identity (see [NVIDIA, D3D12](#nvidia-d3d12)). The child
@@ -1255,7 +1263,8 @@ delete never fails on them. Only `*.nvph` and `*.parc` files with a key are touc
 - `CleanupItems` (upstream issue 35), listed only after a scan: a folder under `games\` that no listed game has and
   whose exe (`GameRecord.GameExe`, noted at each evaluation) isn't on disk is a game no longer installed. Its keys no
   listed game uses or would get (on NVIDIA, none when a listed game's exe has its exe's name) are offered, ticked only
-  when its exe is known (an earlier build's record may be a game on a drive that isn't connected). Its SCSKiller folder
+  when its exe is known and its drive is there and ready (an unplugged drive's game looks uninstalled; an earlier build's
+  record may be one too). Its SCSKiller folder
   (plan, recording) is offered unticked, and never while its record tracks the recorder in a game folder. The other
   vendor's caches (`%LOCALAPPDATA%\NVIDIA\DXCache`, `%LOCALAPPDATA%\AMD\DxcCache` and `DxCache`) are offered unticked:
   another GPU of the PC (integrated graphics) may use them. A game's older SCSKiller compiles can't be told apart inside

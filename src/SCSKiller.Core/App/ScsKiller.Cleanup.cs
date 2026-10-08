@@ -24,32 +24,48 @@ public sealed partial class ScsKiller
         return true;
     }
 
-    string? _sinceNoted;   // the DriverId driver.json was last checked for
+    string? _sinceNoted;            // the DriverId driver.json was last checked for
+    DateTimeOffset _seenNoted;      // ...and when its SeenAt was last saved
+    static readonly TimeSpan SeenEvery = TimeSpan.FromMinutes(30);   // SeenAt may be that much older: it only keeps more
 
-    /// <summary>Keeps driver.json on the current driver and when it became current: the first one noted was already
-    /// installed (since unknown), a later one is new now.</summary>
+    /// <summary>Keeps driver.json on the current driver, when it became current and when the previous one was last seen:
+    /// the first one noted was already installed (since unknown), and so was another GPU's (upstream issue 43: a pick is
+    /// no driver update); a later one of the same GPU is new now.</summary>
     void NoteDriverSince()
     {
-        if (DriverId is not { } id || id == _sinceNoted) return;
+        if (DriverId is not { } id || id == _sinceNoted && Clock() - _seenNoted < SeenEvery) return;
         try
         {
-            if (Store.LoadDriverSince() is var was && was?.Id != id) Store.SaveDriverSince(new(id, was == null ? null : Clock()));
-            _sinceNoted = id;
+            var (was, now) = (Store.LoadDriverSince(), Clock());
+            Store.SaveDriverSince(was?.Id == id ? was with { SeenAt = now }
+                : was != null && SameAdapter(was.Id, id) ? new(id, now, now, was.SeenAt) : new(id, null, now));
+            (_sinceNoted, _seenNoted) = (id, now);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"couldn't note the driver: {e.Message}"); }
     }
+
+    /// <summary>Two DriverIds of the same adapter (vendor, device and subsystem ids): only a version change is a driver update.</summary>
+    static bool SameAdapter(string a, string b) => string.Equals(a[..Math.Max(a.LastIndexOf(':'), 0)], b[..Math.Max(b.LastIndexOf(':'), 0)], StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Upstream issue 74: a compile for a new driver appends to the game's cache files of the old one (NVIDIA keeps
     /// them, and its D3D12 file keeps its type and size across drivers), so the game's cache doubled and its 4 GiB file
     /// filled up. Before such a compile (warmed for another driver, not resuming this driver's, the game not running,
     /// Settings.ClearOldDriverCache) the game's driver-cache files last written before the driver became current go, key by
-    /// key; files the game wrote since (it ran on the new driver) stay. A play the app watched after the old warm that began
-    /// before then moves the cut to its start. With the driver's start unknown (it was there before driver.json), only a game
-    /// not seen running since its warm is cleared, whole. Never a key another game shares. Once per driver.</summary>
+    /// key; files the game wrote since (it ran on the new driver) stay. A watched play that ended, or a launch that began,
+    /// after the previous driver was last seen may have run on the new one: it moves the cut to its start; one before then
+    /// ran on the old driver, and its files go. Previous driver's last sighting unknown: any play since the old warm moves
+    /// the cut. With the driver's start unknown (it was there before driver.json), only a game not seen running since its
+    /// warm is cleared, whole. Another GPU picked (upstream issue 43) is no driver update: nothing goes. Never a key another
+    /// game shares. Once per driver; a cache that can't be read skips it, and the compile goes ahead.</summary>
     void ClearOldDriverFiles(Game game, GameRecord rec, GpuSnapshot snap)
     {
         if (!Settings.ClearOldDriverCache || AppCache is not { } cache || snap.Id is not { } id || rec.ResumeAt > 0 || rec.WarmedAt is not { } warmed
             || CurrentDriver(snap, rec.WarmedDriverId, rec.WarmedDriverVersion) || rec.OldDriverCleared == id) return;
+        if (rec.WarmedDriverId is { } was && !SameAdapter(was, id))
+        {
+            Log?.Report($"{game.Name}: last compiled for another GPU: its cache is kept");
+            return;
+        }
         var keys = DriverKeys(game, rec).Keys;
         if (keys.Count == 0 || GameRunning(game)) return;
         if (SharedWith(game.Id, keys) is { Count: > 0 } shared)
@@ -57,25 +73,33 @@ public sealed partial class ScsKiller
             Log?.Report($"{game.Name}: the previous driver's cache is kept: its keys are shared with {string.Join(", ", shared.Select(s => s.Name))}");
             return;
         }
-        var played = new[] { rec.LastPlay is { } p && p.To > warmed ? p.From : (DateTimeOffset?)null, rec.FirstLaunch?.At }.OfType<DateTimeOffset>().ToList();
-        DateTimeOffset cut;
-        if (Store.LoadDriverSince() is { Since: { } since } d && d.Id == id) cut = played.Append(since).Min();
-        else if (played.Count == 0) cut = Clock();
-        else
+        try
         {
-            Log?.Report($"{game.Name}: the previous driver's cache is kept: the game ran since its last compile, maybe on this driver, which was installed before SCSKiller noted it");
-            return;
+            var d = Store.LoadDriverSince() is { } s && s.Id == id ? s : null;
+            // the starts of runs that may have been on this driver: after the old warm, and after the previous driver was last seen
+            var after = d is { Since: not null, PrevSeenAt: { } prev } && prev > warmed ? prev : warmed;
+            var played = new[] { rec.LastPlay is { } p && p.To > after ? p.From : (DateTimeOffset?)null, rec.FirstLaunch?.At is { } at && at > after ? at : null }
+                .OfType<DateTimeOffset>().ToList();
+            DateTimeOffset cut;
+            if (d is { Since: { } since }) cut = played.Append(since).Min();
+            else if (played.Count == 0) cut = Clock();
+            else
+            {
+                Log?.Report($"{game.Name}: the previous driver's cache is kept: the game ran since its last compile, maybe on this driver, which was installed before SCSKiller noted it");
+                return;
+            }
+            var old = cache.AllFiles().Where(f => keys.Contains(f.Key)).Select(f => (File: new FileInfo(f.Path), f.Key))
+                .Where(f => f.File.LastWriteTimeUtc < cut.UtcDateTime && f.File.CreationTimeUtc < cut.UtcDateTime).ToList();
+            var done = AppCacheFiles.DeleteByKey(old);
+            if (done.Files > 0) Log?.Report($"{game.Name}: deleted {Format.Bytes(done.Bytes)} of its driver cache from before driver {snap.Gpu.DriverVersion}");
+            if (done.Kept.Count > 0) Log?.Report($"{game.Name}: {Format.Bytes(done.KeptBytes)} of the previous driver's cache is in use by {string.Join(", ", done.InUseBy)}: kept");
+            else
+            {
+                rec.OldDriverCleared = id;
+                Store.SaveGame(game.Id, rec);
+            }
         }
-        var old = cache.AllFiles().Where(f => keys.Contains(f.Key)).Select(f => (File: new FileInfo(f.Path), f.Key))
-            .Where(f => f.File.LastWriteTimeUtc < cut.UtcDateTime && f.File.CreationTimeUtc < cut.UtcDateTime).ToList();
-        var done = AppCacheFiles.DeleteByKey(old);
-        if (done.Files > 0) Log?.Report($"{game.Name}: deleted {Format.Bytes(done.Bytes)} of its driver cache from before driver {snap.Gpu.DriverVersion}");
-        if (done.Kept.Count > 0) Log?.Report($"{game.Name}: {Format.Bytes(done.KeptBytes)} of the previous driver's cache is in use by {string.Join(", ", done.InUseBy)}: kept");
-        else
-        {
-            rec.OldDriverCleared = id;
-            Store.SaveGame(game.Id, rec);
-        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{game.Name}: the previous driver's cache is kept: {e.Message}"); }
     }
 
     public (long Bytes, int Apps)? DriverCacheTotal()
@@ -113,7 +137,8 @@ public sealed partial class ScsKiller
 
     /// <summary>Upstream issue 35. A game is gone when its folder under games\ isn't a listed game's and its exe (noted at its
     /// evaluations) isn't on disk. Its driver-cache keys that no listed game uses or would get (on NVIDIA the key is the exe
-    /// name's: a listed game's exe of the same name would share it) are offered, suggested only when its exe name is known.
+    /// name's: a listed game's exe of the same name would share it) are offered, suggested only when its exe is known and its
+    /// drive connected (a game on an unplugged drive looks uninstalled).
     /// Its SCSKiller folder only when nothing of the recorder is tracked in it. The other vendor's caches are never
     /// suggested: another GPU of the PC (integrated graphics) may use them.</summary>
     public IReadOnlyList<CleanupItem> CleanupItems()
@@ -125,9 +150,12 @@ public sealed partial class ScsKiller
         foreach (var (id, rec) in GoneGames(listed))
         {
             var name = rec.GameName ?? id;
+            var gone = rec.GameExe != null && !Unplugged(rec.GameExe);
             if (AppCache != null && GoneKeys(rec, used) is { Count: > 0 } keys && AppCache.SizeOf(keys) is > 0 and var bytes)
-                items.Add(new(GoneCachePrefix + id, $"{name}: driver cache", CleanupKind.GoneGameCache, bytes, rec.GameExe != null,
-                    rec.GameExe != null ? "The game isn't installed any more." : "Not seen by this version of SCSKiller: if the game is on a drive that isn't connected, it compiles again later."));
+                items.Add(new(GoneCachePrefix + id, $"{name}: driver cache", CleanupKind.GoneGameCache, bytes, gone,
+                    gone ? "The game isn't installed any more."
+                    : rec.GameExe != null ? $"Its drive ({Path.GetPathRoot(rec.GameExe)}) isn't connected: if the game is still on it, it compiles again later."
+                    : "Not seen by this version of SCSKiller: if the game is on a drive that isn't connected, it compiles again later."));
             if (!Tracked(rec) && FolderBytes(Store.GameDir(id)) is > 0 and var data)
                 items.Add(new(GoneDataPrefix + id, $"{name}: SCSKiller's data", CleanupKind.GoneGameData, data, false,
                     "Its plan and recording. A reinstall plans again and records from the start."));
@@ -177,6 +205,14 @@ public sealed partial class ScsKiller
             catch (ArgumentException) { continue; }   // not a game id's folder
             if (rec.GameExe == null || !File.Exists(rec.GameExe)) yield return (id, rec);
         }
+    }
+
+    /// <summary>The path's drive (or share) isn't there or isn't ready: an external or second drive not connected now.</summary>
+    static bool Unplugged(string path)
+    {
+        if (Path.GetPathRoot(path) is not { Length: > 0 } root) return true;
+        try { return !Directory.Exists(root) || root.Length <= 3 && !new DriveInfo(root).IsReady; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return true; }
     }
 
     /// <summary>The driver-cache keys the listed games use or would get, and their exe file names (both cases seen).</summary>

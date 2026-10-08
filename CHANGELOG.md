@@ -26,18 +26,20 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **"Clean up shader caches"** in Settings: "Clear all…" deletes the whole driver shader cache, every game's and app's,
   after asking (upstream issue 80). Below it, the caches nothing installed uses, each with its size, to tick and delete:
   the driver caches of games no longer installed, SCSKiller's data for them, and the other GPU vendor's driver cache
-  (upstream issue 35). Caches that running apps hold open (a game, a browser, Steam, Discord) are kept and named. The
-  Library's cache card links there. On the command line: `scskiller cache clear --all`, `scskiller cache cleanup`.
+  (upstream issue 35); a game's on a drive that isn't connected is listed unticked. Caches that running apps hold open
+  (a game, a browser, Steam, Discord) are kept and named. The Library's cache card links there. On the command line: `scskiller cache clear --all`, `scskiller cache cleanup`.
 - **Pick the GPU to compile for** on a PC with two GPUs of the same vendor (upstream issue 43): "Compile for" in
   Settings, or `scskiller gpu`. It takes effect at the next start; the default is still the GPU with the most video
-  memory.
+  memory. `scskiller cache` and the NVIDIA commands use the pick too. Identical cards are numbered in Windows' order,
+  the one with the main display first: moving the monitor to the other card swaps them.
 
 ### Faster and steadier
 
 - **A rebuild after a driver update no longer doubles a game's cache** (upstream issue 74). The driver keeps the old
-  driver's files, and a rebuild added to them. Now the game's cache files from before the new driver are deleted first;
-  what the game compiled itself on the new driver stays. "Delete a game's cache from the old driver before rebuilding
-  it" in Settings turns it off.
+  driver's files, and a rebuild added to them. Now the game's cache files from before the new driver are deleted first,
+  also those you played on the old driver since the last compile; what the game compiled itself on the new driver stays.
+  A file the game may have written on the new driver is kept whole. Picking another GPU deletes nothing. "Delete a
+  game's cache from the old driver before rebuilding it" in Settings turns it off.
 
 ### Recorder and anti-cheat
 

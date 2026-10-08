@@ -373,6 +373,8 @@ int Gpu()
     foreach (var (id, a) in choices)
         Console.WriteLine($"{(a == chosen ? "*" : " ")} {id,-22} {a.Gpu.Name} ({Format.Bytes((long)a.Gpu.DedicatedVideoMemory)})");
     Console.WriteLine(settings.GpuAdapter == null ? "auto: the GPU with the most video memory" : $"picked: {settings.GpuAdapter}");
+    if (choices.Any(c => c.Id.Contains('#')))
+        Console.WriteLine("identical cards (#1...) are numbered in Windows' order, the main display's first: moving the monitor swaps them");
     return 0;
 }
 
@@ -426,9 +428,12 @@ async Task<int> RewarmStale(bool ifDriverChanged)
     }
 }
 
+// The GPU compiles target: the one picked in Settings (upstream issue 43), else the one with the most VRAM
+static IGpuVendorBackend PickedGpu() => GpuBackends.Detect(new AppStore(AppStore.DefaultDir).LoadSettings().GpuAdapter);
+
 int Cache()
 {
-    var v = GpuBackends.Detect();
+    var v = PickedGpu();
     Console.WriteLine($"GPU: {v.Gpu.Name} ({v.Vendor}), driver {v.Gpu.DriverVersion}, profile {v.Caps.Profile}");
     if (args.Length > 1 && args[1] == "set")
     {
@@ -587,7 +592,7 @@ async Task<int> ReferenceExport()
 // Read-only. Run it before and after switching something in the NVIDIA App and diff the two outputs.
 static int NvidiaSnapshot()
 {
-    if (GpuBackends.Detect() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
+    if (PickedGpu() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
     Console.WriteLine($"driver {nv.Gpu.DriverVersion}");
     Console.WriteLine($"Auto Shader Compilation: {nv.GetAutoShaderCompilation()?.ToString() ?? "not readable"} (setting 0x{NvidiaBackend.AutoShaderCompilationId:X8})");
     Console.WriteLine($"NvOSC.exe: {NvidiaBackend.NvOscPath() ?? "not found"}");
@@ -612,7 +617,7 @@ int NvidiaAutoShader()
 {
     if (!Enum.TryParse<AutoShaderCompilation>(args.ElementAtOrDefault(1), true, out var level) || !Enum.IsDefined(level) || int.TryParse(args[1], out _))
         return Fail("nvidia-auto-shader off|low|medium|high");
-    if (GpuBackends.Detect() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
+    if (PickedGpu() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
     if (!Elevated.IsAdmin) return Fail("switching NVIDIA Auto Shader Compilation needs an elevated (administrator) prompt");
     // NvOSC.exe -register registers the idle task for the account running it: refuse when UAC elevated a different
     // administrator (over-the-shoulder), whose DXCache it would compile into. Same account + elevated token is fine.

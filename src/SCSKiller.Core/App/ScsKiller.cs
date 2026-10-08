@@ -4751,7 +4751,6 @@ public sealed partial class ScsKiller : IScsKiller
                     (rec.ResumeAt, rec.ResumeItems, rec.ResumeSeconds, rec.ResumeFailed) = (0, 0, 0, 0);
                     Store.SaveGame(id, rec);
                 }
-                ClearOldDriverFiles(game, rec, snap);   // a fresh compile for a new driver: the old one's files go first
                 // now, not before the waits (for the game, idle, a pause): ReShade or its add-ons may have changed meanwhile
                 if (BlockingMod(game) is { } mod) throw new NotReadyException($"not ready: {ShaderModReason(mod)}");
                 layer = LayerFor(game, work);
@@ -4763,6 +4762,8 @@ public sealed partial class ScsKiller : IScsKiller
                     (rec.ResumeAt, rec.ResumeItems, rec.ResumeSeconds, rec.ResumeFailed) = (0, 0, 0, 0);
                     Store.SaveGame(id, rec);
                 }
+                // a fresh compile for a new driver: the old one's files go first; not for a compile refused as not ready
+                ClearOldDriverFiles(game, rec, snap);
                 var threads = ThreadsOverride ?? (background ? Settings.BackgroundThreads : Settings.Threads);
                 var options = new WarmOptions(threads, background ? WarmPriority.Idle : Settings.Priority, rec.ResumeAt, CompileMemoryGB(Settings) * 1024,
                     rec.CrashKeys.Count > 0 ? [.. rec.CrashKeys] : null, cap is { } most ? Math.Min(threads, most) : 0);
