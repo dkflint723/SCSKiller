@@ -39,6 +39,20 @@ public static class FrameGen
         return null;
     }
 
+    /// <summary>OptiScaler is the exe folder's dxgi.dll (its PE export name or product name, as ReShade.cs tells it): the
+    /// recorder's frame hooks would go on its DXGI factory, and the recorder starts at pipelines only (ScsKiller.StartLevel).
+    /// Never call it for an anti-cheat install.</summary>
+    public static bool OptiScalerDxgi(string exeDir)
+    {
+        var dxgi = Path.Combine(exeDir, "dxgi.dll");
+        try
+        {
+            return File.Exists(dxgi) && new[] { Middleware.ExportName(dxgi), System.Diagnostics.FileVersionInfo.GetVersionInfo(dxgi).ProductName }
+                .Any(n => n?.StartsWith("OptiScaler", StringComparison.OrdinalIgnoreCase) == true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
     /// <summary>OptiScaler.ini sets frame generation up: a newer one's [FrameGen] FGOutput (with Enabled=true) names the
     /// output, else FGType names the kind (auto or none: an FG library there), or an older one's [OptiFG] Enabled=true. Wider
     /// than the proxy's opti_fg, which takes its hooks off only for frame generation on: an older ini's FGType=optifg counts

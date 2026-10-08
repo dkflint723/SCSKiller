@@ -64,14 +64,15 @@ public partial class AppTests
     }
 
     /// <summary>The game watched from start to exit: a run of <paramref name="seconds"/> whose launch the recorder marked
-    /// (<paramref name="end"/>: with its #end).</summary>
-    static void Play(HashSet<string> running, Func<DateTimeOffset> now, Action<int> poll, string exeDir, string exe, int seconds, bool end = false)
+    /// (<paramref name="end"/>: with its #end; <paramref name="marks"/>: the recorder's lines after its creates, from its start).</summary>
+    static void Play(HashSet<string> running, Func<DateTimeOffset> now, Action<int> poll, string exeDir, string exe, int seconds, bool end = false,
+        Func<long, string>? marks = null)
     {
         poll(3);
         running.Add(exe);
         poll(3);
         var start = now().ToUnixTimeMilliseconds();
-        File.AppendAllText(Path.Combine(exeDir, "scskiller_creates.csv"), $"#session,{start},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n{seconds * 900.0:0.0},S,1,1,0.5\n"
+        File.AppendAllText(Path.Combine(exeDir, "scskiller_creates.csv"), $"#session,{start},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n{seconds * 900.0:0.0},S,1,1,0.5\n" + marks?.Invoke(start)
             + (end ? $"#end,{start + seconds * 1000L},{seconds * 1000.0:0.0}\n" : ""));
         for (var t = 0; t < seconds; t += 3) poll(3);
         running.Clear();
@@ -307,5 +308,169 @@ public partial class AppTests
         updated.SetRecorderOverride(_game.Id, RecorderOverride.Off);   // the removal takes the temp names too, whatever they hold
         Assert.False(File.Exists(dll));
         Assert.Empty(Directory.GetFiles(_exeDir, "*.scskiller-new"));
+    }
+
+    /// <summary>The recorder's own marks in the csv: a removed device (#removed, upstream issue 62) fails its launch whatever
+    /// its length and its #end; a CreateSwapChain called back into (#frames_off reentry, upstream issue 48) and the hooks the
+    /// launch ran (#hooks) are told.</summary>
+    [Fact]
+    public void A_removed_device_fails_its_launch_and_the_csv_tells_the_hooks_it_ran()
+    {
+        var csv = Path.Combine(_root, "creates.csv");
+        Directory.CreateDirectory(_root);
+        var start = DateTimeOffset.FromUnixTimeMilliseconds(T0 + 700_000);
+        RecorderVerdict? Judge(PlayWindow? played = null) => RecorderHealth.Judge(csv, "Fake.exe", T0 - 60_000, 0, played, null);
+        File.WriteAllText(csv, $"#session,{T0 - 600_000},Fake.exe\n#clock,90.0\n#hooks,1,1\n1000.0,G,0,0,50.0\n#removed,{T0 - 500_000},0x887a0006\n#end,{T0 - 300_000},90000.0\n"
+            + $"#session,{T0},Fake.exe\n#clock,100.0\n#hooks,1,0\n1000.0,G,0,0,50.0\n#end,{T0 + 600_000},600100.0\n");
+        Assert.Equal(new RecorderVerdict(T0, null, HooksOn: true), Judge());   // an earlier launch's removal isn't this one's
+
+        File.AppendAllText(csv, $"#session,{T0 + 700_000},Fake.exe\n#clock,100.0\n#hooks,0,0\n1000.0,G,0,0,50.0\n#removed,{T0 + 1_000_000},0x887a0006\n"
+            + $"#removed,{T0 + 1_000_500},0x887a0005\n#end,{T0 + 1_001_000},301100.0\n");
+        var v = Judge()!;
+        Assert.Equal(new DeviceRemoved(TimeSpan.FromMinutes(5), "0x887a0006"), v.Removed);   // the first, five minutes in: a failure though it ended
+        Assert.Equal((true, (TimeSpan?)null, (bool?)false, false), (v.Failed, v.EarlyFailure, v.HooksOn, v.Reentry));
+        Assert.Equal(v, Judge(new(start.AddSeconds(-2), start.AddMinutes(10))));   // a long watched run too
+
+        File.AppendAllText(csv, $"#session,{T0 + 2_000_000},Fake.exe\n#clock,100.0\n1000.0,G,0,0,50.0\n#frames_off,{T0 + 2_010_000},10100.0,reentry\n");
+        v = Judge()!;
+        Assert.Equal((true, false, (bool?)null), (v.Reentry, v.Failed, v.HooksOn));   // an older proxy writes no #hooks
+        Assert.Equal(10100.0, SessionLog.Launches(csv).Last().FramesOffT);
+        File.AppendAllText(csv, $"#session,{T0 + 3_000_000},Fake.exe\n#clock,100.0\n1000.0,G,0,0,50.0\n#frames_off,{T0 + 3_010_000},10100.0\n");
+        Assert.False(Judge()!.Reentry);   // frame generation's swap chain
+
+        Assert.Equal("The graphics driver crashed while Fake Game was recording (300 s in, device removed 0x887a0006): it now records pipelines only for this game (no frame times)",
+            RecorderHealth.RemovedNote("Fake Game", RecorderLevel.Minimal, new(TimeSpan.FromMinutes(5), "0x887a0006")));
+        Assert.EndsWith("device removed 0x887a0005): the recorder was taken out for this game",
+            RecorderHealth.RemovedNote("Fake Game", RecorderLevel.Off, new(TimeSpan.FromMinutes(5), "0x887a0005")));
+    }
+
+    /// <summary>A driver crash while recording (#removed) steps the recorder down after a launch of any length, Full ->
+    /// pipelines only -> out, and the game page says the driver crashed.</summary>
+    [Fact]
+    public async Task A_driver_crash_while_recording_steps_the_recorder_down_whatever_the_launch_lasted()
+    {
+        var (k, running, poll, now) = Guarded();
+        await k.ScanAsync(default);
+        var (dll, ini, exe) = (Path.Combine(_exeDir, "d3d12.dll"), Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
+        Play(running, now, poll, _exeDir, exe, 300, end: true, marks: at => $"#hooks,1,1\n#removed,{at + 290_000},0x887a0006\n");
+        var s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Minimal, true, true), (s.RecorderLevel, s.RecorderSteppedDown, s.RecorderInstalled));
+        Assert.Equal("The graphics driver crashed while Fake Game was recording (290 s in, device removed 0x887a0006): it now records pipelines only for this game (no frame times)",
+            s.RecorderLevelReason);
+        Assert.Contains("\r\nframes=0\r\nnvapi=0\r\n", File.ReadAllText(ini));
+        Assert.Contains(s.RecorderLevelReason!, File.ReadAllText(Path.Combine(k.Store.DataDir, "recorders.log")));
+
+        Play(running, now, poll, _exeDir, exe, 600, marks: at => $"#hooks,0,0\n#removed,{at + 500_000},0x887a0005\n");   // at pipelines only: out
+        s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Off, ScsKiller.SkipCrashed, false), (s.RecorderLevel, s.RecorderSkip, s.RecorderInstalled));
+        Assert.EndsWith("(500 s in, device removed 0x887a0005): the recorder was taken out for this game", s.RecorderLevelReason);
+        Assert.False(File.Exists(dll));
+    }
+
+    /// <summary>At pipelines only, an early close of a launch that still ran the hooks (#hooks: it started before Reconcile
+    /// wrote frames=0) is no failure of that level while the ini is ours, which takes it from the next launch; the user's own
+    /// ini can't take it: the recorder goes.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_launch_that_still_ran_the_hooks_never_fails_pipelines_only(bool userIni)
+    {
+        var (k, running, poll, now) = Guarded();
+        await k.ScanAsync(default);
+        var (ini, exe) = (Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
+        Play(running, now, poll, _exeDir, exe, 5, marks: _ => "#hooks,1,1\n");
+        Assert.Equal(RecorderLevel.Minimal, k.Games.Single().RecorderLevel);
+        if (userIni) File.WriteAllText(ini, "[scskiller]\r\nmode=record\r\n");
+
+        Play(running, now, poll, _exeDir, exe, 5, marks: _ => "#hooks,1,1\n");
+        Assert.Equal(userIni ? RecorderLevel.Off : RecorderLevel.Minimal, k.Games.Single().RecorderLevel);
+        if (userIni) return;
+        Assert.Contains("Fake Game closed early with the recorder's hooks still in", File.ReadAllText(Path.Combine(k.Store.DataDir, "recorders.log")));
+        Play(running, now, poll, _exeDir, exe, 5, marks: _ => "#hooks,0,0\n");   // at pipelines only: out
+        Assert.Equal(RecorderLevel.Off, k.Games.Single().RecorderLevel);
+    }
+
+    /// <summary>Another hook that called the recorder's CreateSwapChain back (#frames_off reentry, upstream issue 48) turns
+    /// frame timing off for the game (frames=0, the NVAPI hooks stay) until "Try again" or another build of the game.</summary>
+    [Fact]
+    public async Task A_swap_chain_hook_called_back_turns_frame_timing_off_for_the_game()
+    {
+        var (k, running, poll, now) = Guarded();
+        await k.ScanAsync(default);
+        var (ini, exe) = (Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
+        string Reentry(long at) => $"#hooks,1,1\n#frames_off,{at + 9_800},9800.0,reentry\n";
+        Play(running, now, poll, _exeDir, exe, 300, end: true, marks: Reentry);
+        var s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Full, RecorderHealth.ReentryNote("Fake Game"), true), (s.RecorderLevel, s.RecorderFramesOff, s.RecorderInstalled));
+        Assert.Contains("\r\nframes=0\r\n", File.ReadAllText(ini));
+        Assert.DoesNotContain("nvapi=0", File.ReadAllText(ini));
+        Assert.Contains(s.RecorderFramesOff!, File.ReadAllText(Path.Combine(k.Store.DataDir, "recorders.log")));
+
+        k.ResetRecorderHealth(_game.Id);
+        Assert.Null(k.Games.Single().RecorderFramesOff);
+        Assert.DoesNotContain("frames=0", File.ReadAllText(ini));
+
+        Play(running, now, poll, _exeDir, exe, 300, end: true, marks: Reentry);
+        Assert.NotNull(k.Games.Single().RecorderFramesOff);
+        File.WriteAllBytes(_game.ExePath, new byte[5000]);   // a game update
+        await k.RescanAsync(default);
+        Assert.Null(k.Games.Single().RecorderFramesOff);
+        Assert.DoesNotContain("frames=0", File.ReadAllText(ini));
+    }
+
+    /// <summary>An evaluation that read the record before the exit's watched run was saved judges without it: its verdict
+    /// isn't saved, and the exit's own evaluation judges the launch.</summary>
+    [Fact]
+    public async Task A_verdict_judged_without_the_exits_watched_run_is_left_to_the_exits_evaluation()
+    {
+        var (k, _, _, now) = Guarded();
+        await k.ScanAsync(default);
+        var exe = Path.GetFileName(_game.ExePath);
+        var start = now().AddMinutes(1);
+        File.AppendAllText(Path.Combine(_exeDir, "scskiller_creates.csv"), $"#session,{start.ToUnixTimeMilliseconds()},{exe}\n#clock,50.0\n500.0,G,0,0,40.0\n");
+        k.Clock = () => now().AddMinutes(5);
+        var saved = 0;
+        k.ProcessNames = () =>   // the guard asks whether the game runs after judging: the exit's poll saves its run meanwhile
+        {
+            if (Interlocked.Exchange(ref saved, 1) == 0)
+            {
+                var rec = k.Store.LoadGame(_game.Id);
+                rec.LastPlay = new PlayWindow(start.AddSeconds(-2), start.AddSeconds(4));
+                k.Store.SaveGame(_game.Id, rec);
+            }
+            return new HashSet<string>();
+        };
+        k.RefreshGame(_game.Id);
+        Assert.Equal(1, saved);
+        Assert.Null(k.Store.LoadGame(_game.Id).RecorderSessionSeen);
+        Assert.Equal(RecorderLevel.Full, k.Games.Single().RecorderLevel);
+        k.RefreshGame(_game.Id);   // the exit's evaluation
+        Assert.Equal(RecorderLevel.Minimal, k.Games.Single().RecorderLevel);
+    }
+
+    /// <summary>OptiScaler as the game's dxgi.dll (upstream issue 69: Onimusha: Way of the Sword crashed seconds in): the
+    /// recorder starts at pipelines only, and the crash guard takes it out after an early close there.</summary>
+    [Fact]
+    public async Task With_optiscaler_as_dxgi_dll_the_recorder_starts_at_pipelines_only()
+    {
+        var dxgi = Path.Combine(_exeDir, "dxgi.dll");
+        File.WriteAllBytes(dxgi, Planning.MiddlewarePackTests.Pe("OptiScaler.dll"));
+        Assert.True(Core.Games.FrameGen.OptiScalerDxgi(_exeDir));
+        var (k, running, poll, now) = Guarded();
+        await k.ScanAsync(default);
+        var (ini, exe) = (Path.Combine(_exeDir, "scskiller.ini"), Path.GetFileName(_game.ExePath));
+        var s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Minimal, false, ScsKiller.OptiScalerStartNote, true), (s.RecorderLevel, s.RecorderSteppedDown, s.RecorderLevelReason, s.RecorderInstalled));
+        Assert.Contains("; OptiScaler is the game's dxgi.dll: no frame-timing or NVAPI hooks, pipelines only\r\nframes=0\r\nnvapi=0\r\n", File.ReadAllText(ini));
+
+        Play(running, now, poll, _exeDir, exe, 5, marks: _ => "#hooks,0,0\n");
+        s = k.Games.Single();
+        Assert.Equal((RecorderLevel.Off, ScsKiller.SkipCrashed), (s.RecorderLevel, s.RecorderSkip));
+        Assert.StartsWith("Fake Game closed shortly after starting (", s.RecorderLevelReason);   // not "again": it started there
+
+        File.WriteAllBytes(dxgi, Planning.MiddlewarePackTests.Pe("dxgi.dll"));   // another dxgi.dll
+        Assert.False(Core.Games.FrameGen.OptiScalerDxgi(_exeDir));
+        Assert.Equal(RecorderLevel.Full, ScsKiller.StartLevel(null, false));
+        Assert.Equal(RecorderLevel.Minimal, ScsKiller.StartLevel(null, false, optiScalerDxgi: true));
     }
 }

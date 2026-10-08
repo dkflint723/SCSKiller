@@ -49,6 +49,23 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   renamed into place.
 - **REFramework** (RE Engine games): removing the recorder also deletes REFramework's copy of it, and nothing else there.
   Only one copy of the recorder ever records in a game. The game page notes REFramework.
+- **A graphics driver crash while recording** (upstream issue 62) now counts against the recorder whatever the launch
+  lasted: the recorder notices the removed device, even with frame timing off, and the game page says the driver crashed
+  while recording. As with an early close, the recorder then records pipelines only in that game, and after a second
+  crash it's taken out.
+- **A game that calls the recorder's swap chain hook back** through another hook (upstream issue 48: Assassin's Creed
+  Valhalla hung at its splash screen) no longer loops: the recorder lets the call through, turns its frame timing off
+  for the launch and names the other program in its log. SCSKiller then keeps frame timing off for that game until
+  "Try again" or the game's next update.
+- **OptiScaler installed as the game's `dxgi.dll`**: the recorder starts with pipelines only (no frame timing or NVAPI
+  hooks). Onimusha: Way of the Sword with OptiScaler crashed a few seconds into startup with the recorder (upstream
+  issue 69).
+- **"Try again"** on the game page also shows for a game DLSS kept the recorder out of, and frame timing turned off;
+  that game's next update puts the recorder back too.
+- The crash guard no longer takes the recorder out after a launch that still ran with frame timing on because it
+  started before SCSKiller switched it off, and no longer misses an early close judged while the game's exit was being
+  saved.
+- `settings.json` keeps the settings another build of SCSKiller wrote there when this one saves its own.
 
 ### Games
 

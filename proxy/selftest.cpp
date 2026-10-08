@@ -3396,6 +3396,74 @@ static int hooks_rows(const std::wstring& dir) {
     return 0;
 }
 
+// `selftest screenter <n>`: an overlay hooked the DXGI factory's CreateSwapChainForHwnd before the proxy did, and calls it
+// back through the vtable n times before calling the original (another hook re-entering the proxy's: upstream issue 48). A
+// swap chain on WARP through the proxy, presented 3 times. Prints "calls <n>" (the overlay's), "slot15 <ours|overlay>"
+// (the factory slot after), "hooked <0|1>" (the swap chain's Present is the proxy's) and "frames <n>".
+static void* g_re_orig;
+static int g_re_left;
+static std::atomic<int> g_re_calls;
+static HRESULT STDMETHODCALLTYPE re_createsc_hwnd(IDXGIFactory2* f, IUnknown* dev, HWND w, const DXGI_SWAP_CHAIN_DESC1* d,
+                                                  const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fs, IDXGIOutput* o, IDXGISwapChain1** pp) {
+    ++g_re_calls;
+    if (g_re_left > 0) return --g_re_left, f->CreateSwapChainForHwnd(dev, w, d, fs, o, pp);  // back through the vtable
+    return ((decltype(&re_createsc_hwnd))g_re_orig)(f, dev, w, d, fs, o, pp);
+}
+static int screenter_rows(const std::wstring& dir, int n) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    void** fvt = *(void***)f;
+    DWORD old;
+    CHECK(VirtualProtect(&fvt[15], sizeof(void*), PAGE_READWRITE, &old));
+    g_re_orig = fvt[15], fvt[15] = (void*)re_createsc_hwnd;
+    VirtualProtect(&fvt[15], sizeof(void*), old, &old);
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(create && SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    HWND wnd = CreateWindowExW(0, L"STATIC", L"scskiller screenter", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    ID3D12CommandQueue* q = nullptr;
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    IDXGISwapChain1* sc = nullptr;
+    g_re_left = n;
+    CHECK(wnd && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) && SUCCEEDED(f->CreateSwapChainForHwnd(q, wnd, &d, nullptr, nullptr, &sc)));
+    HMODULE owner = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)(*(void***)sc)[8], &owner);
+    printf("calls %d\nslot15 %s\nhooked %d\n", g_re_calls.load(), fvt[15] == (void*)re_createsc_hwnd ? "overlay" : "ours", owner == m);
+    for (int i = 0; i < 3; ++i) sc->Present(0, 0);
+    Sleep(2500);  // the proxy writes the frames once a second
+    printf("frames %ld\n", frames_in(dir));
+    return 0;
+}
+
+// `selftest removed`: a device through the proxy on WARP, removed (ID3D12Device5::RemoveDevice, as a TDR would), released,
+// and a device made again. Prints "removed 0x<hr>" (the first device's reason after 2.5 s), "again 0x<hr>" (the new
+// device's GetDeviceRemovedReason: S_OK once the proxy let the removed one go) or "no RemoveDevice".
+static int removed_rows(const std::wstring& dir) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))) &&
+          SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    ID3D12Device5* d5 = nullptr;
+    if (FAILED(dev->QueryInterface(IID_PPV_ARGS(&d5)))) return printf("no RemoveDevice\n"), 0;
+    d5->RemoveDevice();
+    d5->Release();
+    Sleep(2500);  // the proxy's watch asks once a second
+    printf("removed 0x%08x\n", (unsigned)dev->GetDeviceRemovedReason());
+    dev->Release();
+    CHECK(SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    printf("again 0x%08x\n", (unsigned)dev->GetDeviceRemovedReason());
+    return 0;
+}
+
 // `selftest factoryrejected` (run unarmed): a device factory both through an SDK configuration the proxy got before its first
 // device (its CreateDeviceFactory hook) and straight from D3D12GetInterface, each after that first device was rejected.
 // Prints "config factory hooked <0|1>" (or "no config factory") and "factory hooked <0|1>": a rejected run hooks neither.
@@ -3596,6 +3664,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && !wcscmp(argv[1], L"unload")) return unload_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesheld")) return frames_held(dir);
     if (argc > 1 && !wcscmp(argv[1], L"hooks")) return hooks_rows(dir);
+    if (argc > 2 && !wcscmp(argv[1], L"screenter")) return screenter_rows(dir, _wtoi(argv[2]));
+    if (argc > 1 && !wcscmp(argv[1], L"removed")) return removed_rows(dir);
     if (argc > 2 && !wcscmp(argv[1], L"refw")) return refw_rows(dir, !wcscmp(argv[2], L"twice"));
     if (argc > 2 && !wcscmp(argv[1], L"framesfg")) return frames_fg_rows(dir, wcscmp(argv[2], L"plain") ? argv[2] : nullptr, argc > 3 && !wcscmp(argv[3], L"overlay"));
     if (argc > 1 && !wcscmp(argv[1], L"factory")) return factory_rows(dir, argc > 2 ? argv[2] : nullptr);

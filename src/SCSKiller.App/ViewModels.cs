@@ -997,6 +997,7 @@ public sealed class DetailVm(string id) : Bindable
         : s.RecorderSkip is { } skip ? $"Not available: {skip}."
         : s.RecorderLevel == RecorderLevel.Minimal && s.RecorderLevelReason is { } minimal && (s.RecorderSteppedDown || RecordOn) ? $"{Sentence(minimal)}."
           + (s.RecorderNote is { } pending ? $" ({Sentence(pending)})" : "")
+        : s.RecorderFramesOff is { } framesOff && RecordOn ? $"{Sentence(framesOff)}." + (s.RecorderNote is { } waiting ? $" ({Sentence(waiting)})" : "")
         : s.RecordingNotNeeded && !RecordOn ? ScsKiller.RecordingNotNeededNote
         : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time. If a game has anti-cheat SCSKiller didn't detect, don't turn this on."
           + (s.RecorderNote is { } note ? $" ({Sentence(note)})" : "")
@@ -1004,7 +1005,7 @@ public sealed class DetailVm(string id) : Bindable
 
     // The crash guard stepped the recorder down (RecorderHealth): "Try again" puts it back to its start
     public bool? TryAgainPending { get; set; }
-    public bool ShowTryAgain => s.RecorderSteppedDown && NoAntiCheat;
+    public bool ShowTryAgain => (s.RecorderSteppedDown || s.RecorderFramesOff != null || s.StreamlineFirst) && NoAntiCheat;   // also frame timing off, a never-saw Streamline run
     public bool CanTryAgain => TryAgainPending == null && RecordPending == null;
 
     // A mod's d3d12.dll where the recorder goes (ReShade, a wrapper): off = the game isn't recorded; on = the recorder chains to it

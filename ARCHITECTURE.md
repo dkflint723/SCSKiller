@@ -103,7 +103,8 @@ Building and running the tests: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
 
-- `settings.json`.
+- `settings.json`. Keys this build doesn't know (another build's on the same folder) are written back as they were
+  (`Settings.Unknown`).
 - `games\<game id, ':' replaced by '_'>\` when that is a plain folder name; an id that isn't (separators, `..`,
   trailing dots or spaces, from launcher metadata) gets `%` and the id percent-encoded instead, a name the plain ones
   never take (`AppStore.GameDir`):
@@ -111,8 +112,10 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
     holder changed since loading the record, onto the stored one re-read under a lock across processes (sets merge
     by what was added and removed), so a long compile never puts back what a game's exit saved meanwhile. The recorder's
     crash guard keeps its level there (`RecorderLevel`, null = its start, `ScsKiller.StartLevel`; `RecorderLevelReason`,
-    `RecorderLevelAt`, `RecorderLevelBuild`), the last launch it judged (`RecorderSessionSeen`, its `#session` stamp)
-    and when our proxy went in (`RecorderInstalledAt`; see [Recorder](#recorder), "Crash guard");
+    `RecorderLevelAt`, `RecorderLevelBuild`), frame timing off for the game (`RecorderFramesOff`), the last launch it
+    judged (`RecorderSessionSeen`, its `#session` stamp) and when our proxy went in (`RecorderInstalledAt`; see
+    [Recorder](#recorder), "Crash guard"); a Streamline run the recorder never saw keeps its build and when it was
+    last cleared (`StreamlineNeverSawBuild`, `StreamlineRetryAt`);
   - `*.lock`: the locks the app, the command line and scheduled tasks take turns on, in any session (the file opened
     exclusively), for `state.json` and `recording.db`, and `compile.lock`, held for a whole compile of the game;
   - `plan.bin`: the plan (hash-only); `plan-<hash>.keys`: its planner-made pipelines; `warm-<hash>.keys`: the inputs of
@@ -683,7 +686,8 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   every later by-name load gets; a guess, since a game may load d3d12.dll by name later and record, as Onimusha, PRAGMATA
   and RE Requiem do: it counts only once a watched launch with the recorder in place saw no device of it, kept in
   `GameRecord.StreamlineNeverSaw`, and never while the csv's last session of the exe has creates,
-  `ScsKiller.StreamlineBlocks`), and a folder writable without elevation. "Record all" leaves out a game whose files
+  `ScsKiller.StreamlineBlocks`; another build of the game than that run's, or the game page's "Try again", clears it,
+  and only a later watched run sets it again), and a folder writable without elevation. "Record all" leaves out a game whose files
   list every pipeline with its root signature on a state-independent cache (`GameState.RecordingNotNeeded`:
   `EngineInfo.ShipsRootSignatures`, `VendorCaps.StateIndependentCache` and a Ready check, FINAL FANTASY XVI on NVIDIA):
   a recording adds nothing to its plan, and a recorder it put there is taken out (the game's switch On still records
@@ -784,7 +788,10 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   down where the hooks are trouble. With the hooks in, FINAL FANTASY XVI with DLSS-G on crashed in NVIDIA's driver
   (`nvwgf2umx.dll`, a fail-fast) 4 s after launch, every time. So a game with frame generation that doesn't need the
   recorder (`GameState.RecordingNotNeeded`, FINAL FANTASY XVI on NVIDIA: recorded only when the user turns it on)
-  starts at Minimal (`ScsKiller.StartLevel`; the game page says it records pipelines only).
+  starts at Minimal (`ScsKiller.StartLevel`; the game page says it records pipelines only). So does a game whose
+  exe folder has OptiScaler as `dxgi.dll` (`FrameGen.OptiScalerDxgi`, by its PE export or product name): the frame
+  hooks would go on OptiScaler's DXGI factory, and Onimusha: Way of the Sword with it crashed a few seconds in with
+  the recorder (upstream issue 69); the crash guard takes it out from there after an early close.
 - **Crash guard** (`RecorderHealth`, `ScsKiller.GuardRecorder`, app only): a recorded launch that closed early steps the
   recorder down for that game, Full, then Minimal (`ScsKiller.IniText` writes `frames=0` and `nvapi=0`: pipelines
   only; a game's start where frame generation is present and the recorder isn't needed, see "Hook switches"), then Off
@@ -799,10 +806,21 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   `#session` to the watched run's last sighting (`GameRecord.LastPlay`, when it holds the `#session`); without a
   watched run, to the launch's last frame and last create, and only when the frame log is of this launch and frame
   generation didn't cut it short (the csv's `#frames_off`, see the frame log). A launch with `#end`, longer, without
-  creates (and no watched run) or with neither a watched run nor its own whole frames is fine. Another
+  creates (and no watched run) or with neither a watched run nor its own whole frames is fine. A launch whose device
+  was removed (the csv's `#removed`: a TDR or a driver crash while recording, upstream issue 62) fails whatever its
+  length and its `#end`; the note says the graphics driver crashed while recording, with the reason. At Minimal, a
+  failed launch whose `#hooks` says it still ran the frame-timing or NVAPI hooks (it started before Reconcile, which
+  waits for the game to exit, wrote `frames=0`) doesn't step to Off while `scskiller.ini` is SCSKiller's own
+  (`ScsKiller.IniOurs`): the next launch is judged at Minimal; the user's own ini can't take the level, so it goes to
+  Off. A verdict is saved only while the record's watched run (`LastPlay`) is still the one it was judged by: an
+  evaluation that read the record before the exit saved its run leaves the launch to the exit's own evaluation. A
+  launch whose `CreateSwapChain*` hook was called back into (`#frames_off` with reason `reentry`, see the frame log)
+  turns frame timing off for the game (`GameRecord.RecorderFramesOff`: `IniText` writes `frames=0` alone, the NVAPI
+  hooks stay; the game page says so). Another
   build of the game (`Game.Version`, else the exe's size and write time, against `RecorderLevelBuild`) or the game
-  page's "Try again" (`IScsKiller.ResetRecorderHealth`, shown only after a step down: `GameState.RecorderSteppedDown`)
-  puts it back to its start (Full, or Minimal as above); the judged launches stay judged. Each step is a line in
+  page's "Try again" (`IScsKiller.ResetRecorderHealth`, shown after a step down, `GameState.RecorderSteppedDown`, with
+  frame timing off, or for a Streamline game the recorder never saw) puts it back to its start (Full, or Minimal as
+  above) with frame timing on; the judged launches stay judged. Each step is a line in
   `recorders.log` and the game page's note (`GameState.RecorderLevelReason`). Accepted limits: a game quit on purpose
   within 45 s without `#end` counts, and a crash whose process Windows Error Reporting keeps alive past 45 s doesn't.
 - **Writes into the game folder**: the proxy and `scskiller.ini` are written under a temp name (`ScsKiller.Place`,
@@ -991,7 +1009,13 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   to the creates csv (the crash guard then can't take the frame log's end as the launch's). `OptiScaler.ini` beside the exe
   with its frame generation on hooks nothing at all, since OptiScaler as `dxgi.dll` can make that swap chain through a
   factory the recorder doesn't hook: `[FrameGen]` `Enabled=true` with `FGOutput` other than `auto` / `nofg`, or in older
-  versions `FGType` `nukems`, or `FGType` `optifg` (its default) with `[OptiFG]` `Enabled=true`. Each `CreateSwapChain*` logs its queue's name. The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the
+  versions `FGType` `nukems`, or `FGType` `optifg` (its default) with `[OptiFG]` `Enabled=true`. Each `CreateSwapChain*` logs its queue's name.
+  Another hook on the factory may call `CreateSwapChain*` back through the vtable from inside ours (Assassin's Creed
+  Valhalla hung at its splash with 2,201 entries in 0.1 s, upstream issue 48): only a thread's outermost entry does the
+  frame work (`t_createsc`); a nested one passes straight through, and the 8th nested one puts the `Present` hooks and
+  the factory's `CreateSwapChain*` slots back the same way, logs once the first module on the stack that isn't the
+  recorder and writes `#frames_off,<unix_ms>,<t_ms>,reentry` (the app then turns frame timing off for the game, see
+  the crash guard). A runtime's own nesting stays far under 8 (`selftest screenter`). The game page's last session (`GameState.LastFrames`) reads the last launch with the creates csv of the
   same launch (the `#session` with the same stamp; from an older recorder, without `#clock`, the only one within 10 s, else none). A frame
   is **cold-filled** when its overlapping compiles of 100 ms or more (not a library load or a RayQuery PSO at the
   floor) sum to half its length or more: a compiled run's load creates stay under
@@ -1194,6 +1218,16 @@ Readers ignore lines starting with `#` and accept extra fields. Markers give rea
 - `#session,<unix_ms_utc>,<exe file name>` at the first device. The name is `GetModuleFileNameW(NULL)`'s, exactly as
   launched: the case AMD's cache key uses. The frames file's launch record carries the same stamp.
 - `#clock,<t_ms>` right after it: that instant on the `t_ms` clock, which starts when the recorder loads.
+- `#hooks,<frames>,<nvapi>` right after that: 1 where the launch runs those hooks (`frames=`, `nvapi=`), the level it
+  ran at for the crash guard.
+- `#frames_off,<unix_ms_utc>,<t_ms>[,reentry]`: the frame log ends there (frame generation's swap chain; `reentry`: a
+  `CreateSwapChain*` called back into).
+- `#removed,<unix_ms_utc>,<reason>`: the recorder's watch saw a device of the launch removed (`GetDeviceRemovedReason`,
+  `0x887a0006` hung, `0x887a0005` removed...). Each device the game gets is watched from a thread of the recorder,
+  frame hooks or not: an event set on a fence for `UINT64_MAX` (a removed device completes every fence) and a poll
+  once a second. The recorder holds the device until then (D3D12 hands the game the same device of an adapter while
+  it lives) and lets it go once removed, so the game can make a new one. Written straight through the file handle, as
+  `#end`: the game may die right after.
 - `#end,<unix_ms_utc>,<t_ms>` at process detach, best effort.
 
 Older recorders wrote neither `#clock` nor `#end`'s `t_ms`; readers then take the `#session` stamp as `t_ms` 0 and
