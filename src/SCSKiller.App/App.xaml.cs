@@ -70,7 +70,7 @@ public partial class App : Application
         if (Core is ScsKiller real)
         {
             real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync);
-            real.Sharing = new Sharing(AppStore.DefaultDir, () => real.Settings.ShareRecordings);   // anonymous: never the Patreon sign-in
+            real.Sharing = new Sharing(AppStore.DefaultDir, () => real.SharesRecordings);   // anonymous: never the Patreon sign-in; this unofficial build's own opt-in too
             real.ContentRoutes = RouteFailover.Default;
             real.ChannelAccess = async () => (await Account.GetAccessTokenAsync(), Account.Status?.Ent);
             // the entitlements first: the update check picks the channel they allow

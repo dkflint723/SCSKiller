@@ -22,19 +22,39 @@ public class UserAgentTests : IDisposable
         return answer(r);
     });
 
+    // this unofficial build: never an official channel in the comment, whatever its version says
     [Theory]
-    [InlineData("SCSKiller", "1.2.4", 26300, "SCSKiller/1.2.4 (stable; Windows 26300)")]
-    [InlineData("SCSKiller", "1.3.0-beta.2", 22631, "SCSKiller/1.3.0-beta.2 (beta; Windows 22631)")]
-    [InlineData("SCSKiller", "1.3.0-alpha.1+abc", 19045, "SCSKiller/1.3.0-alpha.1 (alpha; Windows 19045)")]
-    [InlineData("SCSKiller", "0.0.0-internal.0", 26100, "SCSKiller/0.0.0-internal.0 (internal; Windows 26100)")]
-    [InlineData("SCSKiller-CLI", "1.2.4", 26300, "SCSKiller-CLI/1.2.4 (stable; Windows 26300)")]
-    public void The_User_Agent_is_the_product_the_version_the_channel_and_the_Windows_build(string product, string version, int build, string expected)
+    [InlineData("SCSKiller-fork-dkflint723", "0.0.0-dkfork.0", 26100, "SCSKiller-fork-dkflint723/0.0.0-dkfork.0 (unofficial; Windows 26100)")]
+    [InlineData("SCSKiller-fork-dkflint723", "1.2.4", 26300, "SCSKiller-fork-dkflint723/1.2.4 (unofficial; Windows 26300)")]
+    [InlineData("SCSKiller-fork-dkflint723", "1.3.0-beta.2", 22631, "SCSKiller-fork-dkflint723/1.3.0-beta.2 (unofficial; Windows 22631)")]
+    [InlineData("SCSKiller-fork-dkflint723", "1.3.0-alpha.1+abc", 19045, "SCSKiller-fork-dkflint723/1.3.0-alpha.1 (unofficial; Windows 19045)")]
+    [InlineData("SCSKiller-fork-dkflint723-CLI", "1.2.4", 26300, "SCSKiller-fork-dkflint723-CLI/1.2.4 (unofficial; Windows 26300)")]
+    public void The_User_Agent_is_the_fork_product_the_version_unofficial_and_the_Windows_build(string product, string version, int build, string expected)
     {
         var ua = RouteFailover.UserAgent(product, AppVersion.Parse(version)!, build);
         Assert.Equal(expected, ua);
         using var request = new HttpRequestMessage();
         request.Headers.UserAgent.ParseAdd(ua);   // a valid header: one product token and one comment
         Assert.Equal(2, request.Headers.UserAgent.Count);
+    }
+
+    [Fact]
+    public void Requests_name_the_fork_by_default()
+    {
+        Assert.Equal("SCSKiller-fork-dkflint723", RouteFailover.Product);
+        Assert.StartsWith("SCSKiller-fork-dkflint723/", Expected);
+        Assert.Contains("(unofficial; Windows ", Expected);
+    }
+
+    [Theory]
+    [InlineData("0.0.0-dkfork.0")]
+    [InlineData("0.0.0-dkfork.0+74627d4")]
+    public void A_fork_version_is_valid_SemVer_on_the_internal_channel(string version)
+    {
+        var v = AppVersion.Parse(version)!;
+        Assert.Equal("0.0.0-dkfork.0", v.ToString());
+        Assert.Equal(UpdateChannels.Internal, v.Channel);   // no update feed, no active check
+        Assert.Null(UpdateFeeds.Source(v));
     }
 
     [Fact]

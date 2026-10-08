@@ -1309,6 +1309,13 @@ public sealed class SettingsVm : Bindable
 
     public bool? MaximumPlans { get => S.MaximumPlans; set { if (value is { } v && v != S.MaximumPlans) S = S with { MaximumPlans = v }; } }
     public bool? ShareRecordings { get => S.ShareRecordings; set { if (value is { } v && v != S.ShareRecordings) S = S with { ShareRecordings = v }; } }
+    /// <summary>This unofficial build's own opt-in to uploads (fork.json), besides <see cref="ShareRecordings"/>; the design data has none.</summary>
+    public bool? ForkShareRecordings
+    {
+        get => (App.Core as ScsKiller)?.ForkSettings.ShareRecordings ?? false;
+        set { if (value is { } v && App.Core is ScsKiller k && v != k.ForkSettings.ShareRecordings) { k.ForkSettings = k.ForkSettings with { ShareRecordings = v }; Refresh(); } }
+    }
+    public bool CanForkShare => App.Core is ScsKiller;
     public bool? ActiveCheck { get => S.ActiveCheck; set { if (value is { } v && v != S.ActiveCheck) S = S with { ActiveCheck = v }; } }
     public bool? LookUpKeysOnline { get => S.LookUpKeysOnline; set { if (value is { } v && v != S.LookUpKeysOnline) S = S with { LookUpKeysOnline = v }; } }
     public bool? HideUnsupported { get => S.HideUnsupported; set { if (value is { } v && v != S.HideUnsupported) S = S with { HideUnsupported = v }; } }

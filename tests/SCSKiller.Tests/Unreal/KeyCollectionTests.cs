@@ -88,7 +88,7 @@ public class KeyCollectionTests : IDisposable
         var keys = new KeyCollection(_dir, server, _clock);
         var (list, problem) = await keys.ListAsync(Url, false);
         Assert.Equal((9, (string?)null, 1), (list!.Count, problem, server.Requests));
-        Assert.Contains("SCSKiller/", server.Last!.Headers.UserAgent.ToString());
+        Assert.StartsWith("SCSKiller-fork-dkflint723/", server.Last!.Headers.UserAgent.ToString());   // this unofficial build's name
         Assert.False(server.Last.Headers.Contains("Cookie"));   // a plain GET: no cookie, nothing about the user
         Assert.True(File.Exists(Path.Combine(_dir, "keys", "collection.json")));
 

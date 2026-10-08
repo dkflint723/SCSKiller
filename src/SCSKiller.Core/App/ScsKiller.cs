@@ -315,6 +315,25 @@ public sealed partial class ScsKiller : IScsKiller
     /// an estimate. Replaceable for tests.</summary>
     public TimeSpan StallAfter { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>fork.json: this unofficial build's own opt-in to sharing, kept out of settings.json (which official builds
+    /// share and rewrite); off until the user ticks it. Turned on, a sharing pass starts as for the setting.</summary>
+    public ForkSettings ForkSettings
+    {
+        get => _fork ??= Store.LoadFork();
+        set
+        {
+            var shareOn = value.ShareRecordings && !ForkSettings.ShareRecordings;
+            Store.SaveFork(value);
+            _fork = value;
+            if (shareOn) StartSharing();
+        }
+    }
+    ForkSettings? _fork;
+
+    /// <summary>Uploads may go: Settings.ShareRecordings and this unofficial build's own opt-in (<see cref="ForkSettings"/>).
+    /// The app's <see cref="Sharing"/> reads it at each call.</summary>
+    public bool SharesRecordings => Settings.ShareRecordings && ForkSettings.ShareRecordings;
+
     public Settings Settings
     {
         get => _settings ??= Store.LoadSettings() is var s && s.RecordingLimitMB == 256 && !s.RecordingLimitChosen
@@ -2350,6 +2369,7 @@ public sealed partial class ScsKiller : IScsKiller
         var dir = Path.GetDirectoryName(added.ExePath)!;
         try
         {
+            if (File.Exists(Path.Combine(Store.GameDir(added.Id), ForkBuild.MinimalMarker))) MarkMinimal(owner);   // its launches without NVAPI state come along
             if (File.Exists(from))
                 using (Recordings.Lock(to))
                 using (Recordings.Lock(from))
@@ -2730,11 +2750,11 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>Queues a background pass that shares these games' recordings (default: every game) when
-    /// Settings.ShareRecordings is on: after a scan, a recording import, a game's exit, a compile's index, and the setting turned on.
-    /// Never blocks the caller; failures are only logged.</summary>
+    /// Settings.ShareRecordings and this unofficial build's own opt-in are on (<see cref="SharesRecordings"/>): after a scan, a
+    /// recording import, a game's exit, a compile's index, and either turned on. Never blocks the caller; failures are only logged.</summary>
     public void StartSharing(IEnumerable<Game>? games = null)
     {
-        if (Sharing is not { } sharing || !Settings.ShareRecordings) return;
+        if (Sharing is not { } sharing || !SharesRecordings) return;
         var list = (games ?? Games.Select(s => s.Game)).ToList();
         lock (_scanLock) SharingPass = SharingPass.ContinueWith(_ => Share(sharing, list), TaskScheduler.Default).Unwrap();
     }
@@ -2742,7 +2762,8 @@ public sealed partial class ScsKiller : IScsKiller
     async Task Share(Sharing sharing, List<Game> games)
     {
         sharing.Waiting = null;
-        await SharePacks(sharing);
+        if (ForkPacksBlock() is { } packsWhy) ForkSkipped("upscaler packs", packsWhy);
+        else await SharePacks(sharing);
         string? logged = null;   // a back-off's problem once per pass, not once per game
         foreach (var g in games)
             try
@@ -2754,6 +2775,7 @@ public sealed partial class ScsKiller : IScsKiller
                 // ponytail: a store without build ids (no store build key) doesn't share; add when the server takes a key without one
                 if (g.Version is not { } v || rec.IndexGameVersion != v || rec.IndexContentHash is not { Length: 40 } hash) continue;
                 if (BlockingMod(g) != null) continue;   // read now: the state may not be published yet
+                if (ForkUploadBlock(g, rec) is { } forkWhy) { ForkSkipped(g.Name, forkWhy); continue; }
                 if (await sharing.ShareAsync(Store.GameDir(g.Id), hash, () => UploadMetaOf(g, v, hash),
                         () => Dlls(g).Where(d => d.Packable).SelectMany(d => Middleware.Scan(d.Path).Containers.Keys), LayerMadeNow) is { } got)
                 {
@@ -2765,6 +2787,69 @@ public sealed partial class ScsKiller : IScsKiller
             catch (Exception e) { Log?.Report($"{g.Name}: sharing the recording failed: {e.Message}"); }
         if (sharing.Waiting is { } wait) Log?.Report($"sharing waits for a recording to be whole (a game still recording?): {wait}");
         RequestCollect();
+    }
+
+    /// <summary>Why this unofficial build doesn't share the game's recording (<see cref="ForkBuild.UploadBlock"/>), read now; null = it may.</summary>
+    string? ForkUploadBlock(Game g, GameRecord rec)
+    {
+        EngineInfo? engine;   // the scan's cache, as the upload's engine string; before the first scan, the one it saved
+        lock (_scanLock) engine = _scan?.GetValueOrDefault(g.Id)?.Engine;
+        engine ??= Games.FirstOrDefault(s => s.Game.Id == g.Id)?.Engine ?? Store.LoadScan().GetValueOrDefault(g.Id)?.Engine;
+        var reshade = GameFiles.DetectAntiCheat(g, quick: true) == AntiCheat.None ? ReShade.Detect(g) : null;
+        return ForkBuild.UploadBlock(engine, RecordedMinimal(g, rec), rec.RecordAlongsideMod, reshade);
+    }
+
+    /// <summary>Why no upscaler pack is shared from this unofficial build: they are filled from every game's recording, so any
+    /// game whose own recording isn't shared for what it may hold keeps them all back; and none before the games are known.</summary>
+    string? ForkPacksBlock()
+    {
+        var games = Games;
+        if (games.Count == 0) return "the games aren't read yet";
+        foreach (var s in games)
+        {
+            var rec = Store.LoadGame(s.Game.Id);
+            var reshade = s.AntiCheat == AntiCheat.None ? ReShade.Detect(s.Game) : null;
+            if (ForkBuild.ContentBlock(RecordedMinimal(s.Game, rec), rec.RecordAlongsideMod, reshade) is { } why) return $"{s.Game.Name}: {why}";
+        }
+        return null;
+    }
+
+    /// <summary>A launch without NVAPI state may be in the game's recording: one was imported since it was last cleared
+    /// (<see cref="ForkBuild.MinimalMarker"/>), the recorder's ini turns NVAPI off now, or the crash guard stepped it down.</summary>
+    bool RecordedMinimal(Game g, GameRecord rec) =>
+        File.Exists(Path.Combine(Store.GameDir(g.Id), ForkBuild.MinimalMarker)) || rec.RecorderLevel is RecorderLevel.Minimal or RecorderLevel.Off
+        || RecorderNvapiOff(Path.GetDirectoryName(g.ExePath)!);
+
+    /// <summary>The recorder in <paramref name="exeDir"/> runs without its NVAPI hooks (<see cref="ForkBuild.NvapiOff"/>).</summary>
+    static bool RecorderNvapiOff(string exeDir)
+    {
+        string? ini;
+        try { ini = File.ReadAllText(Path.Combine(exeDir, "scskiller.ini")); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { ini = null; }
+        return ForkBuild.NvapiOff(ini, Environment.GetEnvironmentVariable("SCSKILLER_NVAPI"));
+    }
+
+    /// <summary>Notes that a launch without NVAPI state went into the game's recording (<see cref="ForkBuild.MinimalMarker"/>).</summary>
+    void MarkMinimal(Game g)
+    {
+        var marker = Path.Combine(Store.GameDir(g.Id), ForkBuild.MinimalMarker);
+        try
+        {
+            if (File.Exists(marker)) return;
+            Directory.CreateDirectory(Store.GameDir(g.Id));
+            File.WriteAllText(marker, "A launch recorded without NVAPI state (scskiller.ini nvapi=0) is in recording.db: this unofficial build doesn't share it until the recording is cleared.\r\n");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't note a launch recorded without NVAPI state: {e.Message}"); }
+    }
+
+    readonly HashSet<string> _forkSkips = [];
+
+    /// <summary>Logs once per run what this unofficial build doesn't share, and why.</summary>
+    void ForkSkipped(string what, string why)
+    {
+        lock (_forkSkips)
+            if (!_forkSkips.Add($"{what}|{why}")) return;
+        Log?.Report($"{what}: not shared from this unofficial build: {why}");
     }
 
     /// <summary>What a layer made, from every recording here (one may have a record without its 'W', another with it) and the
@@ -2813,6 +2898,8 @@ public sealed partial class ScsKiller : IScsKiller
         var store = RecordingPath(g.Id);
         var all = Path.Combine(Store.GameDir(g.Id), "recording.all.db");
         var keysFile = Path.Combine(inbox.DirectoryName!, Recordings.KeysFile);
+        // the inbox a recorder without NVAPI hooks wrote: this unofficial build doesn't share the recording until it is cleared
+        if (inbox is { Exists: true, Length: > 0 } && RecorderNvapiOff(inbox.DirectoryName!)) MarkMinimal(g);
         // keys naming more than the index's shaders with no recording (the data folder was deleted): the recorder would skip blobs nothing has
         if (!File.Exists(store) && File.Exists(keysFile) && Length(keysFile) != 8 + Math.Max(0, Length(Path.Combine(Store.GameDir(g.Id), Sharing.ShippedFile)) - 20)) WriteKeys(g, rec, ct);
         var legacy = Legacy(g.Id);
@@ -3296,6 +3383,7 @@ public sealed partial class ScsKiller : IScsKiller
             var files = RecordingFiles(s.Game).Select(f => new FileInfo(f)).Where(f => f.Exists).ToList();
             if (files.Count == 0) return false;
             AppCacheFiles.DeleteAll(files);   // all or none; throws "files in use by <process>"
+            File.Delete(Path.Combine(Store.GameDir(gameId), ForkBuild.MinimalMarker));   // went with the recording
             var rec = Store.LoadGame(gameId);
             // a changed recording: the next compile re-plans, and the scan's planner check runs again without it
             (rec.RecordingImportedAt, rec.RecordingInbox, rec.RecordingIndexHash, rec.RecordedLong) = (DateTimeOffset.Now, null, null, false);

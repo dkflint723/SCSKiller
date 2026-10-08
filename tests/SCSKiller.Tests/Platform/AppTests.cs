@@ -10808,7 +10808,8 @@ public partial class AppTests : IDisposable
         Assert.Empty(fake.Log);   // the command line sets none
 
         k.Settings = k.Settings with { ShareRecordings = true };
-        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.Settings.ShareRecordings, routes);
+        k.ForkSettings = new(ShareRecordings: true);   // this unofficial build's own opt-in
+        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.SharesRecordings, routes);
         k.ActiveCheck = new ActiveCheck(Path.Combine(_root, "data"), () => k.Settings.ActiveCheck, k.Vendor.Vendor, AppVersion.Parse("1.2.3"), routes);
         for (var i = 0; i < 2; i++)
         {
@@ -10851,7 +10852,8 @@ public partial class AppTests : IDisposable
             return CommunityTests.Ours(HttpStatusCode.Accepted, """{"upload_id":"u","records":1,"new_records":1}"""u8.ToArray());
         });
         var k = Killer(new FakeReader(Unreal, hash), game: game);
-        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.Settings.ShareRecordings,
+        k.ForkSettings = new(ShareRecordings: true);   // this unofficial build's own opt-in
+        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.SharesRecordings,
             new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
 
         await k.ScanAsync(default);   // imports the recording; sharing is off
@@ -10884,7 +10886,8 @@ public partial class AppTests : IDisposable
             : CommunityTests.Ours(HttpStatusCode.Accepted, """{"upload_id":"u","records":1,"new_records":1}"""u8.ToArray()));
         int uploads() { lock (fake.Log) return fake.Log.Count(l => l.Contains("/v1/upload")); }
         var k = Killer(new FakeReader(Unreal, hash), game: game);
-        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.Settings.ShareRecordings,
+        k.ForkSettings = new(ShareRecordings: true);   // this unofficial build's own opt-in
+        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.SharesRecordings,
             new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
         await k.ScanAsync(default);
         k.Enqueue(game.Id);
@@ -10905,6 +10908,11 @@ public partial class AppTests : IDisposable
         File.Delete(addon);
         await k.ScanAsync(default);
         await k.SharingPass;
+        Assert.Equal(0, uploads());   // this unofficial build: ReShade a copy can't reproduce (not beside the exe) still holds it back
+
+        File.Delete(Path.Combine(_game.InstallDir, "dxgi.dll"));
+        await k.ScanAsync(default);
+        await k.SharingPass;
         Assert.Equal(1, uploads());
     }
 
@@ -10920,7 +10928,8 @@ public partial class AppTests : IDisposable
         int uploads() { lock (fake.Log) return fake.Log.Count(l => l.Contains("/v1/upload")); }
         var k = Killer(new FakeReader(Unreal, hash), game: game);
         k.Settings = k.Settings with { ShareRecordings = true };
-        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.Settings.ShareRecordings,
+        k.ForkSettings = new(ShareRecordings: true);   // this unofficial build's own opt-in
+        k.Sharing = new Sharing(Path.Combine(_root, "data"), () => k.SharesRecordings,
             new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
         await k.ScanAsync(default);   // imports the recording: no index of this build yet
         await k.SharingPass;
@@ -11485,6 +11494,7 @@ public partial class AppTests : IDisposable
         var rec = store.LoadGame(game.Id);
         (rec.IndexContentHash, rec.IndexGameVersion) = (hash, "42");
         store.SaveGame(game.Id, rec);
+        SeedScan(store, game);
         var other = store.GameDir("test:other");
         Directory.CreateDirectory(other);
         using (var f = File.Create(Path.Combine(other, "recording.db"))) PsoDb.Write(f, 'W', [.. Convert.FromHexString(made.Key), .. new byte[20]]);
@@ -11498,7 +11508,8 @@ public partial class AppTests : IDisposable
         });
         var k = Killer(new FakeReader(Unreal, hash), game: game);
         k.Settings = k.Settings with { ShareRecordings = true };
-        k.Sharing = new Sharing(data, () => k.Settings.ShareRecordings, new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
+        k.ForkSettings = new(ShareRecordings: true);   // this unofficial build's own opt-in
+        k.Sharing = new Sharing(data, () => k.SharesRecordings, new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
         Assert.Empty(k.Games);
         k.StartSharing([game]);
         await k.SharingPass;
@@ -11525,6 +11536,7 @@ public partial class AppTests : IDisposable
         var rec = store.LoadGame(game.Id);
         (rec.IndexContentHash, rec.IndexGameVersion) = (hash, "42");
         store.SaveGame(game.Id, rec);
+        SeedScan(store, game);
         var otherExe = Path.Combine(_root, "other-game", "Other.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(otherExe)!);
         var other = store.LoadGame("test:other");
@@ -11546,7 +11558,8 @@ public partial class AppTests : IDisposable
         var log = new List<string>();
         k.Log = new Progress<string>(l => { lock (log) log.Add(l); });
         k.Settings = k.Settings with { ShareRecordings = true };
-        k.Sharing = new Sharing(data, () => k.Settings.ShareRecordings, new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
+        k.ForkSettings = new(ShareRecordings: true);   // this unofficial build's own opt-in
+        k.Sharing = new Sharing(data, () => k.SharesRecordings, new RouteFailover(fake, [new("https://api.test.com/"), new("https://api.test.io/")]));
         k.StartSharing([game]);
         await k.SharingPass;
         Assert.Empty(bodies);

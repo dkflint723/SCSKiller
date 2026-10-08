@@ -50,6 +50,19 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **REFramework** (RE Engine games): removing the recorder also deletes REFramework's copy of it, and nothing else there.
   Only one copy of the recorder ever records in a game. The game page notes REFramework.
 
+### Sharing (this unofficial build)
+
+- **Nothing is shared from this build unless you tick "Share from this unofficial build too"** in Settings, under
+  "Share anonymous shader hashes": both must be on. It's kept in its own file (`fork.json`), so official builds of
+  SCSKiller on the same PC keep their own choice. Downloads of shared hashes are unchanged.
+- Even then, a game's recording isn't shared when only this build can read the game (FINAL FANTASY XVI), when a launch
+  was recorded without NVAPI state (pipelines only) since the recording was last cleared, when it's recorded alongside a
+  mod's `d3d12.dll`, or when ReShade is installed where SCSKiller can't reproduce it. The log says why, once per run.
+  Upscaler packs wait while any game is held back for what its recording holds.
+- This build registers its own anonymous upload device (`upload-fork.dat`), never an official build's.
+- This build names itself to every server it talks to: `SCSKiller-fork-dkflint723/<version> (unofficial; Windows …)`,
+  and its version is `0.0.0-dkfork.N` (a packaged build's `X.Y.Z-dkfork.N`), never an official one.
+
 ### Games
 
 - A recording of FINAL FANTASY XVI no longer makes every pipeline of its plan count as new after a compile; pipelines

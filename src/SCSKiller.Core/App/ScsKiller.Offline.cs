@@ -348,6 +348,7 @@ public sealed partial class ScsKiller
             try
             {
                 var recording = Path.Combine(store.GameDir(id), "recording.db");
+                if (RecorderNvapiOff(dir)) File.WriteAllText(Path.Combine(store.GameDir(id), ForkBuild.MinimalMarker), "A launch recorded without NVAPI state is in recording.db.\r\n");
                 using (Recordings.Lock(recording)) Recordings.Merge(recording, inbox.FullName, null);
                 rec.RecordingImportedAt = DateTimeOffset.Now;
             }

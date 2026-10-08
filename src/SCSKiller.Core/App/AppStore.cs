@@ -279,6 +279,10 @@ public sealed class AppStore(string dataDir)
     public Settings LoadSettings() => Load<Settings>(Path.Combine(DataDir, "settings.json")) ?? DefaultSettings;
     public void SaveSettings(Settings s) => Save(Path.Combine(DataDir, "settings.json"), s);
 
+    /// <summary>fork.json (<see cref="ForkSettings"/>): this unofficial build's own, which an official build never reads or rewrites.</summary>
+    public ForkSettings LoadFork() => Load<ForkSettings>(Path.Combine(DataDir, ForkBuild.SettingsFile)) ?? new();
+    public void SaveFork(ForkSettings s) => Save(Path.Combine(DataDir, ForkBuild.SettingsFile), s);
+
     /// <summary>Null until a window was saved, or when the file can't be read or has no size: the default size then.</summary>
     public WindowBounds? LoadWindow()
     {

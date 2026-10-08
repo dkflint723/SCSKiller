@@ -15,11 +15,12 @@ public sealed class RouteFailover : DelegatingHandler
     /// <summary>Process-wide, so every client shares which route works (sign-in, community DB, beta updates).</summary>
     public static readonly RouteFailover Default = new();
 
-    /// <summary>The User-Agent's product; the CLI sets SCSKiller-CLI before its first request.</summary>
-    public static string Product { get; set; } = "SCSKiller";
+    /// <summary>The User-Agent's product: this unofficial build's (<see cref="ForkBuild.Product"/>); the CLI adds -CLI before its first request.</summary>
+    public static string Product { get; set; } = ForkBuild.Product;
 
-    /// <summary>The User-Agent of every request through this handler, any host. Names the build, nothing that identifies the user or the PC.</summary>
-    public static string UserAgent(string product, AppVersion v, int windowsBuild) => $"{product}/{v} ({v.Channel}; Windows {windowsBuild})";
+    /// <summary>The User-Agent of every request through this handler, any host. Names the build, nothing that identifies the user or the PC;
+    /// "unofficial" in place of the channel, so the official servers never take it for one of their builds.</summary>
+    public static string UserAgent(string product, AppVersion v, int windowsBuild) => $"{product}/{v} ({ForkBuild.Comment}; Windows {windowsBuild})";
 
     public IReadOnlyList<Uri> Routes { get; }
     public Uri Primary => Routes[0];

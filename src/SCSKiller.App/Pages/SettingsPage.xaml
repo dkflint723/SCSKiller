@@ -197,6 +197,14 @@
                                     <TextBlock Text="Helps everyone get better coverage. Your recordings' upscaler pipelines (FSR, XeSS) also reach everyone with the same upscaler version. Never linked to your Patreon account; nothing else about your games leaves your PC. Free for everyone." Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
+                            <CheckBox IsChecked="{x:Bind Vm.ForkShareRecordings, Mode=TwoWay}" IsEnabled="{x:Bind Vm.CanForkShare}" Margin="28,0,0,0"
+                                      AutomationProperties.Name="Share from this unofficial build too">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
+                                    <TextBlock Text="This is an unofficial build; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. Games read only by this build, recorded without NVAPI state, recorded alongside a mod's d3d12.dll or with ReShade SCSKiller can't reproduce are never shared."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
                         </StackPanel>
                     </Border>
 

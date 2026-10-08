@@ -136,7 +136,9 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
     opens the files of the same exe) is looked up again. A third line, `failed`, marks a file written since only failures
     are remembered: an older one is dropped when the game's stored key doesn't open its files. `aes.key` and `aes.lookup`
     are replaced whole under their `.lock`;
-  - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package.
+  - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package;
+  - `recorded-minimal.fork`: this unofficial build only: a launch recorded without NVAPI state went into `recording.db`
+    since it was last cleared (see "Unofficial build" below).
 - `packs\<vendor>\<dll name>-<dll sha1>.pack`: middleware packs (see [Middleware packs](#middleware-packs)).
 - `keys\collection.json`: the community's Unreal key list as last fetched (names and keys, when it was fetched and the
   last try; see [Engine readers](#engine-readers)).
@@ -147,8 +149,26 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
 - `community\`: the community database's manifest and downloaded recordings; `community\packs\<gpu vendor>\<vendor>\`
   the shared middleware packs downloaded for this PC's GPU vendor.
 - `recorders.log`: what recorder installs and removals did.
+- `fork.json` and `upload-fork.dat`: this unofficial build only (below).
 
 Nothing is written into a game folder except the recorder (see [Recorder](#recorder)).
+
+**Unofficial build.** This fork shares the data folder with official builds, so it keeps what is its own in files they
+never read (`ForkBuild`): `fork.json` (`ForkSettings`) holds its own opt-in to sharing, off by default, which uploads need
+besides `Settings.ShareRecordings` (`ScsKiller.SharesRecordings`: the app's `Sharing` and `StartSharing` both check it), and
+`upload-fork.dat` its own anonymous upload device, never an official build's `upload.dat`. Its version is
+`0.0.0-dkfork.N` (`Directory.Build.props`; `build/publish.ps1` takes only `X.Y.Z-dkfork.N`), an unknown label and so the
+internal channel: no update or active check. Every request through `RouteFailover` sends
+`SCSKiller-fork-dkflint723/<version> (unofficial; Windows <build>)` (the CLI's product ends `-CLI`); the key list's GET
+names the fork too. Even opted in, a game's recording is shared only when an official build could have made it
+(`ForkBuild.UploadBlock`, read at each pass, logged once a run): its engine is known (the scan's, else the saved
+`scan.json`) and from an official reader's family, without `EngineInfo.ShipsRootSignatures` (never the PSPC reader); no
+launch without NVAPI state is in it (`recorded-minimal.fork`, written when an inbox is imported or merged while the
+folder's `scskiller.ini` or `SCSKILLER_NVAPI` turns NVAPI off, deleted by Clear recording; also while the ini says so now
+or the crash guard has stepped the recorder down); it isn't recorded alongside a mod's d3d12.dll; and no ReShade the warm
+can't reproduce (`ReShadeInstall.Copyable` false: an .asi, ReShade64.dll, a renamed file, not beside the exe) sits above
+the recorder. Upscaler packs, filled from every recording, go only once the games are known and none is held back for
+what its recording holds (`ForkBuild.ContentBlock`). The upload's contents are upstream's, unchanged.
 
 ## Driver caches
 

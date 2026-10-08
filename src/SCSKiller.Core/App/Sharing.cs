@@ -44,7 +44,7 @@ public sealed class Sharing
     /// <param name="enabled">Settings.ShareRecordings, read at each call: off means no work and no request at all</param>
     public Sharing(string dataDir, Func<bool> enabled, RouteFailover? routes = null, TimeProvider? clock = null)
     {
-        file = Path.Combine(dataDir, "upload.dat");
+        file = Path.Combine(dataDir, ForkBuild.UploadDevice);   // this unofficial build's own device: never an official build's upload.dat
         this.enabled = enabled;
         this.routes = routes ?? RouteFailover.Default;
         http = new HttpClient(this.routes, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(60) };

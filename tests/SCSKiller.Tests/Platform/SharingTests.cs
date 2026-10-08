@@ -108,8 +108,9 @@ public class SharingTests : IDisposable
         Assert.Equal(("steam:480@1", Content, "amdxcffx64.dll"), (meta.GetProperty("store_build_key").GetString(), meta.GetProperty("content_hash").GetString(),
             meta.GetProperty("middleware")[0].GetProperty("name").GetString()));
 
-        // the upload device lives in its own file, DPAPI-protected, apart from auth.dat
-        var dat = File.ReadAllBytes(Path.Combine(_dir, "upload.dat"));
+        // the upload device lives in its own file, DPAPI-protected, apart from auth.dat and an official build's upload.dat
+        var dat = File.ReadAllBytes(Path.Combine(_dir, "upload-fork.dat"));
+        Assert.False(File.Exists(Path.Combine(_dir, "upload.dat")));
         Assert.Equal(-1, dat.AsSpan().IndexOf(Encoding.UTF8.GetBytes(Anon)));
         Assert.Contains(Anon, Encoding.UTF8.GetString(Dpapi.Unprotect(dat)));
         Assert.Equal("dev1", Make().DeviceId);
@@ -423,6 +424,25 @@ public class SharingTests : IDisposable
         Assert.Null(Sharing.Shared(GameDir));
     }
 
+    /// <summary>An official build's anonymous device (upload.dat, the same data folder) is never this unofficial build's:
+    /// it registers its own in upload-fork.dat, and Reset forgets only that.</summary>
+    [Fact]
+    public async Task The_fork_never_uploads_with_an_official_builds_device()
+    {
+        var official = Path.Combine(_dir, "upload.dat");
+        File.WriteAllBytes(official, Dpapi.Protect(JsonSerializer.SerializeToUtf8Bytes(new { Token = "sd1_official-device", Id = "official" })));
+        var before = File.ReadAllBytes(official);
+        Record(LocalRecording());
+
+        Assert.NotNull(await Make().ShareAsync(GameDir, Content, Meta));
+
+        Assert.Equal(["POST https://api.test.com/v1/devices", $"POST https://api.test.com/v1/upload Bearer {Anon}"], _sent.Select(s => s.Line));
+        Assert.Equal("dev1", Make().DeviceId);
+        Make().Reset();
+        Assert.False(File.Exists(Path.Combine(_dir, ForkBuild.UploadDevice)));
+        Assert.Equal(before, File.ReadAllBytes(official));   // untouched
+    }
+
     [Fact]
     public async Task Sharing_off_sends_nothing_and_registers_nothing()
     {
@@ -430,7 +450,7 @@ public class SharingTests : IDisposable
         Record(LocalRecording());
         Assert.Null(await Make().ShareAsync(GameDir, Content, Meta));
         Assert.Empty(_sent);
-        Assert.False(File.Exists(Path.Combine(_dir, "upload.dat")));
+        Assert.False(File.Exists(Path.Combine(_dir, "upload-fork.dat")));
         Assert.Null(Sharing.Shared(GameDir));
     }
 
