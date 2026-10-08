@@ -60,6 +60,12 @@ session), plans which pipelines to create, and replays them in a separate proces
    With `Settings.ScanAtStart` off, a scan the user didn't ask for shows the last list (`games.json`, kept by every scan
    and every game's exit) and lists again only Steam's, the Xbox app's and the user's games, reading one again only
    when it isn't the one listed; another SCSKiller build or GPU driver scans as usual.
+   A scan lists each game as soon as it's read (`GameChanged` per game), the games not read yet as they were shown
+   before (at a start, `games.json` of the same build and driver), and says which game it reads (`ScanProgress`,
+   "Reading Cyberpunk 2077 (3 of 15)"); a read over 10 s is logged with its time. A game whose read takes longer than
+   `ReadBudget` (2 minutes) is listed as not supported ("still reading its files") with its recorder left as it is,
+   and the scan goes on; the read continues in the background and its state replaces that one when it ends, unless a
+   later evaluation is in place.
 2. **Index.** An `IEngineReader` per engine family detects the engine and lists every shader the build ships (stage,
    SHA-1, signatures, root signature if embedded), grouped in shader maps that say which shaders can be drawn together
    (an exact pipeline's map may name its root signature).

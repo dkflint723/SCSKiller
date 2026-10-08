@@ -433,14 +433,18 @@ public sealed class LibraryVm : Bindable
     }
 
 
-    // The scan message waits 300 ms so a cached scan doesn't flicker it; the list fills when the scan ends.
+    // The scan message waits 300 ms so a cached scan doesn't flicker it; the list fills as each game is read.
     bool slowScan, forced;
+    string? scanStep;
+    /// <summary>The scan's step (ScsKiller.ScanProgress): "Reading Cyberpunk 2077 (3 of 15)".</summary>
+    public string? ScanStep { get => scanStep; set { scanStep = value; Changed(); } }
     public bool ScanEmpty => slowScan && Games.Count == 0;
     public bool ScanBusy => slowScan && Games.Count > 0;
-    public string ScanEmptyNote => "Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. "
+    public string ScanEmptyNote => (ScanStep is { } step ? step + ". " : "")
+        + "Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. "
         + "The first scan reads every game's files, so it can take a minute.";
-    public string ScanBusyNote => forced ? "Re-reading every game's engine and anti-cheat; the list updates when it's done."
-        : "The list updates when it's done.";
+    public string ScanBusyNote => (ScanStep is { } step ? step + ". " : "") + (forced ? "Re-reading every game's engine and anti-cheat; each game updates once it's read."
+        : "Each game updates once it's read.");
 
     public async void Rescan(bool force = true, bool userRequested = false)
     {

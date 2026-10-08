@@ -203,7 +203,7 @@
                             Spacing="12" MaxWidth="460" Padding="24">
                     <ProgressRing Width="32" Height="32" IsActive="{x:Bind Vm.ScanEmpty, Mode=OneWay}" />
                     <TextBlock Text="Looking for your games…" Style="{StaticResource Section}" HorizontalAlignment="Center" />
-                    <TextBlock Text="{x:Bind Vm.ScanEmptyNote}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
+                    <TextBlock Text="{x:Bind Vm.ScanEmptyNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
                 </StackPanel>
 
                 <ListView x:Name="List" Grid.Row="3" ItemsSource="{Binding Source={StaticResource GroupedGames}}" SelectionMode="None" IsItemClickEnabled="True"
