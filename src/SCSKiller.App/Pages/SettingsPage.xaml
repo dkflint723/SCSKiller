@@ -201,7 +201,7 @@
                                       AutomationProperties.Name="Share from this unofficial build too">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
-                                    <TextBlock Text="This is an unofficial build; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. Games read only by this build, recorded without NVAPI state, recorded alongside a mod's d3d12.dll or with ReShade SCSKiller can't reproduce are never shared."
+                                    <TextBlock Text="This is an unofficial build; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. Games read only by this build are never shared; a recording made without NVAPI state, alongside a mod's d3d12.dll or under ReShade SCSKiller can't reproduce isn't shared until it is cleared, and an upscaler pack filled from one never is."
                                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>

@@ -55,10 +55,17 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - **Nothing is shared from this build unless you tick "Share from this unofficial build too"** in Settings, under
   "Share anonymous shader hashes": both must be on. It's kept in its own file (`fork.json`), so official builds of
   SCSKiller on the same PC keep their own choice. Downloads of shared hashes are unchanged.
-- Even then, a game's recording isn't shared when only this build can read the game (FINAL FANTASY XVI), when a launch
-  was recorded without NVAPI state (pipelines only) since the recording was last cleared, when it's recorded alongside a
-  mod's `d3d12.dll`, or when ReShade is installed where SCSKiller can't reproduce it. The log says why, once per run.
-  Upscaler packs wait while any game is held back for what its recording holds.
+- Even then, a game's recording isn't shared when only this build can read the game (FINAL FANTASY XVI), or when a
+  launch was recorded without NVAPI state (pipelines only), alongside a mod's `d3d12.dll` or under ReShade SCSKiller
+  can't reproduce since the recording was last cleared: only clearing it shares it again, whatever is turned off or
+  removed since. Nor while the recorder runs that way now (frame generation, the crash guard, a chained mod, such a
+  ReShade): clearing doesn't help then. The log says which, once per run.
+- An upscaler pack filled from such a recording is never shared from this build, even once the recording is cleared;
+  the other packs are.
+- Recordings made before this release are looked at once: one whose recorder's log or record shows such a launch, or
+  whose game has frame generation, a crash guard level, a chained mod or such a ReShade, is held back until it is
+  cleared. A launch nothing tells of any more (a level reset since, a log deleted with the recorder) isn't caught: clear
+  a recording you made at "pipelines only" before sharing from this build.
 - This build registers its own anonymous upload device (`upload-fork.dat`), never an official build's.
 - This build names itself to every server it talks to: `SCSKiller-fork-dkflint723/<version> (unofficial; Windows …)`,
   and its version is `0.0.0-dkfork.N` (a packaged build's `X.Y.Z-dkfork.N`), never an official one.

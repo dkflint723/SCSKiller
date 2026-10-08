@@ -125,9 +125,11 @@ public sealed record ChainedDll(string Name, string Sha256);
 /// <summary>An offline session SCSKiller started without EasyAntiCheat: the game, its exe and install, the names in the exe's
 /// folder before anything was added (what its cleanup checks the folder against), every name in it the session may create
 /// (temp names included; none existed before it; each leaves once confirmed gone), and the process it started (its pid and
-/// creation FILETIME; 0 = none yet), and whether it was resumed (else it is still suspended, or was).</summary>
+/// creation FILETIME; 0 = none yet), and whether it was resumed (else it is still suspended, or was). <paramref name="NvapiOff"/>:
+/// its ini (or SCSKILLER_NVAPI) took the recorder's NVAPI hooks off, kept for its cleanup, which deletes the ini before it
+/// merges the recording (<see cref="ForkBuild.MinimalMarker"/>).</summary>
 public sealed record OfflineSession(string GameId, string Exe, string InstallDir, string[] Original, string[] Created, int Pid = 0, long Started = 0,
-    bool Resumed = false);
+    bool Resumed = false, bool NvapiOff = false);
 
 public sealed record KeptList(string Build, string? Driver, List<GameState> Games);
 

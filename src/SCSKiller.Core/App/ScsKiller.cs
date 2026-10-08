@@ -2369,7 +2369,9 @@ public sealed partial class ScsKiller : IScsKiller
         var dir = Path.GetDirectoryName(added.ExePath)!;
         try
         {
-            if (File.Exists(Path.Combine(Store.GameDir(added.Id), ForkBuild.MinimalMarker))) MarkMinimal(owner);   // its launches without NVAPI state come along
+            MarkInbox(added, Store.LoadGame(added.Id));   // before its recorder (the ini, a chain) comes out: its inbox is merged below
+            foreach (var marker in new[] { ForkBuild.MinimalMarker, ForkBuild.LayeredMarker })   // what this unofficial build doesn't share comes along
+                if (Marked(added.Id, marker)) Mark(Store, owner.Id, marker);
             if (File.Exists(from))
                 using (Recordings.Lock(to))
                 using (Recordings.Lock(from))
@@ -2762,8 +2764,9 @@ public sealed partial class ScsKiller : IScsKiller
     async Task Share(Sharing sharing, List<Game> games)
     {
         sharing.Waiting = null;
-        if (ForkPacksBlock() is { } packsWhy) ForkSkipped("upscaler packs", packsWhy);
-        else await SharePacks(sharing);
+        try { MarkOldRecordings(games); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"nothing shared: the recordings from before this build's markers couldn't be marked: {e.Message}"); return; }
+        if (ForkPacksHeld() is { } held) await SharePacks(sharing, held);
         string? logged = null;   // a back-off's problem once per pass, not once per game
         foreach (var g in games)
             try
@@ -2796,29 +2799,80 @@ public sealed partial class ScsKiller : IScsKiller
         lock (_scanLock) engine = _scan?.GetValueOrDefault(g.Id)?.Engine;
         engine ??= Games.FirstOrDefault(s => s.Game.Id == g.Id)?.Engine ?? Store.LoadScan().GetValueOrDefault(g.Id)?.Engine;
         var reshade = GameFiles.DetectAntiCheat(g, quick: true) == AntiCheat.None ? ReShade.Detect(g) : null;
-        return ForkBuild.UploadBlock(engine, RecordedMinimal(g, rec), rec.RecordAlongsideMod, reshade);
+        return ForkBuild.UploadBlock(engine, new(Marked(g.Id, ForkBuild.MinimalMarker), Marked(g.Id, ForkBuild.LayeredMarker), NvapiOffNow(g, rec),
+            rec.RecorderChained != null, reshade));
     }
 
-    /// <summary>Why no upscaler pack is shared from this unofficial build: they are filled from every game's recording, so any
-    /// game whose own recording isn't shared for what it may hold keeps them all back; and none before the games are known.</summary>
-    string? ForkPacksBlock()
+    /// <summary>The upscaler packs this unofficial build holds back (<see cref="HoldPacks"/>), paths under the packs folder:
+    /// one filled from a recording it doesn't share for what that holds stays held, whatever is cleared since. Null = none is
+    /// shared: the games aren't known yet, or the list can't be read or written. Every game folder of the data folder counts,
+    /// also a game no longer listed: its recording may have filled a pack.</summary>
+    HashSet<string>? ForkPacksHeld()
     {
-        var games = Games;
-        if (games.Count == 0) return "the games aren't read yet";
-        foreach (var s in games)
+        if (Games.Count == 0) { ForkSkipped("upscaler packs", "the games aren't read yet"); return null; }
+        try
         {
-            var rec = Store.LoadGame(s.Game.Id);
-            var reshade = s.AntiCheat == AntiCheat.None ? ReShade.Detect(s.Game) : null;
-            if (ForkBuild.ContentBlock(RecordedMinimal(s.Game, rec), rec.RecordAlongsideMod, reshade) is { } why) return $"{s.Game.Name}: {why}";
+            var dirs = Path.Combine(Store.DataDir, "games");
+            // a folder's id may not be the game's ("steam_1" for "steam:1"): it names the same folder, which HoldPacks compares
+            var held = HoldPacks([.. (Directory.Exists(dirs) ? Directory.GetDirectories(dirs) : []).Select(d => AppStore.GameId(Path.GetFileName(d))).Where(Recorded)]);
+            if (held.Count > 0)
+                ForkSkipped("upscaler packs", $"{string.Join(", ", held.Order(StringComparer.OrdinalIgnoreCase))}: filled from a recording this build doesn't share (a launch without NVAPI state, alongside a mod or under ReShade): never shared from it");
+            return held;
         }
-        return null;
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ForkSkipped("upscaler packs", $"the list of the packs it holds back can't be read or written: {e.Message}");
+            return null;
+        }
     }
 
-    /// <summary>A launch without NVAPI state may be in the game's recording: one was imported since it was last cleared
-    /// (<see cref="ForkBuild.MinimalMarker"/>), the recorder's ini turns NVAPI off now, or the crash guard stepped it down.</summary>
-    bool RecordedMinimal(Game g, GameRecord rec) =>
-        File.Exists(Path.Combine(Store.GameDir(g.Id), ForkBuild.MinimalMarker)) || rec.RecorderLevel is RecorderLevel.Minimal or RecorderLevel.Off
-        || RecorderNvapiOff(Path.GetDirectoryName(g.ExePath)!);
+    /// <summary>The packs of this PC (<see cref="Planner.Packs"/>) held back for good (<see cref="ForkBuild.PacksHeld"/>): those
+    /// listed that are still there, and every pack a game of <paramref name="marked"/> filled (a pack's source with its game
+    /// folder, or a header that can't be read), listed now. Throws when the list can't be read or written.</summary>
+    HashSet<string> HoldPacks(IReadOnlyCollection<string> marked)
+    {
+        var held = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if ((_planner as Planner)?.Packs is not { } packs) return held;
+        var dirs = marked.Select(Store.GameDir).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool Filled(string source)
+        {
+            try { return dirs.Contains(Store.GameDir(source)); }
+            catch (ArgumentException) { return false; }   // not a game's ("community")
+        }
+        var file = Path.Combine(Store.DataDir, ForkBuild.PacksHeld);
+        lock (_forkMarks)
+        {
+            HashSet<string> listed;
+            try { listed = new(File.ReadAllLines(file), StringComparer.OrdinalIgnoreCase); }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { listed = new(StringComparer.OrdinalIgnoreCase); }
+            foreach (var path in Directory.Exists(packs.Dir) ? Directory.EnumerateFiles(packs.Dir, "*.pack", SearchOption.AllDirectories) : [])
+            {
+                var name = Path.GetRelativePath(packs.Dir, path);
+                if (listed.Contains(name) || dirs.Count > 0 && MiddlewarePack.ReadHeader(path)?.Sources.Any(Filled) != false) held.Add(name);
+            }
+            if (held.SetEquals(listed)) return held;
+            if (held.Count == 0) File.Delete(file);   // what it listed is gone: a pack written there again is a new one
+            else
+            {
+                var tmp = $"{file}.{Guid.NewGuid():N}.tmp";
+                File.WriteAllLines(tmp, held.Order(StringComparer.OrdinalIgnoreCase));
+                File.Move(tmp, file, true);
+            }
+        }
+        return held;
+    }
+
+    readonly object _forkMarks = new();
+
+    /// <summary>The game's recording holds a launch this build doesn't share (<see cref="ForkBuild.MinimalMarker"/>,
+    /// <see cref="ForkBuild.LayeredMarker"/>).</summary>
+    bool Recorded(string gameId) => Marked(gameId, ForkBuild.MinimalMarker) || Marked(gameId, ForkBuild.LayeredMarker);
+
+    bool Marked(string gameId, string marker) => File.Exists(Path.Combine(Store.GameDir(gameId), marker));
+
+    /// <summary>The game's recorder runs without its NVAPI hooks now: its ini says so, or the crash guard stepped it down.</summary>
+    static bool NvapiOffNow(Game g, GameRecord rec) =>
+        rec.RecorderLevel is RecorderLevel.Minimal or RecorderLevel.Off || RecorderNvapiOff(Path.GetDirectoryName(g.ExePath)!);
 
     /// <summary>The recorder in <paramref name="exeDir"/> runs without its NVAPI hooks (<see cref="ForkBuild.NvapiOff"/>).</summary>
     static bool RecorderNvapiOff(string exeDir)
@@ -2829,17 +2883,89 @@ public sealed partial class ScsKiller : IScsKiller
         return ForkBuild.NvapiOff(ini, Environment.GetEnvironmentVariable("SCSKILLER_NVAPI"));
     }
 
-    /// <summary>Notes that a launch without NVAPI state went into the game's recording (<see cref="ForkBuild.MinimalMarker"/>).</summary>
-    void MarkMinimal(Game g)
+    /// <summary>Before the game folder's inbox (scskiller.db) is merged, while the recorder's ini and chain are still there:
+    /// what its launches were recorded under (<see cref="MarkInbox(AppStore, string, string, GameRecord, bool)"/>).</summary>
+    void MarkInbox(Game g, GameRecord rec)
     {
-        var marker = Path.Combine(Store.GameDir(g.Id), ForkBuild.MinimalMarker);
+        try { MarkInbox(Store, g.Id, Path.GetDirectoryName(g.ExePath)!, rec, GameFiles.DetectAntiCheat(g, quick: true) == AntiCheat.None && ReShade.Detect(g) is { Copyable: false }); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't note what its recording was recorded under: {e.Message}"); }
+    }
+
+    /// <summary>An inbox in <paramref name="dir"/> not imported as it is (<see cref="GameRecord.RecordingInbox"/>) was recorded
+    /// by the recorder there now: without NVAPI hooks when its ini says so (<see cref="ForkBuild.MinimalMarker"/>), alongside a
+    /// chained mod or under ReShade a copy can't reproduce (<paramref name="reshade"/>; <see cref="ForkBuild.LayeredMarker"/>).
+    /// An inbox written before the crash guard stepped its recorder down was imported as it is first (an evaluation imports,
+    /// then judges): only one whose import failed then counts as the lower level's. Throws when a marker can't be written.</summary>
+    static void MarkInbox(AppStore store, string id, string dir, GameRecord rec, bool reshade)
+    {
+        var inbox = new FileInfo(Path.Combine(dir, "scskiller.db"));
+        if (inbox is not { Exists: true, Length: > 0 } || $"{inbox.Length}:{inbox.LastWriteTimeUtc.Ticks}" == rec.RecordingInbox) return;
+        if (RecorderNvapiOff(dir)) Mark(store, id, ForkBuild.MinimalMarker);
+        if (rec.RecorderChained != null || reshade) Mark(store, id, ForkBuild.LayeredMarker);
+    }
+
+    /// <summary>Notes that a launch this unofficial build doesn't share went into the game's recording; only a clear takes it away.</summary>
+    static void Mark(AppStore store, string id, string marker)
+    {
+        var path = Path.Combine(store.GameDir(id), marker);
+        if (File.Exists(path)) return;
+        Directory.CreateDirectory(store.GameDir(id));
+        File.WriteAllText(path, (marker == ForkBuild.MinimalMarker ? "A launch recorded without NVAPI state (scskiller.ini nvapi=0)"
+                                    : "A launch recorded alongside a mod's d3d12.dll, or under ReShade SCSKiller can't reproduce,")
+                                + " is in recording.db: this unofficial build doesn't share it until the recording is cleared.\r\n");
+    }
+
+    /// <summary>Once (<see cref="ForkSettings.OldRecordingsMarked"/>, set only once the games are known): a recording made before
+    /// this build kept its markers is marked by what is still known of it. Without NVAPI state: a crash guard level or note in
+    /// its record, an ini without NVAPI hooks, frame generation's files (it starts at Minimal beside them), or a "hooks off"
+    /// line for NVAPI in the recorder's log (the game folder's, or the last offline session's). Layered: a chained mod or the
+    /// choice to record alongside one, ReShade a copy can't reproduce, or a chained launch in that log. What none of them
+    /// tells (a level reset, a log deleted with the recorder's data files) isn't known.</summary>
+    void MarkOldRecordings(IEnumerable<Game> games)
+    {
+        lock (_forkMarks)
+        {
+            if (ForkSettings.OldRecordingsMarked) return;
+            var known = Games;
+            foreach (var g in known.Select(s => s.Game).Concat(games).DistinctBy(g => g.Id))
+                try
+                {
+                    if (!File.Exists(RecordingPath(g.Id))) continue;
+                    var rec = Store.LoadGame(g.Id);
+                    var dir = Path.GetDirectoryName(g.ExePath)!;
+                    var clean = (known.FirstOrDefault(s => s.Game.Id == g.Id)?.AntiCheat ?? GameFiles.DetectAntiCheat(g, quick: true)) == AntiCheat.None;
+                    var (offLogged, chainLogged) = (false, false);
+                    foreach (var log in new[] { Path.Combine(dir, "scskiller.log"), Path.Combine(OfflineSessionDir(Store, g.Id), "scskiller.log") }.Where(File.Exists))
+                        foreach (var line in File.ReadLines(log))
+                            (offLogged, chainLogged) = (offLogged || ForkBuild.LoggedNvapiOff(line), chainLogged || ForkBuild.LoggedChained(line));
+                    if (offLogged || rec.RecorderLevel != null || rec.RecorderLevelReason != null || NvapiOffNow(g, rec) || clean && FrameGen.Detect(dir, g.InstallDir) != null)
+                        Mark(Store, g.Id, ForkBuild.MinimalMarker);
+                    if (chainLogged || rec.RecorderChained != null || rec.RecordAlongsideMod || clean && ReShade.Detect(g) is { Copyable: false })
+                        Mark(Store, g.Id, ForkBuild.LayeredMarker);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    Mark(Store, g.Id, ForkBuild.MinimalMarker);   // not known: as if it holds one (throws when even this can't be written)
+                    Log?.Report($"{g.Name}: its recording from before this build's markers couldn't be looked at ({e.Message}): held back until it is cleared");
+                }
+            if (known.Count > 0) ForkSettings = ForkSettings with { OldRecordingsMarked = true };
+        }
+    }
+
+    /// <summary>A cleared recording's markers go with it, once the packs it filled are held for good (<see cref="HoldPacks"/>);
+    /// when they can't be, the markers stay, and the next clear tries again.</summary>
+    void ForkCleared(Game g)
+    {
+        if (!Recorded(g.Id)) return;
         try
         {
-            if (File.Exists(marker)) return;
-            Directory.CreateDirectory(Store.GameDir(g.Id));
-            File.WriteAllText(marker, "A launch recorded without NVAPI state (scskiller.ini nvapi=0) is in recording.db: this unofficial build doesn't share it until the recording is cleared.\r\n");
+            HoldPacks([g.Id]);
+            foreach (var marker in new[] { ForkBuild.MinimalMarker, ForkBuild.LayeredMarker }) File.Delete(Path.Combine(Store.GameDir(g.Id), marker));
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: couldn't note a launch recorded without NVAPI state: {e.Message}"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log?.Report($"{g.Name}: this unofficial build still doesn't share it ({e.Message}): clear the recording again");
+        }
     }
 
     readonly HashSet<string> _forkSkips = [];
@@ -2861,8 +2987,9 @@ public sealed partial class ScsKiller : IScsKiller
         return keys;
     }
 
-    /// <summary>This PC's packs of the shared vendors that gained records since they were last uploaded (<see cref="Sharing.SharePacksAsync"/>).</summary>
-    async Task SharePacks(Sharing sharing)
+    /// <summary>This PC's packs of the shared vendors that gained records since they were last uploaded (<see cref="Sharing.SharePacksAsync"/>),
+    /// but those this unofficial build holds back (<paramref name="held"/>, paths under the packs folder).</summary>
+    async Task SharePacks(Sharing sharing, IReadOnlySet<string> held)
     {
         if ((_planner as Planner)?.Packs is not { } packs || PackGpu(Vendor.Vendor) is not { } gpu) return;
         try
@@ -2870,7 +2997,8 @@ public sealed partial class ScsKiller : IScsKiller
             // every recording's, also one whose import hasn't run since (a crash between its merge and the packs' exclusion)
             try { packs.Exclude(Recordings.LayerMadeOnDisk(Store.DataDir)); }
             catch (Recordings.IncompleteLayerList e) { sharing.Waiting = e.Message; return; }
-            foreach (var (dll, n) in await sharing.SharePacksAsync(packs.Dir, gpu, AppVersion.Current.ToString(), LayerMadeNow))
+            foreach (var (dll, n) in await sharing.SharePacksAsync(packs.Dir, gpu, AppVersion.Current.ToString(), LayerMadeNow,
+                         held: path => held.Contains(Path.GetRelativePath(packs.Dir, path))))
                 Log?.Report($"{dll}: upscaler pack shared ({n:N0} pipelines)");
             if (sharing.Problem is { } why) Log?.Report($"sharing upscaler packs: {why}");
         }
@@ -2898,8 +3026,8 @@ public sealed partial class ScsKiller : IScsKiller
         var store = RecordingPath(g.Id);
         var all = Path.Combine(Store.GameDir(g.Id), "recording.all.db");
         var keysFile = Path.Combine(inbox.DirectoryName!, Recordings.KeysFile);
-        // the inbox a recorder without NVAPI hooks wrote: this unofficial build doesn't share the recording until it is cleared
-        if (inbox is { Exists: true, Length: > 0 } && RecorderNvapiOff(inbox.DirectoryName!)) MarkMinimal(g);
+        // an inbox a recorder without NVAPI hooks, or under a layer, wrote: this unofficial build doesn't share the recording until it is cleared
+        MarkInbox(g, rec);
         // keys naming more than the index's shaders with no recording (the data folder was deleted): the recorder would skip blobs nothing has
         if (!File.Exists(store) && File.Exists(keysFile) && Length(keysFile) != 8 + Math.Max(0, Length(Path.Combine(Store.GameDir(g.Id), Sharing.ShippedFile)) - 20)) WriteKeys(g, rec, ct);
         var legacy = Legacy(g.Id);
@@ -3382,8 +3510,10 @@ public sealed partial class ScsKiller : IScsKiller
                 throw new InvalidOperationException($"{s.Game.Name} is running");
             var files = RecordingFiles(s.Game).Select(f => new FileInfo(f)).Where(f => f.Exists).ToList();
             if (files.Count == 0) return false;
+            try { MarkOldRecordings([s.Game]); }   // one from before this build's markers: what it held is noted before it goes
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{s.Game.Name}: {e.Message}"); }
             AppCacheFiles.DeleteAll(files);   // all or none; throws "files in use by <process>"
-            File.Delete(Path.Combine(Store.GameDir(gameId), ForkBuild.MinimalMarker));   // went with the recording
+            ForkCleared(s.Game);
             var rec = Store.LoadGame(gameId);
             // a changed recording: the next compile re-plans, and the scan's planner check runs again without it
             (rec.RecordingImportedAt, rec.RecordingInbox, rec.RecordingIndexHash, rec.RecordedLong) = (DateTimeOffset.Now, null, null, false);
@@ -4163,6 +4293,7 @@ public sealed partial class ScsKiller : IScsKiller
     bool Uninstall(Game g, GameRecord rec)
     {
         var dir = Path.GetDirectoryName(g.ExePath)!;
+        MarkInbox(g, rec);   // while its ini and chain are there: the removal takes them, then the inbox is merged
         RemoveRecorder(dir, rec, g.Name, RecorderLog);
         ImportRecording(g, rec, migrate: true);
         Store.SaveGame(g.Id, rec);
@@ -4276,6 +4407,9 @@ public sealed partial class ScsKiller : IScsKiller
                 else if (Runs()) Log($"{exe} is running: recorder left in {dir}");
                 else
                 {
+                    // while its ini and chain are there (no ReShade read here): merged below. Never keeps the recorder in
+                    try { MarkInbox(store, id, dir, rec, false); }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"{dir}: couldn't note what its recording was recorded under: {e.Message}"); }
                     RemoveRecorder(dir, rec, dir, Log);
                     store.SaveGame(id, rec, Left());
                     removed.Add((id, dir, Runs));

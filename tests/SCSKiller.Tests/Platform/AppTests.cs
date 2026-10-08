@@ -10913,6 +10913,11 @@ public partial class AppTests : IDisposable
         File.Delete(Path.Combine(_game.InstallDir, "dxgi.dll"));
         await k.ScanAsync(default);
         await k.SharingPass;
+        Assert.Equal(0, uploads());   // this unofficial build: the recording imported under it holds what it changed until it is cleared
+        Assert.True(k.ClearRecording(game.Id));
+        File.WriteAllBytes(Path.Combine(_exeDir, "scskiller.db"), SharingTests.LocalRecording(new string('c', 40)));
+        await k.ScanAsync(default);
+        await k.SharingPass;
         Assert.Equal(1, uploads());
     }
 

@@ -23,7 +23,8 @@ public sealed record SharedRecording(string Stamp, DateTimeOffset? At = null, st
 
 /// <summary>The write side of the community database: a game's own
 /// recording (recording.db, never the merge with the community's), stripped to its hash-only form, posted with an anonymous
-/// upload device's token. That device is registered once (POST /v1/devices) and kept DPAPI-protected in upload.dat, apart
+/// upload device's token. That device is registered once (POST /v1/devices) and kept DPAPI-protected in upload-fork.dat
+/// (<see cref="ForkBuild.UploadDevice"/>: this unofficial build's own, never an official build's upload.dat), apart
 /// from the Patreon sign-in (auth.dat), which this class never sees. Works signed out. Quiet: failures
 /// land in <see cref="Problem"/> and back off; nothing throws but cancellation.</summary>
 public sealed class Sharing
@@ -180,9 +181,10 @@ public sealed class Sharing
     /// that changed since its last upload, under its pack key for that vendor, when sharing is on. Stamped per pack file in
     /// packs-shared.json, so a pack goes again only once it gains records. Returns the DLL name and PSO count of each upload.</summary>
     /// <paramref name="layered"/>: the records a layer made (<see cref="MiddlewarePacks.LayerMade"/>), read again before each
-    /// pack's payload and never in an upload whatever a pack holds; one that can't be read ends the pass.
+    /// pack's payload and never in an upload whatever a pack holds; one that can't be read ends the pass. <paramref name="held"/>:
+    /// a pack file never uploaded, nor stamped (this unofficial build's, <see cref="ForkBuild.PacksHeld"/>).
     public async Task<List<(string Dll, int Psos)>> SharePacksAsync(string packsDir, string gpu, string appVersion, Func<IReadOnlySet<string>>? layered = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, Func<string, bool>? held = null)
     {
         var done = new List<(string, int)>();
         if (!enabled() || clock.GetUtcNow() < backoffUntil) return done;
@@ -194,6 +196,7 @@ public sealed class Sharing
         {
             foreach (var path in files)
             {
+                if (held?.Invoke(path) == true) continue;
                 var fi = new FileInfo(path);
                 var stamp = $"{fi.Length}:{fi.LastWriteTimeUtc.Ticks}|{gpu}";
                 var name = Path.GetFileName(path);
@@ -352,7 +355,7 @@ public sealed class Sharing
         _ => TimeSpan.FromMinutes(5),
     });
 
-    // upload.dat: {"Token":"sd1_...","Id":"..."} under DPAPI, like auth.dat but its own file: never the Patreon device
+    // upload-fork.dat (ForkBuild.UploadDevice): {"Token":"sd1_...","Id":"..."} under DPAPI, like auth.dat but its own file: never the Patreon device
     sealed record Device(string Token, string Id);
 
     Device? Load() => Dpapi.Load<Device>(file);   // null (another user's or damaged): register again

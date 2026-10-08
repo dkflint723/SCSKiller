@@ -161,7 +161,7 @@ public sealed partial class ScsKiller
             // the journal first: whatever happens after, every cleanup knows what to take out
             rec.RecorderFiles = new() { ["d3d12.dll"] = ProxySha()!, ["scskiller.ini"] = Hex(ini) };
             if (addAppId) rec.RecorderFiles[SteamAppIdFile] = Hex(entry!.AppId);
-            var session = new OfflineSession(gameId, g.ExePath, g.InstallDir, original, created);
+            var session = new OfflineSession(gameId, g.ExePath, g.InstallDir, original, created, NvapiOff: ForkBuild.NvapiOff(ini, Environment.GetEnvironmentVariable("SCSKILLER_NVAPI")));
             (rec.RecorderExe, rec.RecorderInstallDir, rec.OfflineSession) = (g.ExePath, g.InstallDir, session);
             Store.SaveGame(gameId, rec);
             OfflineLeft()[gameId] = true;
@@ -348,7 +348,7 @@ public sealed partial class ScsKiller
             try
             {
                 var recording = Path.Combine(store.GameDir(id), "recording.db");
-                if (RecorderNvapiOff(dir)) File.WriteAllText(Path.Combine(store.GameDir(id), ForkBuild.MinimalMarker), "A launch recorded without NVAPI state is in recording.db.\r\n");
+                if (s.NvapiOff || RecorderNvapiOff(dir)) Mark(store, id, ForkBuild.MinimalMarker);   // the session's ini went first: what it said was kept
                 using (Recordings.Lock(recording)) Recordings.Merge(recording, inbox.FullName, null);
                 rec.RecordingImportedAt = DateTimeOffset.Now;
             }
