@@ -323,7 +323,7 @@ public sealed class KeyCollection
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.UserAgent.ParseAdd($"SCSKiller/{AppVersion.Current}");
+            request.Headers.UserAgent.ParseAdd($"{ForkBuild.Product}/{AppVersion.Current}");   // this unofficial build's name
             request.Headers.Accept.ParseAdd("text/html");
             using var r = await http.SendAsync(request, cts.Token);   // buffered: over MaxResponseContentBufferSize is an HttpRequestException
             if (r.RequestMessage?.RequestUri is { } final && final.Scheme != Uri.UriSchemeHttps) return (null, "the key list's address redirected away from https");

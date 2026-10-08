@@ -16,7 +16,8 @@ The CLI can't sit next to the app: scskiller.exe and SCSKiller.exe are the same 
 established, THIRD-PARTY-NOTICES.md); UnrealReader and the FromSoft reader download it through CUE4Parse on first use.
 
 -Version X.Y.Z[-pre] (a leading v is dropped) stamps every exe and DLL with the same ProductVersion (SignPath).
-Without it: the v* tag at HEAD if there is exactly one, else the dev default 0.0.0-internal.0+<sha>.
+Without it: the v* tag at HEAD if there is exactly one, else the dev default 0.0.0-dkfork.0+<sha>. This unofficial
+fork's versions carry its label (X.Y.Z-dkfork.N): never an official release's version.
 #>
 param([string]$Configuration = "Release", [switch]$NoZip, [switch]$NoOodle, [string]$Version)
 $ErrorActionPreference = "Stop"
@@ -30,12 +31,13 @@ if (-not $Version) {
 }
 $Version = $Version -replace '^v', ''
 if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$') { throw "not a SemVer X.Y.Z[-pre]: $Version" }
+if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+-dkfork(\.[0-9A-Za-z-]+)*$') { throw "an unofficial fork build's version is X.Y.Z-dkfork.N, never an official one: $Version" }
 # a versioned build verifies the server's signed lists: the rules key must be pinned (tools/release-sign keygen --for rules)
 if ($Version -and (Get-Content (Join-Path $repo "src\SCSKiller.Core\App\ContentTrust.cs") -Raw) -notmatch '\["rules-a"\]\s*=\s*"[A-Za-z0-9+/]{43}="') {
     throw "ContentTrust.RulesKeys has no rules-a key: pin the public key from tools/release-sign keygen --for rules before a release"
 }
 $versionArgs = if ($Version) { @("-p:Version=$Version", "-p:IncludeSourceRevisionInInformationalVersion=false") } else { @() }
-Write-Host "version: $(if ($Version) { $Version } else { '0.0.0-internal.0 (dev)' })"
+Write-Host "version: $(if ($Version) { $Version } else { '0.0.0-dkfork.0 (dev)' })"
 $dotnet = Join-Path $env:LOCALAPPDATA "Microsoft\dotnet\dotnet.exe"   # .NET 10 SDK is per user; PATH may have an older one
 if (-not (Test-Path $dotnet)) { $dotnet = "dotnet" }
 $dist = Join-Path $repo "dist"
@@ -52,7 +54,7 @@ if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 
 # 1. native tools from the proxy CMake build
 $build = Join-Path $repo "proxy\build"
-$scskVersion = if ($Version) { $Version } else { "0.0.0-internal.0" }   # every time: a cached version must not carry over
+$scskVersion = if ($Version) { $Version } else { "0.0.0-dkfork.0" }   # every time: a cached version must not carry over
 Run cmake @("-S", (Join-Path $repo "proxy"), "-B", $build, "-A", "x64", "-DSCSK_VERSION=$scskVersion")
 Run cmake @("--build", $build, "--config", "Release")
 New-Item -ItemType Directory -Force $native | Out-Null

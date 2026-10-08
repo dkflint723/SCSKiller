@@ -136,7 +136,10 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
     opens the files of the same exe) is looked up again. A third line, `failed`, marks a file written since only failures
     are remembered: an older one is dropped when the game's stored key doesn't open its files. `aes.key` and `aes.lookup`
     are replaced whole under their `.lock`;
-  - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package.
+  - `inline.idx`: for an Unreal game without shader libraries, where each shader sits in its package;
+  - `recorded-minimal.fork`, `recorded-layered.fork`: this unofficial build only: a launch recorded without NVAPI state,
+    or alongside a mod's d3d12.dll or under ReShade a copy can't reproduce, went into `recording.db` since it was last
+    cleared (see "Unofficial build" below).
 - `packs\<vendor>\<dll name>-<dll sha1>.pack`: middleware packs (see [Middleware packs](#middleware-packs)).
 - `keys\collection.json`: the community's Unreal key list as last fetched (names and keys, when it was fetched and the
   last try; see [Engine readers](#engine-readers)).
@@ -147,8 +150,37 @@ Everything lives under `%LOCALAPPDATA%\SCSKiller\`:
 - `community\`: the community database's manifest and downloaded recordings; `community\packs\<gpu vendor>\<vendor>\`
   the shared middleware packs downloaded for this PC's GPU vendor.
 - `recorders.log`: what recorder installs and removals did.
+- `fork.json`, `upload-fork.dat` and `packs-held.fork`: this unofficial build only (below).
 
 Nothing is written into a game folder except the recorder (see [Recorder](#recorder)).
+
+**Unofficial build.** This fork shares the data folder with official builds, so it keeps what is its own in files they
+never read (`ForkBuild`): `fork.json` (`ForkSettings`) holds its own opt-in to sharing, off by default, which uploads need
+besides `Settings.ShareRecordings` (`ScsKiller.SharesRecordings`: the app's `Sharing` and `StartSharing` both check it), and
+`upload-fork.dat` its own anonymous upload device, never an official build's `upload.dat`. Its version is
+`0.0.0-dkfork.N` (`Directory.Build.props`; `build/publish.ps1` takes only `X.Y.Z-dkfork.N`), an unknown label and so the
+internal channel: no update or active check. Every request through `RouteFailover` sends
+`SCSKiller-fork-dkflint723/<version> (unofficial; Windows <build>)` (the CLI's product ends `-CLI`); the key list's GET
+names the fork too. Even opted in, a game's recording is shared only when an official build could have made it
+(`ForkBuild.UploadBlock`, read at each pass, logged once a run): its engine is known (the scan's, else the saved
+`scan.json`) and from an official reader's family, without `EngineInfo.ShipsRootSignatures` (never the PSPC reader); and
+`ForkBuild.ContentBlock` finds nothing (`ForkContent`). First what the recording holds, kept by markers only Clear recording
+deletes: `recorded-minimal.fork`, a launch without NVAPI state, and `recorded-layered.fork`, one alongside a chained mod's
+d3d12.dll or under ReShade the warm can't reproduce (`ReShadeInstall.Copyable` false: an .asi, ReShade64.dll, a renamed
+file, not beside the exe). `MarkInbox` writes them before an inbox not imported as it is (`GameRecord.RecordingInbox`) is
+merged, from the recorder there then: its `scskiller.ini` or `SCSKILLER_NVAPI`, `GameRecord.RecorderChained`, ReShade.
+Every merge path reads them before the recorder goes: an import, the recorder's removal (before `RemoveRecorder` takes the
+ini and the chain), the uninstall hook, a game added by hand that a store took over (its markers move along), and an
+offline session, whose cleanup deletes the ini first and so keeps what it said in `OfflineSession.NvapiOff`. Then how the
+recorder runs now, which no clear changes (logged without the advice to clear): the ini or the crash guard without NVAPI
+hooks, a chained mod, such a ReShade. Recordings from before the markers are looked at once, after the games are known
+(`ForkSettings.OldRecordingsMarked`): a "hooks off" NVAPI or chained line in the recorder's `scskiller.log` (the game
+folder's or the last offline session's), a crash guard level or note, an ini without NVAPI hooks, frame generation's files,
+a chained mod or the choice of one, or such a ReShade marks them; what none of these tells is not known. Upscaler packs,
+filled from every recording and kept past a clear, go only once the games are known and never one listed in
+`packs-held.fork` (`ScsKiller.HoldPacks`): every pack whose `PackHeader.Sources` names a game with a marker (or whose header
+can't be read) is listed at each pass and before Clear recording deletes the markers, and leaves the list only once its
+file is gone (`Sharing.SharePacksAsync` skips it, unstamped). The upload's contents are upstream's, unchanged.
 
 ## Driver caches
 

@@ -48,7 +48,7 @@ const string Usage = """
     """;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;  // game names carry ™ and ®
-RouteFailover.Product = "SCSKiller-CLI";
+RouteFailover.Product = ForkBuild.Product + "-CLI";
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help") { Console.WriteLine(Usage); return 0; }
 // The app is handing over to Update.exe, which replaces this folder: start nothing (the scheduled task runs again later).
 // Packaging never reads the app's data folder.
