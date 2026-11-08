@@ -197,7 +197,7 @@ public partial class App : Application
         real.DbMissing = () => Account.DbMissing;
         real.Sharing = new Sharing(AppStore.DefaultDir, () => real.SharesRecordings, keyring: keyring, log: real.Log);   // anonymous: never the Patreon sign-in; this unofficial build's own opt-in too
         _ = Task.Run(async () => { await Account.SweepAsync(); if (real.Sharing is { } s) await s.SweepAsync(); });   // keyring items an earlier run couldn't delete
-        real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics);   // no token at all
+        real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics && real.ForkSettings.ShareRecordings);   // no token at all; this unofficial build's own opt-in too
         real.ContentRoutes = RouteFailover.Default;
         real.ChannelAccess = async () => (await Account.GetAccessTokenAsync(), Account.Status?.Ent);
         // the entitlements first: the update check picks the channel they allow

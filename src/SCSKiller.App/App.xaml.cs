@@ -101,7 +101,7 @@ public partial class App : Application
             real.DbEntitled = () => Account.DbEntitled;
             real.DbMissing = () => Account.DbMissing;
             real.Sharing = new Sharing(AppStore.DefaultDir, () => real.SharesRecordings);   // anonymous: never the Patreon sign-in; this unofficial build's own opt-in too
-            real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics);   // no token at all
+            real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics && real.ForkSettings.ShareRecordings);   // no token at all; this unofficial build's own opt-in too
             real.ContentRoutes = RouteFailover.Default;
             real.ChannelAccess = async () => (await Account.GetAccessTokenAsync(), Account.Status?.Ent);
             // the entitlements first: the update check picks the channel they allow

@@ -320,7 +320,7 @@
                                       AutomationProperties.Name="Share from this unofficial build too">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
-                                    <TextBlock Text="Kindling is an unofficial fork of SCSKiller; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. A game isn't shared while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it. Compatibility reports from this build need this box too."
+                                    <TextBlock Text="Kindling is an unofficial fork of SCSKiller; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. A game isn't shared while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it. Compatibility reports need both boxes too; problem reports and diagnostics, which also go to SCSKiller's server, need this box."
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
