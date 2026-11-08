@@ -4553,7 +4553,7 @@ public sealed partial class ScsKiller : IScsKiller
     async Task<KeyLookup> LookUpKey(Game g, string? savedPage, bool userRequested, bool online, CancellationToken ct, IProgress<string>? stage = null)
     {
         // the checks open the game's containers: off the caller's thread
-        if (await Task.Run(() => KeyCheck(g), ct) is not { } check) return new(KeyLookupOutcome.NoWorkingKey, $"{g.Name} isn't an Unreal game SCSKiller can read.");
+        if (await Task.Run(() => KeyCheck(g), ct) is not { } check) return new(KeyLookupOutcome.NoWorkingKey, $"{g.Name} isn't an Unreal game {ForkBuild.Name} can read.");
         using (check) return await Task.Run(() => KeyList.LookUpAsync(KeyCollection.DefaultUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online, stage), ct);
     }
 
@@ -4610,7 +4610,7 @@ public sealed partial class ScsKiller : IScsKiller
             catch (Exception e) when (e is not OperationCanceledException) { r = new(KeyLookupOutcome.NoWorkingKey, $"Trying the keys failed: {e.Message}"); }
             if (r == null)
             {
-                results.Add(new(g.Id, g.Name, KeyImportOutcome.Skipped, "Skipped: SCSKiller can't read this game's files."));
+                results.Add(new(g.Id, g.Name, KeyImportOutcome.Skipped, $"Skipped: {ForkBuild.Name} can't read this game's files."));
                 continue;
             }
             Log?.Report($"{g.Name}: AES key import: {r.Message}");

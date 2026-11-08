@@ -45,7 +45,7 @@ public sealed class KeyCollection
         MaxImportedUnnamed = MaxUnnamed;   // every unnamed key kept is tried: a key check opens the containers once (KeyTrial)
     public static readonly TimeSpan AutoEvery = TimeSpan.FromHours(24), UserEvery = TimeSpan.FromHours(1), UserRetry = TimeSpan.FromMinutes(5),
         Timeout = TimeSpan.FromSeconds(20);
-    public const string SecurityCheck = "the forum answered with a browser security check, which SCSKiller doesn't take: click Open list in browser, save the page (Ctrl+S), then Load saved page… (on the command line: --page <file>)";
+    public const string SecurityCheck = "the forum answered with a browser security check, which Kindling doesn't take: click Open list in browser, save the page (Ctrl+S), then Load saved page… (on the command line: --page <file>)";
 
     sealed record CacheFile(string Url, DateTimeOffset? FetchedAt, DateTimeOffset? TriedAt, int Failures, KeyEntry[] Entries);
     sealed record ImportedFile(KeyEntry[] Entries, string[]? Unnamed = null);   // Unnamed: none in a file from before they were kept
@@ -195,7 +195,7 @@ public sealed class KeyCollection
             // after failures: 1 h, 2 h, 4 h ... up to a day between tries; the user's button after 5 minutes
             var wait = failures == 0 ? TimeSpan.Zero : userRequested ? UserRetry : TimeSpan.FromHours(Math.Min(24, Math.Pow(2, Math.Min(failures, 6) - 1)));
             if (!due || !Due(c?.TriedAt, wait))
-                return c is { Entries.Length: > 0 } ? (c.Entries, null) : (null, "the last try failed; SCSKiller tries again later");
+                return c is { Entries.Length: > 0 } ? (c.Entries, null) : (null, $"the last try failed; {ForkBuild.Name} tries again later");
             c = (c ?? new(url, null, null, 0, [])) with { TriedAt = now };
             Save(c);   // another process sees the attempt
             var (got, problem) = await FetchAsync(url, ct);
