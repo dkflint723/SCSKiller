@@ -357,7 +357,8 @@ and a Steam Vulkan game's recorder is registered by its manifest's copy in `$XDG
 **Kindling (unofficial build).** This fork shares the data folder with official builds, so what is its own sits in files
 they never read (`ForkBuild`): `fork.json` (`ForkSettings`) holds its own opt-in to sharing, off by default, which every
 upload needs besides `Settings.ShareRecordings` (`ScsKiller.SharesRecordings`: `StartSharing` and the app's `Sharing`
-check it; a compatibility report, sent on the user's click, needs the opt-in alone), and `upload-fork.dat` its own
+check it; a compatibility report, sent on the user's click, needs both and the per-game block below; a problem report
+and diagnostics, which also go to SCSKiller's server, need the opt-in), and `upload-fork.dat` its own
 anonymous upload device, never an official build's `upload.dat`. `settings.json` keeps the keys this build doesn't know
 (`Settings.Unknown`, `[JsonExtensionData]`), so switching builds loses no setting. Its version is `0.0.0-dkfork.N`
 (`Directory.Build.props`; `build/publish.ps1` takes only `X.Y.Z-dkfork.N`), an unknown label and so the internal channel:
@@ -376,7 +377,8 @@ Linux menu entry's Name and Comment, and the assemblies' Product (`Directory.Bui
 program finds by name keeps SCSKiller's, so this build and an official one keep working side by side: file and assembly
 names, namespaces, the data folder, the AUMID and toast activator, Velopack's packId, the desktop file's id and
 StartupWMClass, keyring and mutex names, the tray's window class, the recorder's markers and version resource, the CLI's
-`scskiller` command and `--version` output, and `UpdateFeeds`. Core's other messages (statuses, game notes, errors, the log)
+`scskiller` command and `--version` output, and `UpdateFeeds`. Core messages that name the running app (the updater's,
+the sign-in page's, the cache page's, the key lookup's) say Kindling; the rest (statuses, game notes, errors, the log)
 still say SCSKiller, to keep upstream merges clean; links to scskiller.com, SCSKiller's server, news, Patreon and
 official recordings are SCSKiller's and say so.
 

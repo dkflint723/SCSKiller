@@ -19,7 +19,7 @@
 #
 # --version X.Y.Z[-pre] (a leading v is dropped) stamps both executables, as build/publish.ps1 -Version does, and must be
 # the native files' ProductVersion. Without it: the v* tag at HEAD if there is exactly one, else the dev default
-# 0.0.0-internal.0.
+# 0.0.0-dkfork.0 (this unofficial fork's label, as Directory.Build.props).
 set -euo pipefail
 
 usage() {
@@ -73,13 +73,15 @@ version=${version#v}
 version_args=()
 if [[ -n $version ]]; then
     [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || die "not a SemVer X.Y.Z[-pre]: $version"
+    # as build/publish.ps1: this unofficial fork's versions carry its label, never an official release's version
+    [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+-dkfork(\.[0-9A-Za-z-]+)*$ ]] || die "an unofficial fork build's version is X.Y.Z-dkfork.N, never an official one: $version"
     # a versioned build verifies the server's signed lists: the rules key must be pinned
     grep -Eq '\["rules-a"\][[:space:]]*=[[:space:]]*"[A-Za-z0-9+/]{43}="' "$repo/src/SCSKiller.Core/App/ContentTrust.cs" ||
         die "ContentTrust.RulesKeys has no rules-a key: pin it before a release"
     version_args=("-p:Version=$version" "-p:IncludeSourceRevisionInInformationalVersion=false")
 fi
-stamp=${version:-0.0.0-internal.0}
-echo "version: ${version:-0.0.0-internal.0 (dev)}"
+stamp=${version:-0.0.0-dkfork.0}
+echo "version: ${version:-0.0.0-dkfork.0 (dev)}"
 
 dotnet=${DOTNET:-dotnet}
 if ! command -v "$dotnet" >/dev/null && [[ -x $HOME/.dotnet/dotnet ]]; then dotnet=$HOME/.dotnet/dotnet; fi   # a per-user SDK

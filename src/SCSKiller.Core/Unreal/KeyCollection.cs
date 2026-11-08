@@ -377,7 +377,9 @@ public sealed class KeyCollection
 
     static bool Valid(KeyEntry? e) => e is { Name: not null, Key: { Length: 64 } k } && k.All(char.IsAsciiHexDigit) && ContentFile.Text(e.Name, MaxName) && e.Name.Any(char.IsLetterOrDigit);
 
-    static readonly Regex Scripts = new(@"<(script|style)\b.*?</\1\s*>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    // NonBacktracking: the page is untrusted, and a backtracking lazy match is quadratic on many unclosed <script tags
+    static readonly Regex Scripts = new(@"<script\b.*?</script\s*>|<style\b.*?</style\s*>",
+        RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
     static readonly Regex Breaks = new(@"<(?:br|hr|/?(?:li|div|p|ol|ul|dl|dd|dt|tr|td|th|table|pre|blockquote|h[1-6]))\b[^>]*>", RegexOptions.IgnoreCase);
     static readonly Regex Tags = new("<[^>]*>");
     // "Wardogs (playtest)&nbsp; 0x9846...": the key ends the line; any 64-digit run inside the name rejects it below
