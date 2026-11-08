@@ -159,6 +159,13 @@ public sealed class SettingsVm : Bindable
     public bool? MaximumPlans { get => S.MaximumPlans; set { if (value is { } v && v != S.MaximumPlans) Save(S with { MaximumPlans = v }); } }
     public bool? CompileRayTracing { get => S.CompileRayTracing; set { if (value is { } v && v != S.CompileRayTracing) Save(S with { CompileRayTracing = v }); } }
     public bool? ShareRecordings { get => S.ShareRecordings; set { if (value is { } v && v != S.ShareRecordings) Save(S with { ShareRecordings = v }); } }
+    /// <summary>This unofficial build's own opt-in to uploads (fork.json), besides <see cref="ShareRecordings"/>; the design data has none.</summary>
+    public bool? ForkShareRecordings
+    {
+        get => (Host.Core as ScsKiller)?.ForkSettings.ShareRecordings ?? false;
+        set { if (value is { } v && Host.Core is ScsKiller k && v != k.ForkSettings.ShareRecordings) { k.ForkSettings = k.ForkSettings with { ShareRecordings = v }; Changed(); } }
+    }
+    public bool CanForkShare => Host.Core is ScsKiller;
     public bool? ShareDiagnostics { get => S.ShareDiagnostics; set { if (value is { } v && v != S.ShareDiagnostics) Save(S with { ShareDiagnostics = v }); } }
     public bool? ActiveCheck
     {

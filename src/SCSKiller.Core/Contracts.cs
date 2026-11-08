@@ -691,7 +691,13 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool CompactUi = false,   // the Library's summary as two slim tiles instead of the cards
     DateTimeOffset? SupportFirstUse = null,   // the first window shown with this field known: an update starts the count like a new install (SupportPopup)
     int SupportAsks = 0,   // times the support popup showed; SupportPopup.MaxAsks once answered
-    DateTimeOffset? SupportAskedAt = null);   // the last time it showed
+    DateTimeOffset? SupportAskedAt = null)   // the last time it showed
+{
+    /// <summary>settings.json's keys this build doesn't know (another build's sharing the data folder, such as an upstream
+    /// release's): written back as they were, so switching builds loses no setting. Null = none.</summary>
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? Unknown { get; init; }
+}
 
 /// <summary>Merging: a finished warm's dbs go into the game's D3DSCache folder (NVIDIA from 621), its progress in the bytes its checks and inserts read.</summary>
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Merging, Paused, Done, Failed, Stopped, Saving, Finishing }
@@ -944,7 +950,8 @@ public interface IScsKiller
     /// <summary>The compatibility report this PC sent for the game's installed build; null = none. Reads a file.</summary>
     App.CompatSent? ReportSent(string gameId);
     /// <summary>Sends the game's compatibility report (<see cref="App.CompatReport"/>): only on the user's Send rating, whatever
-    /// Settings.ShareRecordings holds. Remembered for the build once the server took it. Null when sent, else why not in plain
+    /// Settings.ShareRecordings holds, and only with this unofficial build's own opt-in (App.ForkSettings.ShareRecordings).
+    /// Remembered for the build once the server took it. Null when sent, else why not in plain
     /// words. InvalidOperationException when the game can't be reported (<see cref="App.CompatReport.WhyNot"/>).</summary>
     Task<string?> SendReportAsync(string gameId, App.CompatChoice choice, bool frameGen, bool upscaler, bool mods, CancellationToken ct = default);
     /// <summary>This start's server refused a compatibility report from Linux: it takes none yet.</summary>

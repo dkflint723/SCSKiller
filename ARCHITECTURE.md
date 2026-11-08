@@ -342,7 +342,7 @@ and a Steam Vulkan game's recorder is registered by its manifest's copy in `$XDG
 
 | Where | What |
 |---|---|
-| `%LOCALAPPDATA%\SCSKiller\` | `settings.json`, scan caches (`discovered.json`, `scan.json`, `games.json`, `middleware.json`, `reshade.json`, `manual-games.json`), the user's game folders, removed and renamed games (`added-library.json`), the Library's sort (`library-view.json`), `recorders.log`, whose each game folder's `scskiller.ini` is (`recorder-inis.json`), the app's log (`app.log`, up to 1 MB, then `app.log.1`), `auth.dat`, `upload.dat`, `update-staged.json`, `codecs\`, on Linux `instance.lock` (flocked by the folder's one app instance, with its socket's name) |
+| `%LOCALAPPDATA%\SCSKiller\` | `settings.json`, scan caches (`discovered.json`, `scan.json`, `games.json`, `middleware.json`, `reshade.json`, `manual-games.json`), the user's game folders, removed and renamed games (`added-library.json`), the Library's sort (`library-view.json`), `recorders.log`, whose each game folder's `scskiller.ini` is (`recorder-inis.json`), the app's log (`app.log`, up to 1 MB, then `app.log.1`), `auth.dat`, `upload.dat`, `update-staged.json`, `codecs\`, on Linux `instance.lock` (flocked by the folder's one app instance, with its socket's name); Kindling only: `fork.json`, `upload-fork.dat` (below) |
 | `...\games\<id>\` | `state.json` (`GameRecord`), `plan.bin`, `plan-*.keys`, `warm-*.keys`, `index.*`, `recording.db`, `community.db`, `official.db`, `draws.db`, `work\`, warm logs, `compile-error.log`, `scskiller.warmed`, `compiled.keys`, `stopped-scskiller_failed.keys`, keys for the game (`aes.key`, `archive.keys`, `pak.modulus`, `paz.key`) |
 | `...\games\<id>\sessions\` | `<launch unix ms>.json`: a launch's frame report with its driver, build and swap chain (`Snapshots`, `"v": 1`). The newest 20 are kept, plus a before and after pair's two pinned ones. Removing an added game deletes them, Clear recording doesn't |
 | `...\packs\`, `...\community\` | Middleware packs, the community manifest and shared packs |
@@ -353,6 +353,20 @@ and a Steam Vulkan game's recorder is registered by its manifest's copy in `$XDG
 | `$XDG_DATA_HOME/applications/`, `.../icons/hicolor/` (Linux) | An AppImage's menu entry `com.BlueHeisenberg.SCSKiller.desktop` (the package's, its Exec and TryExec naming `$APPIMAGE`, never the mount) and its icons, written at each start from an AppImage (`MenuEntry`), and removed at one whose file is refused. An entry without its `X-SCSKiller-AppImage` key is never changed |
 | `%LOCALAPPDATA%\SCSKiller.App\` | The Velopack install (`current\`, `native\`, `cli\`). Uninstall deletes it whole, so no data lives there |
 | `$XDG_CONFIG_HOME/autostart/`, `.../systemd/user/` (Linux) | The sign-in entry `com.BlueHeisenberg.SCSKiller.desktop`, added only by the user's toggle (`LinuxStartup`, a Flatpak's through the Background portal) and the driver-update check of Ask and When idle, `scskiller-rewarm.service` and `.timer` (`RewarmService`). Only files with an `X-SCSKiller` key are changed or removed |
+
+**Kindling (unofficial build).** This fork shares the data folder with official builds, so what is its own sits in files
+they never read (`ForkBuild`): `fork.json` (`ForkSettings`) holds its own opt-in to sharing, off by default, which every
+upload needs besides `Settings.ShareRecordings` (`ScsKiller.SharesRecordings`: `StartSharing` and the app's `Sharing`
+check it; a compatibility report, sent on the user's click, needs the opt-in alone), and `upload-fork.dat` its own
+anonymous upload device, never an official build's `upload.dat`. `settings.json` keeps the keys this build doesn't know
+(`Settings.Unknown`, `[JsonExtensionData]`), so switching builds loses no setting. Its version is `0.0.0-dkfork.N`
+(`Directory.Build.props`; `build/publish.ps1` takes only `X.Y.Z-dkfork.N`), an unknown label and so the internal channel:
+no active check. Every request through `RouteFailover` sends `Kindling/<version> (unofficial fork of SCSKiller; Windows
+<build>)` ("Linux" in place of the Windows build there; the CLI's product ends `-CLI`). Even opted in, a game is shared
+(its recording, Vulkan recording and outcome report) only when an official build could have made it
+(`ForkBuild.UploadBlock`, read at each pass, logged once a run): its engine is known, its recorder isn't chained to a mod
+(`GameRecord.RecorderChained`, or installed as OptiScaler's plugin), and no ReShade a copy can't reproduce
+(`ReShadeInstall.Copyable` false) is loaded. The upload's contents are upstream's, unchanged.
 
 ## Driver caches
 

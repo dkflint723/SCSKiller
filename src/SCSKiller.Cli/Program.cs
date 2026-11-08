@@ -58,7 +58,7 @@ const string Usage = """
     """;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;  // game names carry ™ and ®
-RouteFailover.Product = "SCSKiller-CLI";
+RouteFailover.Product = ForkBuild.Product + "-CLI";
 if (args.Length == 0 || args[0] is "-h" or "--help" or CliCommands.Help) { Console.WriteLine(Usage); return 0; }
 // before anything reads the data folder: a portable copy's first read copies the installed one's
 if (args[0] is "-v" or "--version" or CliCommands.Version) { if (Stray(1, "--version") is { } stray) return stray; Console.WriteLine(AppVersion.Current); return 0; }

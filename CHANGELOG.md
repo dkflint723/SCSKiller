@@ -4,6 +4,20 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### Sharing (Kindling, this unofficial build)
+
+- **Nothing is shared from this build unless you tick "Share from this unofficial build too"** in Settings, under
+  "Share anonymous shader hashes": both must be on. It's kept in its own file (`fork.json`), so official builds of
+  SCSKiller on the same PC keep their own choice. Compatibility reports from this build need it too. Downloads of shared
+  hashes are unchanged.
+- Even then, a game isn't shared while its engine isn't known, while its recorder runs alongside a mod's `d3d12.dll`, or
+  while ReShade is loaded where Kindling can't reproduce it. The log says which, once per run.
+- This build registers its own anonymous upload device (`upload-fork.dat`), never an official build's.
+- This build names itself to every server it talks to: `Kindling/<version> (unofficial fork of SCSKiller; Windows …)`,
+  and its version is `0.0.0-dkfork.N` (a packaged build's `X.Y.Z-dkfork.N`), never an official one.
+- Settings a newer official build saved that this build doesn't know are kept when it saves `settings.json`, so switching
+  back to the official build loses none of them.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**

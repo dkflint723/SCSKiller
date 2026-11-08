@@ -461,7 +461,7 @@ public sealed partial class ScsKiller : IScsKiller
     public Func<string?> DbMissing { get; set; } = () => null;
     /// <summary>The last scan's community pass (manifest check and downloads), which runs after the scan returns.</summary>
     public Task CommunitySync { get; private set; } = Task.CompletedTask;
-    /// <summary>Anonymous uploads of this PC's recordings while Settings.ShareRecordings is on (the app sets it); null = none.</summary>
+    /// <summary>Anonymous uploads of this PC's recordings while <see cref="SharesRecordings"/> (the app sets it); null = none.</summary>
     public Sharing? Sharing { get; set; }
     /// <summary>The queued sharing passes (<see cref="StartSharing"/>), one at a time.</summary>
     public Task SharingPass { get; private set; } = Task.CompletedTask;
@@ -494,6 +494,25 @@ public sealed partial class ScsKiller : IScsKiller
     public TimeSpan GameClosedFor { get; set; } = TimeSpan.FromMinutes(2);
     /// <summary>The monotonic clock <see cref="GameClosedFor"/> is counted on. Replaceable for tests.</summary>
     internal Func<long> Timestamp { get; set; } = Stopwatch.GetTimestamp;
+
+    /// <summary>fork.json: this unofficial build's own opt-in to sharing, kept out of settings.json (which official builds
+    /// share and rewrite); off until the user ticks it. Turned on, a sharing pass starts as for the setting.</summary>
+    public ForkSettings ForkSettings
+    {
+        get => _fork ??= Store.LoadFork();
+        set
+        {
+            var shareOn = value.ShareRecordings && !ForkSettings.ShareRecordings;
+            Store.SaveFork(value);
+            _fork = value;
+            if (shareOn) StartSharing();
+        }
+    }
+    ForkSettings? _fork;
+
+    /// <summary>Uploads may go: Settings.ShareRecordings and this unofficial build's own opt-in (<see cref="ForkSettings"/>).
+    /// The app's <see cref="Sharing"/> reads it at each call.</summary>
+    public bool SharesRecordings => Settings.ShareRecordings && ForkSettings.ShareRecordings;
 
     public Settings Settings
     {
@@ -5941,11 +5960,11 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>Queues a background pass that shares these games' recordings (default: every game) when
-    /// Settings.ShareRecordings is on: after a scan, a recording import, a game's exit, a compile's index, and the setting turned on.
-    /// Never blocks the caller; failures are only logged.</summary>
+    /// Settings.ShareRecordings and this unofficial build's own opt-in are on (<see cref="SharesRecordings"/>): after a scan, a
+    /// recording import, a game's exit, a compile's index, and either turned on. Never blocks the caller; failures are only logged.</summary>
     public void StartSharing(IEnumerable<Game>? games = null)
     {
-        if (Sharing is not { } sharing || !Settings.ShareRecordings) return;
+        if (Sharing is not { } sharing || !SharesRecordings) return;
         var list = (games ?? Games.Select(s => s.Game)).ToList();
         lock (_scanLock) SharingPass = SharingPass.ContinueWith(_ => Share(sharing, list), TaskScheduler.Default).Unwrap();
     }
@@ -5959,6 +5978,8 @@ public sealed partial class ScsKiller : IScsKiller
             try
             {
                 var rec = Store.LoadGame(g.Id);
+                // every upload of the game below (Vulkan, D3D, the outcome report): only what an official build could have made
+                if (ForkUploadBlock(g, rec) is { } forkWhy) { ForkSkipped(g.Name, forkWhy); continue; }
                 // a Vulkan recording has no content hash: its entry is the Steam build's, which the recorder needs anyway
                 if (VulkanLayer.AppId(g) != null && g.Version is { } build && File.Exists(FozPath(g.Id)) && BlockingMod(g) == null)
                 {
@@ -6011,6 +6032,25 @@ public sealed partial class ScsKiller : IScsKiller
             catch (Exception e) { Log?.Report($"{g.Name}: sharing the recording failed: {e.Message}"); }
         if (sharing.Waiting is { } wait) Log?.Report($"sharing waits for a recording to be whole (a game still recording?): {wait}");
         RequestCollect();
+    }
+
+    /// <summary>Why this unofficial build doesn't share the game's recording (<see cref="ForkBuild.UploadBlock"/>), read now; null = it may.</summary>
+    string? ForkUploadBlock(Game g, GameRecord rec)
+    {
+        EngineInfo? engine;   // the scan's cache, as the upload's engine string; before the first scan, the one it saved
+        lock (_scanLock) engine = (_scan ??= Store.LoadScan()).GetValueOrDefault(g.Id)?.Engine;
+        // chained: a mod's d3d12.dll renamed behind the recorder, or the recorder installed as OptiScaler's plugin
+        return ForkBuild.UploadBlock(engine, new(rec.RecorderChained != null || rec.RecorderFiles.ContainsKey(DllOpti), ReShadeOf(g)));
+    }
+
+    readonly HashSet<string> _forkSkips = [];
+
+    /// <summary>Logs once per run what this unofficial build doesn't share, and why.</summary>
+    void ForkSkipped(string what, string why)
+    {
+        lock (_forkSkips)
+            if (!_forkSkips.Add($"{what}|{why}")) return;
+        Log?.Report($"{what}: not shared from this unofficial build: {why}");
     }
 
     /// <summary>What a layer made, from every recording here (one may have a record without its 'W', another with it) and the
@@ -13943,6 +13983,8 @@ public sealed partial class ScsKiller : IScsKiller
         var vendor = PackGpu(Vendor.Vendor);
         if (CompatReport.WhyNot(s, vendor) is { } why) throw new InvalidOperationException(why);
         if (Sharing is not { } sharing) throw new InvalidOperationException("reports aren't sent from here");
+        // the user's Send, so Settings.ShareRecordings doesn't apply, but this unofficial build's own opt-in does
+        if (!ForkSettings.ShareRecordings) return "Not sent. Reports go from this unofficial build only when \"Share from this unofficial build too\" is ticked in Settings.";
         var key = CompatReport.BuildKey(s.Game);
         LinuxSystem? linux = null;
         LinuxOf(s.Game, ref linux);

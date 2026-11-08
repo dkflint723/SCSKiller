@@ -134,8 +134,8 @@ public sealed record SharedRecording(string Stamp, DateTimeOffset? At = null, st
 
 /// <summary>The write side of the community database: a game's own
 /// recording (recording.db, never the merge with the community's), stripped to its hash-only form, posted with an anonymous
-/// upload device's token. That device is registered once (POST /v1/devices) and kept in upload.dat (<see cref="TokenFile{T}"/>),
-/// apart from the Patreon sign-in (auth.dat), which this class never sees. Works signed out. Quiet: failures
+/// upload device's token. That device is registered once (POST /v1/devices) and kept in upload-fork.dat (<see cref="TokenFile{T}"/>;
+/// <see cref="ForkBuild.UploadDevice"/>: this unofficial build's own, never an official build's upload.dat), apart from the Patreon sign-in (auth.dat), which this class never sees. Works signed out. Quiet: failures
 /// land in <see cref="Problem"/> and back off; nothing throws but cancellation.</summary>
 public sealed class Sharing
 {
@@ -153,13 +153,14 @@ public sealed class Sharing
     DateTimeOffset backoffUntil, reportBackoffUntil;
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> nothingSaid = new();
 
-    /// <param name="enabled">Settings.ShareRecordings, read at each call: off means no work and no request at all</param>
+    /// <param name="enabled">ScsKiller.SharesRecordings (Settings.ShareRecordings and this unofficial build's own opt-in), read
+    /// at each call: off means no work and no request at all</param>
     /// <param name="keyring">Linux: the system keyring, tried first (<see cref="TokenFile{T}"/>)</param>
     public Sharing(string dataDir, Func<bool> enabled, RouteFailover? routes = null, TimeProvider? clock = null, IKeyring? keyring = null,
         IProgress<string>? log = null)
     {
         this.dataDir = dataDir;
-        file = new(Path.Combine(dataDir, "upload.dat"), "SCSKiller sharing registration", keyring, log);
+        file = new(Path.Combine(dataDir, ForkBuild.UploadDevice), "SCSKiller sharing registration", keyring, log);   // this unofficial build's own device: never an official build's upload.dat
         this.enabled = enabled;
         this.routes = routes ?? RouteFailover.Default;
         http = new HttpClient(this.routes, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(60) };
@@ -832,7 +833,7 @@ public sealed class Sharing
         _ => TimeSpan.FromMinutes(5),
     };
 
-    // upload.dat: {"Token":"sd1_...","Id":"..."} (TokenFile), like auth.dat but its own file: never the Patreon device
+    // upload-fork.dat (ForkBuild.UploadDevice): {"Token":"sd1_...","Id":"..."} (TokenFile), like auth.dat but its own file: never the Patreon device
     sealed record Device(string Token, string Id);
 
     readonly string dataDir;

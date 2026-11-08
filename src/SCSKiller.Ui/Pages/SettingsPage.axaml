@@ -316,6 +316,14 @@
                                     <TextBlock Text="Share your recorded hashes, GPU model and driver version. Never linked to your account." Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
+                            <CheckBox IsChecked="{Binding ForkShareRecordings, Mode=TwoWay}" IsEnabled="{Binding CanForkShare, Mode=OneTime}" Margin="28,0,0,0"
+                                      AutomationProperties.Name="Share from this unofficial build too">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
+                                    <TextBlock Text="This is an unofficial build; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. A game isn't shared while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it. Compatibility reports from this build need this box too."
+                                               Classes="Caption" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
                             <HyperlinkButton Content="What's shared" NavigateUri="https://scskiller.com/privacy" Padding="0" />
                         </StackPanel>
                     </Border>
