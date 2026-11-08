@@ -100,7 +100,7 @@ public partial class App : Application
             real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync) { TokenWith = Account.GetTokenAsync };
             real.DbEntitled = () => Account.DbEntitled;
             real.DbMissing = () => Account.DbMissing;
-            real.Sharing = new Sharing(AppStore.DefaultDir, () => real.Settings.ShareRecordings);   // anonymous: never the Patreon sign-in
+            real.Sharing = new Sharing(AppStore.DefaultDir, () => real.SharesRecordings);   // anonymous: never the Patreon sign-in; this unofficial build's own opt-in too
             real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics);   // no token at all
             real.ContentRoutes = RouteFailover.Default;
             real.ChannelAccess = async () => (await Account.GetAccessTokenAsync(), Account.Status?.Ent);
