@@ -245,7 +245,7 @@
                         <CheckBox Content="Show hidden" IsChecked="{Binding ShowHidden, Mode=TwoWay}" IsVisible="{Binding HasHidden}"
                                   MinWidth="0" ToolTip.Tip="Games you removed from the library" />
                     </StackPanel>
-                    <TextBlock Classes="Caption Shown" Text="{Binding ShownText}" IsVisible="{Binding Filtering}" VerticalAlignment="Center" />
+                    <TextBlock Classes="Caption Shown" Text="{Binding ShownText}" IsVisible="{Binding HasShownText}" VerticalAlignment="Center" />
                     <!-- the hidden games under the search, each with its way back -->
                     <ItemsControl Grid.Row="4" Grid.ColumnSpan="4" ItemsSource="{Binding Hidden}" IsVisible="{Binding HiddenShown}"
                                   Margin="0,8,0,4" AutomationProperties.Name="Hidden games">
@@ -421,6 +421,19 @@
                         <TextBlock Text="{Binding NoMatchText}" Classes="Section" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                         <TextBlock Text="{Binding SearchHint, Mode=OneTime}" Classes="Secondary"
                                    TextWrapping="Wrap" TextAlignment="Center" IsVisible="{Binding Searching}" />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Every game (or every match) is unsupported and hidden: say so, with the way back to them (Why?, unlocking a key).
+                     Above the empty list, which shares its row and would otherwise take its clicks. -->
+                <ScrollViewer Grid.Row="2" ZIndex="1" IsVisible="{Binding AllHidden}">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Spacing="8" MaxWidth="{DynamicResource TextFit.412}" Margin="24">
+                        <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Library}" FontSize="28" HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{Binding AllHiddenText}" Classes="Section" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+                        <TextBlock Text="{Binding AllHiddenNote}" Classes="Secondary" TextWrapping="Wrap" TextAlignment="Center" />
+                        <Button Content="Show unsupported games" Click="OnShowUnsupported" HorizontalAlignment="Center" Margin="0,4,0,0" />
                     </StackPanel>
                 </ScrollViewer>
 

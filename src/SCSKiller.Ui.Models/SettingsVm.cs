@@ -293,6 +293,7 @@ public sealed class SettingsVm : Bindable
     public bool ShowsCloseQuits => Host.Platform.Tray;
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) Save(S with { CloseQuits = v }); } }
     public bool? CompactUi { get => S.CompactUi; set { if (value is { } v && v != S.CompactUi) Save(S with { CompactUi = v }); } }
+    public bool? HideUnsupported { get => S.HideUnsupported; set { if (value is { } v && v != S.HideUnsupported) Save(S with { HideUnsupported = v }); } }
     public string CloseQuitsNote => Host.Tray.Shown
         ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller in the tray. Right-click its icon to quit."
         : "No tray icon on this desktop, so closing the window quits.";

@@ -18,6 +18,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 - Settings a newer official build saved that this build doesn't know are kept when it saves `settings.json`, so switching
   back to the official build loses none of them.
 
+### Library (Kindling, this unofficial build)
+
+- "Hide unsupported games in the Library" (off by default), in Settings, leaves the games SCSKiller can't compile out of
+  the Library. They're still checked at every scan and show again once they can be compiled (an encrypted game unlocked
+  by its key), and choosing Not supported in the Library still lists them. The Library says how many are hidden, with a
+  way to show them when nothing else is left.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**

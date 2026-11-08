@@ -208,20 +208,37 @@ public sealed class LibraryVm : Bindable
     };
 
     public IReadOnlyList<GameRow> Games { get; private set; } = [];   // every game, sorted; the list shows Groups
-    /// <summary>The list: rows matching <see cref="Filter"/> per store, empty stores left out. Filtering reuses the rows
-    /// (no icon reads, no IO).</summary>
+    /// <summary>The list: rows matching <see cref="Filter"/> per store, without the ones <see cref="Library.Hides"/> leaves
+    /// out, empty stores left out. Filtering reuses the rows (no icon reads, no IO).</summary>
     public ObservableCollection<StoreGroup> Groups { get; } = [];
     string filter = "";
     public string Filter { get => filter; set { if (value.Trim() != filter) { filter = value.Trim(); ApplyFilter(); Changed(); } } }
     LibraryShow show;
     public static readonly string[] ShowLabels = ["All games", "Not supported", "Ready to compile", "Compiled", "Compiled by SCSKiller"];
     public int ShowIndex { get => (int)show; set { if (value >= 0 && (LibraryShow)value != show) { show = (LibraryShow)value; ApplyFilter(); Changed(); } } }
-    int shown;
+    int shown, unsupportedHidden;   // unsupportedHidden: matching the search and the view, left out by Settings.HideUnsupported
     public bool Filtering => filter.Length > 0 || show != LibraryShow.All;
     public bool Searching => filter.Length > 0;
-    public string ShownText => $"{shown} of {Games.Count} shown";
-    public bool NoMatch => Filtering && Games.Count > 0 && shown == 0;
+    public bool HasShownText => Filtering || unsupportedHidden > 0;
+    public string ShownText => string.Join(" · ", new[]
+    {
+        Filtering ? $"{shown} of {Games.Count} shown" : null,
+        unsupportedHidden > 0 ? $"{unsupportedHidden} unsupported hidden" : null,
+    }.OfType<string>());
+    public bool NoMatch => Filtering && Games.Count > 0 && shown == 0 && unsupportedHidden == 0;
     public string NoMatchText => Searching ? $"No games match “{filter}”" : "No games with this status";
+    /// <summary>Every game (or every match) is unsupported and hidden: the list's place says so, with the way back to them.</summary>
+    public bool AllHidden => shown == 0 && unsupportedHidden > 0;
+    public string AllHiddenText => Searching ? $"No supported games match “{filter}”"
+        : show != LibraryShow.All ? "No supported games with this status" : "No supported games to show";
+    public string AllHiddenNote => $"{unsupportedHidden} unsupported game{(unsupportedHidden == 1 ? " is" : "s are")} hidden. Show them to see why each can't be compiled, or to unlock an encrypted game with its key.";
+    /// <summary>The empty list's "Show unsupported games": turns <see cref="Settings.HideUnsupported"/> off, as Settings does.</summary>
+    public void ShowUnsupported()
+    {
+        Host.Core.Settings = Host.Core.Settings with { HideUnsupported = false };
+        ApplyFilter();
+        Changed();
+    }
     public string SearchHint => Host.Platform.Stores.Count > 1 ? "Try part of the name, a store (Steam, GOG…) or an engine (UE 5)." : "Try part of the name or an engine (UE 5).";
     /// <summary>A scan found no games at all, on an OS whose library says why.</summary>
     public bool NoGames => scanned && !Scanning && Games.Count == 0 && Host.Platform.NoGamesNote != null;
@@ -401,7 +418,10 @@ public sealed class LibraryVm : Bindable
     /// added or removed (<see cref="ListSync"/>): a Reset scrolls the list to the top and builds every row again.</summary>
     void ApplyFilter()
     {
-        var visible = Games.Where(r => (filter.Length == 0 || r.Matches(filter)) && Library.Shows(r.State, show)).ToList();
+        var matching = Games.Where(r => (filter.Length == 0 || r.Matches(filter)) && Library.Shows(r.State, show)).ToList();
+        var hideUnsupported = Host.Core.Settings.HideUnsupported;
+        var visible = matching.Where(r => !Library.Hides(r.State, show, hideUnsupported)).ToList();
+        unsupportedHidden = matching.Count - visible.Count;
         // known-stutter games go on top (StutterList.Recommended), out of their store's section, compiled or not
         var byId = visible.ToDictionary(r => r.Id);
         var recommended = StutterList.Recommended(visible.Select(r => r.State)).Select(s => byId[s.Game.Id]).ToList();

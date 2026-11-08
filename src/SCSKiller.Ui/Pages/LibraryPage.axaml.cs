@@ -102,6 +102,7 @@ public sealed partial class LibraryPage : UserControl
     void OnCache(object? _, RoutedEventArgs __) => App.Main.Navigate(typeof(CachePage));
     void OnPlay(object? sender, RoutedEventArgs e) { e.Handled = true; Vm.Play(RowOf(sender)); }
     void OnShowGame(object? sender, RoutedEventArgs _) => Vm.ShowInLibrary((HiddenRow)((Control)sender!).DataContext!);
+    void OnShowUnsupported(object? _, RoutedEventArgs __) => Vm.ShowUnsupported();
 
     // Either click fetches the server's data whatever its age; Shift+click also forces re-detection, which is otherwise
     // redone only when an exe, build or SCSKiller changes.

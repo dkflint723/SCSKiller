@@ -21,6 +21,12 @@ public static class Library
         _ => true,
     };
 
+    /// <summary>"Hide unsupported games" (<see cref="Settings.HideUnsupported"/>): leaves out the games the Not supported view
+    /// lists, in every view but that one, which asks for them. A view only: hidden games are still scanned and show again once
+    /// their status changes (an encrypted game unlocked by its key).</summary>
+    public static bool Hides(GameState s, LibraryShow show, bool hideUnsupported) =>
+        hideUnsupported && show != LibraryShow.NotSupported && Shows(s, LibraryShow.NotSupported);
+
     static readonly StringComparer Names = StringComparer.CurrentCultureIgnoreCase;
 
     /// <summary>A size sort puts the games with no size last, either way; ties go by name.</summary>

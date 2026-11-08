@@ -691,7 +691,8 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool CompactUi = false,   // the Library's summary as two slim tiles instead of the cards
     DateTimeOffset? SupportFirstUse = null,   // the first window shown with this field known: an update starts the count like a new install (SupportPopup)
     int SupportAsks = 0,   // times the support popup showed; SupportPopup.MaxAsks once answered
-    DateTimeOffset? SupportAskedAt = null)   // the last time it showed
+    DateTimeOffset? SupportAskedAt = null,   // the last time it showed
+    bool HideUnsupported = false)   // the Library leaves out Not supported games (App.Library.Hides); they're still scanned
 {
     /// <summary>settings.json's keys this build doesn't know (another build's sharing the data folder, such as an upstream
     /// release's): written back as they were, so switching builds loses no setting. Null = none.</summary>

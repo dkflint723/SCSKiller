@@ -439,6 +439,13 @@
                                 <TextBlock Text="Shows the Library's summary as two slim tiles." Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <CheckBox IsChecked="{Binding HideUnsupported, Mode=TwoWay}" AutomationProperties.Name="Hide unsupported games in the Library">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Hide unsupported games in the Library" TextWrapping="Wrap" />
+                                <TextBlock Text="Leaves out the games SCSKiller can't compile. They're still checked at every scan and show again once they can be compiled, for example when an encrypted game's key is found. Choosing Not supported in the Library still lists them."
+                                           Classes="Caption" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
                         <StackPanel>
                             <TextBlock Text="Theme" Classes="Header" />
                             <ComboBox ItemsSource="{Binding Themes, Mode=OneTime}" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}" MinWidth="220"
