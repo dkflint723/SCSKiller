@@ -10,14 +10,18 @@ namespace SCSKiller.Core.Unreal;
 /// Kept only locally, in %LOCALAPPDATA%\SCSKiller\games\&lt;id&gt;\aes.key (hex, one per line; the user may also put keys
 /// there by hand), never in plans, logs or anything meant to be shared. Found statically
 /// in the game's own exe file (<see cref="Scan"/>; an anti-cheat game's too: the file on disk, never the running process),
-/// once per exe build: a failed scan is remembered in aes.scan with the exe's size and write time. Every key is checked
+/// once per exe build: a failed scan is remembered in aes.scan with the exe's size and write time. Else the user gives it,
+/// imports it from a file, or it comes from the community's key list (<see cref="KeyCollection"/>). Every key is checked
 /// against an encrypted container before it is used or stored.</summary>
 public sealed class UnrealKeys(string dataDir)
 {
     string KeyFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.key");
     string ScanFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.scan");
-    /// <summary>Bump when <see cref="Scan"/> finds keys it missed before: a remembered failure is then scanned again.</summary>
-    const int ScanVersion = 4;
+    /// <summary>The key list's candidates tried in vain for the game (<see cref="KeyCollection.LookUpAsync"/>): dropped once a key is stored.</summary>
+    string LookupFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "aes.lookup");
+    /// <summary>Bump when <see cref="Scan"/> or the key check takes keys it missed before: a remembered failure (the scan's,
+    /// or a key lookup's candidates) is then tried again.</summary>
+    internal const int ScanVersion = 4;
     static string Stamp(string exe) => new FileInfo(exe) is { Exists: true } f ? $"{ScanVersion}:{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
 
     /// <summary>The keys that <paramref name="opens"/> the game's encrypted containers: the stored ones, else a static scan of
@@ -46,6 +50,7 @@ public sealed class UnrealKeys(string dataDir)
         Directory.CreateDirectory(Path.GetDirectoryName(KeyFile(game))!);
         if (key != null) File.WriteAllText(KeyFile(game), key.KeyString);
         else File.WriteAllLines(ScanFile(game), [stamp, why]);
+        if (key != null) KeyCollection.Forget(LookupFile(game));   // only candidates tried in vain are remembered: once this key is lost, again
         return key != null ? [new UnrealKey(key, null)] : [];
     }
 
@@ -93,6 +98,7 @@ public sealed class UnrealKeys(string dataDir)
         Directory.CreateDirectory(Path.GetDirectoryName(KeyFile(game))!);
         File.WriteAllLines(KeyFile(game), keep.Concat(add).Distinct().Select(k => k.Line));
         File.Delete(ScanFile(game));
+        KeyCollection.Forget(LookupFile(game));   // only candidates tried in vain are remembered: once these keys are lost, again
         return (true, refused);
     }
 

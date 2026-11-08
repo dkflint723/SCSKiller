@@ -48,7 +48,11 @@ SCSKiller sends nothing about you, your PC or your games unless you ask it to. I
 - `dl.scskiller.io`, for alpha and beta updates
 - GitHub Releases, for stable updates
 - public GitHub-hosted sources, for a decompression library (Oodle) or an archive key a game needs, the first time it's
-  needed.
+  needed;
+- Kindling only: the community's list of Unreal Engine encryption keys (a public forum page on `cs.rin.ru`), only when you
+  click "Look up key online" for an encrypted game, or after a scan if you turn on "Look up keys online after scans" (off
+  by default; at most once a day). It's a plain download of the page: nothing about you, your PC or your games is sent,
+  and the page is matched to your games on your PC. Keys you import from a file never leave your PC.
 
 Shaders and recordings stay on your PC unless you turn sharing on. Frame times always stay on your PC.
 

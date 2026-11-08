@@ -527,6 +527,7 @@ public sealed partial class ScsKiller : IScsKiller
             var communityOn = value.UseCommunityDb && !Settings.UseCommunityDb;
             var shareOn = value.ShareRecordings && !Settings.ShareRecordings;
             var checkOn = ActiveCheck.Allowed(value) && !ActiveCheck.Allowed(Settings);   // chosen after this start's scan
+            var keysOn = value.LookUpKeysOnline && !Settings.LookUpKeysOnline;
             var limitChanged = value.RecordingLimitMB != Settings.RecordingLimitMB;
             var recordersChanged = value.RecordAllGames != Settings.RecordAllGames || limitChanged || value.Traversal != Settings.Traversal;   // traversal: the inis' keys
             var channelChanged = value.UpdateChannel != Settings.UpdateChannel;
@@ -558,6 +559,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (gpuChanged) Task.Run(RedetectGpu);   // the restart note
             if (communityOn) StartCommunitySync();
             if (shareOn) StartSharing();
+            if (keysOn) StartKeyLookups(Games);
             if (checkOn && ActiveCheck is { } active) ActiveCheckSent = Task.Run(() => active.SendAsync());
             if (recordersChanged && ManageRecorders)
                 Task.Run(() =>
@@ -843,6 +845,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (userRequested) ServerRefresh = fetch ? Fetched(lists, CommunitySync) : ServerRefresh.IsCompleted ? Task.FromResult(ServerCheck.TooSoon) : ServerRefresh;
         }
         StartSharing(states.Select(s => s.Game));
+        if (KeyLookupsAfterScans) StartKeyLookups(states);
         SortTwinKeys(states);
         StartMigration(states);
         if (ActiveCheck is { } active) ActiveCheckSent = Task.Run(() => active.SendAsync());
@@ -4523,6 +4526,125 @@ public sealed partial class ScsKiller : IScsKiller
     public void RemoveEncryptionKey(string gameId)
     {
         if (UnrealOf(gameId) is { } u) u.RemoveKey(Find(gameId).Game);
+    }
+
+    /// <summary>The community's key list and the user's imported keys (keys\ in the data folder). Replaceable for tests.</summary>
+    public KeyCollection KeyList { get { lock (_lock) return field ??= new(Store.DataDir); } set; }   // one instance: its gate allows one fetch at a time
+    /// <summary>A game's names and key check for a lookup (<see cref="UnrealReader.KeyLookupCheck"/>). Replaceable for tests.</summary>
+    internal Func<Game, KeyTrial?> KeyCheck { get => field ??= g => (_reader as UnrealReader ?? (_reader as EngineReaders)?.Get<UnrealReader>())?.KeyLookupCheck(g); set; }
+    /// <summary>Whether a scan starts the key lookups of its encrypted games (<see cref="StartKeyLookups"/>). The command
+    /// line turns it off but for its scan command, which waits for them: a process that exits drops the pass midway.</summary>
+    public bool KeyLookupsAfterScans { get; set; } = true;
+    /// <summary>The queued key lookups of scans (<see cref="StartKeyLookups"/>) and key imports (<see cref="ImportKeysAsync"/>),
+    /// one at a time: never two trying the same game.</summary>
+    public Task KeyLookupPass { get; private set; } = Task.CompletedTask;
+
+    public async Task<KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, IProgress<string>? stage = null, CancellationToken ct = default)
+    {
+        var s = Find(gameId);
+        // a game that isn't locked: no candidate can be stored, and none is remembered as tried
+        if (s.Engine is not { Family: "Unreal", Encrypted: true }) return new(KeyLookupOutcome.NoWorkingKey, $"{s.Game.Name}'s files aren't encrypted, or it already has a working key.");
+        var r = await LookUpKey(s.Game, savedPage, true, true, ct, stage);
+        // a saved page is now the cached list: the other encrypted games get their lookup from it
+        if (savedPage != null && r.Outcome != KeyLookupOutcome.FetchFailed) StartKeyLookups(Games.Where(s => s.Game.Id != gameId));
+        return r;
+    }
+
+    async Task<KeyLookup> LookUpKey(Game g, string? savedPage, bool userRequested, bool online, CancellationToken ct, IProgress<string>? stage = null)
+    {
+        // the checks open the game's containers: off the caller's thread
+        if (await Task.Run(() => KeyCheck(g), ct) is not { } check) return new(KeyLookupOutcome.NoWorkingKey, $"{g.Name} isn't an Unreal game SCSKiller can read.");
+        using (check) return await Task.Run(() => KeyList.LookUpAsync(KeyCollection.DefaultUrl, check.Names, check.TrySet, userRequested, LookupMemo(g), Log, ct, savedPage, online, stage), ct);
+    }
+
+    // for an encrypted game; reads files: off the caller's thread
+    (string File, string Stamp) LookupMemo(Game g)
+    {
+        var file = Path.Combine(Store.GameDir(g.Id), "aes.lookup");
+        if (File.Exists(Path.Combine(Store.GameDir(g.Id), "aes.key"))) KeyCollection.ForgetLegacy(file);   // the stored key no longer opens its files
+        return (file, $"{UnrealKeys.ScanVersion}:{ExeStamp(g)}");   // a new key check tries the same candidates again
+    }
+
+    public Task<KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        lock (_scanLock)   // after the scans' key lookups queued before it, and the next pass after it
+        {
+            var before = KeyLookupPass;
+            var import = ImportKeys(before, file, progress, ct);
+            KeyLookupPass = Task.WhenAll(before, import).ContinueWith(_ => { }, TaskScheduler.Default);
+            return import;
+        }
+    }
+
+    async Task<KeyImport> ImportKeys(Task before, string file, IProgress<string>? progress, CancellationToken ct)
+    {
+        if (!before.IsCompleted) progress?.Report("Waiting for the key lookup that runs after a scan…");
+        await before.WaitAsync(ct);
+        var (keys, problem) = await Task.Run(() => KeyList.ImportFile(file), ct);
+        if (keys is not { } k) return new(0, 0, [], problem);
+        var unreal = Games.Where(s => s.Engine?.Family == "Unreal").OrderBy(s => s.Game.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        var locked = unreal.Count(s => s.Engine!.Encrypted);
+        // the file's keys and those imported before, as the scans' pass tries them; it then skips them for the same exe
+        var (named, unnamed) = await Task.Run(() => KeyList.WithImported(k), ct);
+        var results = new List<KeyImportGame>();
+        foreach (var s in unreal)
+        {
+            var g = s.Game;
+            if (!s.Engine!.Encrypted)
+            {
+                results.Add(new(g.Id, g.Name, KeyImportOutcome.Skipped, File.Exists(Path.Combine(Store.GameDir(g.Id), "aes.key"))
+                    ? "Skipped: it already has a working key." : "Skipped: its files aren't encrypted."));
+                continue;
+            }
+            progress?.Report($"Trying the keys on {g.Name} ({results.Count(r => r.Outcome != KeyImportOutcome.Skipped) + 1} of {locked})…");
+            KeyLookup? r;
+            // the checks open the game's containers: off the caller's thread
+            try
+            {
+                r = await Task.Run(() =>
+                {
+                    if (KeyCheck(g) is not { } check) return null;
+                    using (check) return KeyCollection.TryImported(named, unnamed, check.Names, check.TrySet, Log, ct, LookupMemo(g));
+                }, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException) { r = new(KeyLookupOutcome.NoWorkingKey, $"Trying the keys failed: {e.Message}"); }
+            if (r == null)
+            {
+                results.Add(new(g.Id, g.Name, KeyImportOutcome.Skipped, "Skipped: SCSKiller can't read this game's files."));
+                continue;
+            }
+            Log?.Report($"{g.Name}: AES key import: {r.Message}");
+            results.Add(new(g.Id, g.Name, r.Outcome == KeyLookupOutcome.Unlocked ? KeyImportOutcome.Unlocked : KeyImportOutcome.NoWorkingKey, r.Message, r.Entry, r.Tried));
+        }
+        return new(k.Named.Count, k.Unnamed.Count, [.. results.OrderBy(r => r.Outcome)], NotKept: problem);
+    }
+
+    /// <summary>A background pass after a scan over its encrypted Unreal games: each tries the user's imported keys (always:
+    /// nothing leaves the PC), then, with Settings.LookUpKeysOnline and none of them working, the list, fetched at most daily.
+    /// Once per exe build and candidates (aes.lookup), so a new import retries; a key found re-evaluates the game. Only the
+    /// game's files are read (no exe scan, no process). Never blocks the scan.</summary>
+    void StartKeyLookups(IEnumerable<GameState> states)
+    {
+        var games = states.Where(s => s.Engine is { Family: "Unreal", Encrypted: true }).Select(s => s.Game).ToList();
+        if (games.Count == 0) return;
+        lock (_scanLock) KeyLookupPass = KeyLookupPass.ContinueWith(_ => LookUpKeys(games), TaskScheduler.Default).Unwrap();
+    }
+
+    async Task LookUpKeys(List<Game> games)
+    {
+        var fetched = true;   // false after a failed fetch: the next game's would fail the same way, its imported keys are still tried
+        foreach (var g in games)
+            try
+            {
+                var online = fetched && Settings.LookUpKeysOnline;   // read per game: turned off meanwhile
+                if (!online && KeyList.Imported().Count == 0 && KeyList.ImportedUnnamed().Count == 0) return;
+                var r = await LookUpKey(g, null, false, online, CancellationToken.None);
+                if (r.Outcome == KeyLookupOutcome.AlreadyTried) continue;
+                Log?.Report($"{g.Name}: AES key lookup: {r.Message}");
+                if (r.Outcome == KeyLookupOutcome.Unlocked) Refresh(g);
+                else if (r.Outcome == KeyLookupOutcome.FetchFailed) fetched = false;
+            }
+            catch (Exception e) { Log?.Report($"{g.Name}: looking up the AES key failed: {e.Message}"); }
     }
 
     public void DismissStale() => Store.SaveDismissed(StaleGames().ToDictionary(s => s.Game.Id, StaleKey));

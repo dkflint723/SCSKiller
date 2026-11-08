@@ -32,6 +32,13 @@ using SCSKiller.Core.Planning;
 
 namespace SCSKiller.Core.Unreal;
 
+/// <summary>A game's names and key check for a key list lookup or import (<see cref="UnrealReader.KeyLookupCheck"/>): TrySet
+/// stores a key only if it opens the game's files; <paramref name="Close"/> releases what the checks opened.</summary>
+public sealed record KeyTrial(string[] Names, Func<string, bool> TrySet, Action? Close = null) : IDisposable
+{
+    public void Dispose() => Close?.Invoke();
+}
+
 /// <summary>Cooked UE 4.2x/5.x games: every shader in the shader code libraries (ShaderArchive-*.ushaderbytecode), via
 /// CUE4Parse, or, for games without libraries (bShareMaterialShaderCode=False), carved out of the packages that own them
 /// (<see cref="InlineShaders"/>). Engine version, fork EGame and paks dir are auto-detected; encrypted containers are
@@ -125,6 +132,30 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         if (s.Encrypted.Count == 0) return (false, ["the game's files aren't encrypted"]);
         using var check = new KeyCheck(s.Encrypted, fork ?? baseGame);
         return keys.Set(game, key, check.Opened, check.Guids);
+    }
+
+    /// <summary>For a key list lookup or import (<see cref="KeyCollection"/>): the names the game may be listed under (store
+    /// name, install folder, project, exe) and a check that stores a key as <see cref="SetKey"/> does, only if it opens one of
+    /// the game's encrypted containers (<see cref="UnrealKeys.Set"/>). The containers are surveyed at the first check, once,
+    /// and each opened once for all the keys tried (one <see cref="KeyCheck"/>) until the trial is disposed. Null: not a
+    /// cooked Unreal game.</summary>
+    public KeyTrial? KeyLookupCheck(Game game)
+    {
+        if (Locate(game) is not { } where) return null;
+        var (paks, baseGame, fork, project, _, _, _) = where;
+        var eg = fork ?? baseGame;
+        List<string>? encrypted = null;
+        KeyCheck? check = null;
+        (bool Read, IReadOnlyCollection<FGuid>? Guids) present = default;
+        return new([game.Name, GameFiles.FolderName(game.InstallDir), project, Regex.Replace(Path.GetFileNameWithoutExtension(game.ExePath), "-Win(64|GDK)-Shipping$", "", RegexOptions.IgnoreCase)],
+            key =>
+            {
+                if ((encrypted ??= Survey(paks, eg, project, null).Encrypted).Count == 0) return false;
+                check ??= new KeyCheck(encrypted, eg);
+                if (!present.Read) present = (true, check.Guids);   // the containers' GUIDs, read once: a keyed line names one of them
+                return keys.Set(game, key, check.Opened, present.Guids).Stored;
+            },
+            () => check?.Dispose());
     }
 
     public bool HasKey(Game game) => keys.Has(game);

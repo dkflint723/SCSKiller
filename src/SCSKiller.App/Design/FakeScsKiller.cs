@@ -378,6 +378,10 @@ public sealed class FakeScsKiller : IScsKiller
     public (bool Stored, IReadOnlyList<string> Refused) SetEncryptionKey(string gameId, string key) => (false, [ScsKiller.KeyRefused]);
     public bool HasEncryptionKey(string gameId) => gameId == "xbox:Sample.AtomicHeart";
     public void RemoveEncryptionKey(string gameId) { }
+    public Task<Core.Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, IProgress<string>? stage = null, CancellationToken ct = default) =>
+        Task.FromResult(new Core.Unreal.KeyLookup(Core.Unreal.KeyLookupOutcome.NoWorkingKey, "The key list (1,234 entries) has no entry for this game."));
+    public Task<Core.Unreal.KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default) =>
+        Task.FromResult(new Core.Unreal.KeyImport(0, 0, [], "the file has no keys in it (64 hex digits, with or without a name before them)"));
     public bool ShouldNotifyStale() => Settings.OnDriverUpdate == DriverUpdateMode.Ask && DriverStaleGames().Count > 0;
     public void ApplyDriverUpdateMode() { }
     public Task<IReadOnlyList<GameState>> RescanAsync(CancellationToken ct, bool userRequested = false) => ScanAsync(ct);

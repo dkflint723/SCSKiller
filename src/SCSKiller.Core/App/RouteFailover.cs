@@ -23,7 +23,7 @@ public sealed class RouteFailover : DelegatingHandler
     public static string UserAgent(string product, AppVersion v, string os) => $"{product}/{v} ({ForkBuild.Comment}; {os})";
 
     /// <summary>The User-Agent's OS: "Windows &lt;build&gt;" on Windows; elsewhere "Linux" alone, never a Windows build number.</summary>
-    static string Os => OperatingSystem.IsWindows() ? $"Windows {Environment.OSVersion.Version.Build}" : "Linux";
+    internal static string Os => OperatingSystem.IsWindows() ? $"Windows {Environment.OSVersion.Version.Build}" : "Linux";
 
     public IReadOnlyList<Uri> Routes { get; }
     public Uri Primary => Routes[0];

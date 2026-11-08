@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using SCSKiller.App.Design;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Unreal;
 using SCSKiller.Core.Vendors;
 using SCSKiller.Ui.Controls;
 using SCSKiller.Ui.Models;
@@ -167,6 +168,14 @@ static partial class Screenshots
                 await Dialog(dialog, name);
             }
             await Dialog(AesKeyDialog.Refused(true, ["line 2: not a key (0x and 64 hex digits)", "line 4: " + ScsKiller.KeyRefused]), "aes-key-refused");
+            // Kindling: the Library's Why? with the key lookup, and Import keys…'s results (made-up games)
+            await Dialog(AesKeyDialog.Dialog("Why can't Fortnite be compiled?", "encrypted game files (needs the game's AES key)", aes: true, lookupId: "sample", lookedUp: () => { }).Dialog, "aes-key-lookup");
+            await Dialog(SettingsPage.ImportResultsDialog(new(3, 1,
+            [
+                new("sample:1", "Sample Shooter", KeyImportOutcome.Unlocked, "Unlocked with the key imported for \"Sample Shooter\".", "Sample Shooter", 1),
+                new("sample:2", "Sample Racer", KeyImportOutcome.NoWorkingKey, "No working key (2 tried).", Tried: 2),
+                new("sample:3", "Sample Puzzle", KeyImportOutcome.Skipped, "Skipped: its files aren't encrypted."),
+            ]), rescanning: true), "keys-import-results");
             if (aesOnly) return;
         }
 

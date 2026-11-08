@@ -692,7 +692,8 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     DateTimeOffset? SupportFirstUse = null,   // the first window shown with this field known: an update starts the count like a new install (SupportPopup)
     int SupportAsks = 0,   // times the support popup showed; SupportPopup.MaxAsks once answered
     DateTimeOffset? SupportAskedAt = null,   // the last time it showed
-    bool HideUnsupported = false)   // the Library leaves out Not supported games (App.Library.Hides); they're still scanned
+    bool HideUnsupported = false,   // the Library leaves out Not supported games (App.Library.Hides); they're still scanned
+    bool LookUpKeysOnline = false)   // a scan that finds an encrypted Unreal game without a key looks it up in the community's key list (Unreal.KeyCollection)
 {
     /// <summary>settings.json's keys this build doesn't know (another build's sharing the data folder, such as an upstream
     /// release's): written back as they were, so switching builds loses no setting. Null = none.</summary>
@@ -795,6 +796,20 @@ public interface IScsKiller
 
     /// <summary>Forgets the game's stored AES key. Call RefreshGame afterwards: the game is read again without it.</summary>
     void RemoveEncryptionKey(string gameId);
+
+    /// <summary>Looks the encrypted Unreal game's key up in the user's imported keys, then in the community's key list
+    /// (Unreal.KeyCollection; nothing about the game is sent), and stores the first key that opens its files, as
+    /// <see cref="SetEncryptionKey"/> does; the message says which source it came from, never the key.
+    /// <paramref name="savedPage"/>: the list page as the user saved it from a browser, instead of fetching it.
+    /// <paramref name="stage"/>: what it does now ("Trying your imported keys…", then the list), for the user. Call
+    /// RescanAsync after Unlocked.</summary>
+    Task<Unreal.KeyLookup> LookUpKeyAsync(string gameId, string? savedPage = null, IProgress<string>? stage = null, CancellationToken ct = default);
+
+    /// <summary>Reads a file of keys the user collected (Unreal.KeyCollection.ImportFile; nothing is sent) and tries them on every
+    /// encrypted Unreal game without a working key: the entries named for it, then the file's unnamed keys, each stored only
+    /// if it opens the game's files, as <see cref="SetEncryptionKey"/> does; never says a key. The keys are kept for later
+    /// lookups (NotKept: why not). Waits for the key lookup a scan started. Call RescanAsync after an unlock.</summary>
+    Task<Unreal.KeyImport> ImportKeysAsync(string file, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>What <see cref="ClearGameCache"/> deletes, by kind, empty kinds left out; an anti-cheat game's driver cache
     /// only. Reads dbs: not on the UI thread.</summary>

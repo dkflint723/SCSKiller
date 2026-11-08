@@ -25,6 +25,20 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   by its key), and choosing Not supported in the Library still lists them. The Library says how many are hidden, with a
   way to show them when nothing else is left.
 
+### Encryption keys (Kindling, this unofficial build)
+
+- Encrypted Unreal games: the Library's Why? dialog has "Look up key online", which tries your imported keys, then the
+  community's list of encryption keys, and keeps the first key that opens the game's files. Only the list page is
+  downloaded; nothing about your games is sent. If the forum asks for a browser check, "Open list in browser" opens it:
+  save the page there and use "Load saved page…". A saved page over 4 MB is refused with how to save a smaller one.
+- "Import keys…" in Settings tries a file of keys you collected (lines of a name and a key, CSV, JSON, FModel's key files
+  or a saved page) on every encrypted Unreal game without a working key and lists each game's result. The keys stay on
+  your PC and are tried again after every scan, before the online list.
+- "Look up keys online after scans" in Settings (off by default) checks the list after a scan finds an encrypted game
+  without a key, at most once a day. Keys tried in vain on a game aren't tried again until the game is updated or new keys for it are listed or imported.
+- On the command line: `scskiller key <game> --lookup [--page <file>]` and `scskiller key --import <file>`; `scan` waits
+  for the lookups.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**

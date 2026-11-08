@@ -43,6 +43,12 @@ const string Usage = """
       record grant <game>                         Linux: let the game's Flatpak launcher read the recorder folder (asks first)
       shared <game> on|off|follow                 use the shared shader hashes for the game: off, nothing is downloaded for it and its plans leave them out, follow = Settings
       key <game> <hex>                            give a game's AES key or game key (verified, stored locally only)
+      key <game> --lookup [--page <file>]         look the AES key up in your imported keys, then the community's key list
+                                                  (nothing about the game is sent), and store the first key that opens its
+                                                  files; --page: the list page saved from a browser instead of fetching it
+      key --import <file>                         try the keys of a file (lines of "name 0x<64 hex>" or a key alone, CSV, JSON,
+                                                  a saved page) on every encrypted Unreal game without a working key; keeps
+                                                  only keys that open its files, and the file's keys for later lookups
       index <game> --out <dir>                    debug: dump the engine reader's shader index
       rehydrate <game> <hash-only.db> --out <db> [--expect <content hash>]
                                                   add the shader bytes a hash-only recording references, from the install
@@ -145,12 +151,14 @@ static bool Confirm(string question)
 
 /// <param name="game">a game's id or name: only the games <see cref="Match"/> may pick are read</param>
 /// <param name="collection">and the other games of their collections: a compile's import splits the shared recording into each</param>
-static async Task<ScsKiller> Open(bool rescan = false, string? game = null, bool collection = false)
+/// <param name="keyLookups">the scan's key lookups of encrypted games (ScsKiller.KeyLookupsAfterScans): only for a command that waits for them</param>
+static async Task<ScsKiller> Open(bool rescan = false, string? game = null, bool collection = false, bool keyLookups = false)
 {
     bool Asked(string id, string name) => id.Equals(game, StringComparison.OrdinalIgnoreCase) || id.Equals(game!.Replace(':', '_'), StringComparison.OrdinalIgnoreCase) || name.Contains(game, StringComparison.OrdinalIgnoreCase);
     var k = ScsKiller.CreateDefault(game == null ? null : g => Asked(g.Id, g.Name)
         || collection && SCSKiller.Core.Games.Collections.Member(g.Id) is { } m && m.All.Any(e => Asked(e.Id, e.Name)));
     k.Log = new StderrLog();   // synchronous: a message logged just before exit still prints
+    k.KeyLookupsAfterScans = keyLookups;   // the scan command's own, awaited: any other command would exit during them
     var account = new Account(AppStore.DefaultDir);
     k.DbEntitled = () => account.SignedIn;   // entitlements are never read here: signed in counts as entitled
     await (rescan ? k.RescanAsync(CancellationToken.None) : k.ScanAsync(CancellationToken.None));
@@ -231,7 +239,8 @@ void Only(params string[] known)
 
 async Task<int> Scan(bool rescan)
 {
-    var k = await Open(rescan);
+    var k = await Open(rescan, keyLookups: true);
+    await k.KeyLookupPass;   // the encrypted games' key lookups (imported keys; the list with LookUpKeysOnline)
     Console.WriteLine($"GPU: {k.Vendor.Gpu.Name}, driver {k.Vendor.Gpu.DriverVersion} ({k.Vendor.Caps.Profile})");
     if (GpuBackends.DriverNote(k.Vendor) is { } note) Console.WriteLine(note);
     foreach (var s in k.Games) Row(s);
@@ -781,15 +790,41 @@ async Task<int> SteamPlace()
 
 async Task<int> Key()
 {
-    if (args.Length < 3) return Fail("key <game> <hex> [<hex>...]");
+    if (args.Length < 3) return Fail("key <game> <hex> [<hex>...] | key <game> --lookup [--page <file>] | key --import <file>");
+    if (args[1] == "--import") return await ImportKeys();
     var k = await Open(game: args[1]);
     var g = Match(k.Games, args[1]);
+    if (args.Contains("--lookup"))
+    {
+        var (page, tooLarge) = Opt("--page") is { } file ? KeyCollection.ReadSavedPage(file) : (null, null);
+        if (tooLarge != null) return Fail(tooLarge);
+        var r = await k.LookUpKeyAsync(g.Game.Id, page);
+        await k.KeyLookupPass;   // a saved page's: the other encrypted games, before the process exits
+        if (r.Outcome != KeyLookupOutcome.Unlocked) return Fail(r.Message);
+        await k.RescanAsync(CancellationToken.None);
+        Console.WriteLine($"{r.Message} {g.Game.Name}: {k.Games.First(s => s.Game.Id == g.Game.Id).StatusReason}");
+        return 0;
+    }
     var (stored, refused) = k.SetEncryptionKey(g.Game.Id, string.Join('\n', args[2..]));
     if (!stored && !refused.Any(r => r.StartsWith("line "))) return Fail($"{g.Game.Name}: {string.Join(", ", refused)}");
     foreach (var why in refused) Console.WriteLine($"refused {why}");
     if (!stored) return Fail($"{g.Game.Name}: no key stored");
     await k.RescanAsync(CancellationToken.None);
     Console.WriteLine($"key accepted for {g.Game.Name}: {k.Games.First(s => s.Game.Id == g.Game.Id).StatusReason}");
+    return 0;
+}
+
+async Task<int> ImportKeys()
+{
+    var k = await Open();
+    var r = await k.ImportKeysAsync(args[2]);
+    if (r.Problem != null) return Fail(r.Problem);
+    foreach (var g in r.Games) Console.WriteLine($"{g.Name}: {g.Message}");
+    Console.WriteLine($"{r.Named} named and {r.Unnamed} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != KeyImportOutcome.Skipped)} encrypted games unlocked");
+    if (r.NotKept != null) Console.Error.WriteLine($"the keys weren't kept for later scans: {r.NotKept}");
+    if (r.Unlocked == 0) return 0;
+    await k.RescanAsync(CancellationToken.None);
+    foreach (var g in r.Games.Where(g => g.Outcome == KeyImportOutcome.Unlocked)) Console.WriteLine($"{g.Name}: {k.Games.First(s => s.Game.Id == g.GameId).StatusReason}");
     return 0;
 }
 

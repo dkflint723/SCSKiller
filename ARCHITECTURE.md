@@ -368,6 +368,16 @@ no active check. Every request through `RouteFailover` sends `Kindling/<version>
 (`GameRecord.RecorderChained`, or installed as OptiScaler's plugin), and no ReShade a copy can't reproduce
 (`ReShadeInstall.Copyable` false) is loaded. The upload's contents are upstream's, unchanged.
 
+**Kindling: AES key lookup and import.** `KeyCollection` looks an encrypted Unreal game's key up in the user's imported
+keys (`keys\imported.json`, from Settings' Import keys… or `scskiller key --import`), then in the community's key list
+(the first post of a cs.rin.ru forum topic: a plain HTTPS GET, 20 s, at most 4 MB, at most daily after scans with
+`Settings.LookUpKeysOnline`, hourly on the user's click, with backoff; kept in `keys\collection.json`; a page the user saved
+from a browser is read instead when the forum asks for a browser check). Only "name 0x<64 hex>" lines are read, names are
+matched to the game locally, and at most 20 listed and 500 unnamed imported keys are tried, through one
+`UnrealReader.KeyLookupCheck` (one `KeyCheck` for all of them) and `UnrealKeys.Set`, so a key is stored only if it opens
+one of the game's encrypted containers. `games\<id>\aes.lookup` remembers the candidates tried in vain for the exe build,
+so a scan doesn't try them again; storing a key deletes it.
+
 ## Driver caches
 
 `VendorCaps` holds these per vendor. Intel is experimental on Windows, used only with `Settings.ExperimentalIntel`, and other

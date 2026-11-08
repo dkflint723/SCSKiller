@@ -294,6 +294,17 @@ public sealed class SettingsVm : Bindable
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) Save(S with { CloseQuits = v }); } }
     public bool? CompactUi { get => S.CompactUi; set { if (value is { } v && v != S.CompactUi) Save(S with { CompactUi = v }); } }
     public bool? HideUnsupported { get => S.HideUnsupported; set { if (value is { } v && v != S.HideUnsupported) Save(S with { HideUnsupported = v }); } }
+    public bool? LookUpKeysOnline { get => S.LookUpKeysOnline; set { if (value is { } v && v != S.LookUpKeysOnline) Save(S with { LookUpKeysOnline = v }); } }
+
+    /// <summary>Import keys…'s line once a key file was tried: how many keys it gave and how many encrypted games they unlocked,
+    /// or why it gave nothing.</summary>
+    public static string ImportSummary(Core.Unreal.KeyImport r) => r.Problem != null ? $"Nothing imported: {r.Problem}."
+        : $"{r.Named:N0} named and {r.Unnamed:N0} unnamed keys read; {r.Unlocked} of {r.Games.Count(g => g.Outcome != Core.Unreal.KeyImportOutcome.Skipped)} encrypted games unlocked."
+          + (r.NotKept != null ? $" They weren't kept for later scans: {r.NotKept}." : "");
+
+    /// <summary>A game's line in the import's results, its outcome in words ("Unlocked with …", "No working key (12 tried).",
+    /// "Skipped: …"), never by color alone.</summary>
+    public static string ImportLine(Core.Unreal.KeyImportGame g) => $"{g.Name}: {g.Message}";
     public string CloseQuitsNote => Host.Tray.Shown
         ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller in the tray. Right-click its icon to quit."
         : "No tray icon on this desktop, so closing the window quits.";

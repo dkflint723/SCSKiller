@@ -4,9 +4,11 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Unreal;
 using SCSKiller.Ui.Controls;
 using SCSKiller.Ui.Models;
 
@@ -177,6 +179,56 @@ public sealed partial class SettingsPage : UserControl
 
     async void OnManageKept(object? _, RoutedEventArgs __) => await App.ShowAsync(ManageKeptDialog());
 
+    // Import keys…: a file of keys the user collected, tried on every encrypted Unreal game (nothing is sent); the results
+    // per game in a dialog, each outcome in words.
+    async void OnImportKeys(object? _, RoutedEventArgs __)
+    {
+        string? path;
+        try
+        {
+            var picked = await App.Main.StorageProvider.OpenFilePickerAsync(new()
+            {
+                Title = "Import keys",
+                FileTypeFilter = [new("Key files") { Patterns = ["*.txt", "*.csv", "*.json", "*.htm", "*.html"] }, new("All files") { Patterns = ["*"] }],
+            });
+            path = picked.FirstOrDefault()?.TryGetLocalPath();
+        }
+        catch (Exception ex) { (ImportKeysStatus.Text, ImportKeysStatus.IsVisible) = ($"Couldn't open the file picker: {ex.Message}", true); return; }
+        if (path == null) return;
+        (ImportKeysButton.IsEnabled, ImportKeysRing.IsActive, ImportKeysRing.IsVisible, ImportKeysStatus.IsVisible) = (false, true, true, true);
+        ImportKeysStatus.Text = "Reading the file…";
+        var done = false;   // a stage reported late doesn't cover the result
+        KeyImport r;
+        try { r = await Host.Core.ImportKeysAsync(path, new Progress<string>(m => { if (!done) ImportKeysStatus.Text = m; })); }
+        catch (Exception ex) { r = new(0, 0, [], ex.Message.TrimEnd('.')); }
+        done = true;
+        (ImportKeysButton.IsEnabled, ImportKeysRing.IsActive, ImportKeysRing.IsVisible) = (true, false, false);
+        var summary = SettingsVm.ImportSummary(r);
+        ImportKeysStatus.Text = summary;
+        if (r.Problem != null) return;
+        var rescan = r.Unlocked > 0 ? Host.Core.RescanAsync(CancellationToken.None) : null;
+        if (IsLoaded) await App.ShowAsync(ImportResultsDialog(r, rescan != null));   // the user left Settings meanwhile: no dialog from a page that's gone
+        try { if (rescan != null) await rescan; }
+        catch (Exception ex) { ImportKeysStatus.Text = $"{summary} Checking the games again failed: {ex.Message}"; }
+    }
+
+    /// <summary>Also --screenshots: Import keys…'s results, a line per Unreal game.</summary>
+    public static ContentDialog ImportResultsDialog(KeyImport r, bool rescanning)
+    {
+        var list = new StackPanel { Spacing = 8 };
+        list.Children.Add(new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Text = SettingsVm.ImportSummary(r) + (rescanning ? " The unlocked games are checked again now." : r.Games.Count == 0 ? " There are no Unreal games in your library." : ""),
+        });
+        list.Children.AddRange(r.Games.Select(g => new TextBlock { Text = SettingsVm.ImportLine(g), TextWrapping = TextWrapping.Wrap }));
+        return new ContentDialog
+        {
+            Title = r.Unlocked > 0 ? "Keys imported" : "No game unlocked", CloseButtonText = "OK",
+            Content = new ScrollViewer { Content = list, MaxHeight = 420 },
+        };
+    }
+
     public void ScrollToEnd() => Scroller.ScrollToEnd();
     /// <summary>The Patreon card at the top.</summary>
     public void ScrollToPatreon() => ScrollTo(PatreonCard, -16);
@@ -185,7 +237,6 @@ public sealed partial class SettingsPage : UserControl
     public void ScrollToNewShaders() => ScrollTo(NewShadersHeader, 40);
     public void ScrollToTraversal() => ScrollTo(TraversalLabel, 300);
     public void ScrollToCompactUi() => ScrollTo(CompactUiBox, 300);
-
     // WinUI's BringIntoView at the top with a VerticalOffset: the element <offset> px below the viewport's top (above it when negative)
     void ScrollTo(Control element, double offset)
     {
