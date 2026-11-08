@@ -69,7 +69,7 @@ public static class ForkBuild
             foreach (var path in Directory.Exists(packsDir) ? Directory.EnumerateFiles(packsDir, "*.pack", SearchOption.AllDirectories) : [])
             {
                 var name = Path.GetRelativePath(packsDir, path);
-                if (listed.Contains(name) || dirs.Count > 0 && MiddlewarePack.ReadHeader(path)?.Sources.Any(Filled) != false) held.Add(name);
+                if (listed.Contains(name) || dirs.Count > 0 && MiddlewarePack.ReadHeader(path)?.Sources?.Any(Filled) != false) held.Add(name);   // no header or no sources: held
             }
             if (held.SetEquals(listed)) return held;
             if (held.Count == 0) File.Delete(listFile);   // what it listed is gone: a pack written there again is a new one
