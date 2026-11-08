@@ -809,7 +809,12 @@ static void write_stream(Writer& w, const D3D12_PIPELINE_STATE_STREAM_DESC& d) {
         uint32_t t;
         memcpy(&t, base + pos, 4);
         Sub s;
-        if (!sub_info(t, s)) { w.ok = false, w.why = "unknown stream subobject type"; logf("unknown stream subobject type %u", t); return; }
+        if (!sub_info(t, s)) {
+            static std::atomic<int> logged;  // once per create would flush a line on the game's PSO thread each time
+            w.ok = false, w.why = "unknown stream subobject type";
+            if (logged.fetch_add(1) < 5) logf("unknown stream subobject type %u", t);
+            return;
+        }
         size_t in = align(pos + 4, s.align);
         bool decl = t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT && ((D3D12_STREAM_OUTPUT_DESC*)(base + in))->NumEntries;
         if (t != D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO) w.u32(decl ? kSoDecl : t), io_sub(w, t, base + in), ++count;

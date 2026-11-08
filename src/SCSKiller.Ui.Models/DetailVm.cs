@@ -9,10 +9,15 @@ namespace SCSKiller.Ui.Models;
 /// <summary>The status card's icon, which the UI draws from its icon font.</summary>
 public enum StatusIcon { Warning, Warmed, Ready, Record, Blocked }
 
+public sealed class GameGoneException(string id) : Exception($"{id} is no longer in the library");
+
 public sealed class DetailVm(string id) : Bindable
 {
-    GameState s = Host.Core.Games.First(g => g.Game.Id == id);
-    public GameRow Row { get; private set; } = new(Host.Core.Games.First(g => g.Game.Id == id));
+    GameState s = Find(id);
+    public GameRow Row { get; private set; } = new(Find(id));
+
+    /// <summary>The game's state; a game a scan dropped meanwhile throws <see cref="GameGoneException"/>, which the page handles.</summary>
+    static GameState Find(string id) => Host.Core.Games.FirstOrDefault(g => g.Game.Id == id) ?? throw new GameGoneException(id);
     public string? Error { get; set; }
     public bool HasError => Error != null;
 

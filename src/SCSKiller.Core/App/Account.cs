@@ -201,7 +201,8 @@ public sealed class Account
         if (kept == null) return null;
         if (!NeedsRefresh) return accessToken;
         try { await NewAccessTokenAsync(ct); }
-        catch (Exception e) when (e is HttpRequestException or AccountException && accessToken != null && AccessAge < accessLife) { }
+        catch (Exception e) when (e is HttpRequestException or AccountException or JsonException
+            or OperationCanceledException && !ct.IsCancellationRequested && accessToken != null && AccessAge < accessLife) { }   // malformed or timed out too
         return accessToken;
     }
 

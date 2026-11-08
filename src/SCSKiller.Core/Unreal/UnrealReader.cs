@@ -269,7 +269,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     static AbstractAesVfsReader OpenContainer(string path, VersionContainer versions)
     {
         AbstractAesVfsReader r = path.EndsWith(".utoc", StringComparison.OrdinalIgnoreCase)
-            ? !Sane(path) ? throw new InvalidDataException("a .utoc header whose counts don't fit the file") : Toc(path, versions) : new PakFileReader(path, versions);
+            ? !Sane(path) ? throw new InvalidDataException("a .utoc header whose counts don't fit the file") : Toc(path, versions) : Pak(path, versions);
         if (versions.Game != EGame.GAME_MarvelRivals || r is not IoStoreReader) r.CustomEncryption = Decryption(versions.Game);
         return r;
     }
@@ -284,6 +284,19 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             f.ReadExactly(toc);
         }
         return new IoStoreReader(new FByteArchive(utoc, toc, versions), cas => new FStreamArchive(cas, Shared(cas), versions));
+    }
+
+    /// <summary>CUE4Parse's path constructor opens the .pak itself and leaves it open when it throws (a damaged pak) until a
+    /// GC: the same stream overload on our own stream, which the reader owns once made.</summary>
+    static PakFileReader Pak(string path, VersionContainer? versions)
+    {
+        var s = Shared(path);
+        try { return new PakFileReader(path, s, versions); }
+        catch
+        {
+            s.Dispose();
+            throw;
+        }
     }
 
     static FileStream Shared(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -1379,7 +1392,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         {
             var o = 8 + Entry * i;
             var (off, size, usize) = (BitConverter.ToInt64(b, o + 20), BitConverter.ToInt32(b, o + 28), BitConverter.ToInt32(b, o + 32));
-            if (off < 0 || size <= 0 || usize < size || code0 + off + size > b.Length) return null;
+            if (off < 0 || size <= 0 || usize < size || off > b.Length - code0 - size) return null;   // no sum: a huge off would wrap
             keys[i] = Convert.ToHexStringLower(b.AsSpan(o, 20));
             var (start, k) = ((int)(code0 + off), i);
             codes[i] = () => [(k, size == usize ? b[start..(start + size)] : Decompress(b[start..(start + size)], usize))];
@@ -1705,7 +1718,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     static int PakVersion(string pak)
     {
-        try { using var r = new PakFileReader(pak); return (int)r.Info.Version; }
+        try { using var r = Pak(pak, null); return (int)r.Info.Version; }
         catch (Exception) { return 0; } // not a pak CUE4Parse knows
     }
 

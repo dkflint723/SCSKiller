@@ -84,7 +84,7 @@ public sealed class RouteFailover : DelegatingHandler
             using var response = await SendWithAgent(request, timeout.Token).ConfigureAwait(false);
             ok = response.Headers.Contains("X-SCSK");
         }
-        catch (Exception e) when (e is HttpRequestException or OperationCanceledException) { ok = false; }
+        catch (Exception) { ok = false; }   // any failure: an unexpected one must not leave stickyUntil at MaxValue
         lock (gate) (current, stickyUntil) = ok ? (0, default) : (current, clock.GetUtcNow() + Sticky);
     }
 

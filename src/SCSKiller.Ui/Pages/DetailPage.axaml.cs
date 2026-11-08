@@ -52,6 +52,7 @@ public sealed partial class DetailPage : UserControl, INavigable
     protected override void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
+        if (Vm == null) return;   // the game was gone (NavigatedTo): the Library replaces this page
         Host.Core.GameChanged += OnChanged; Host.Core.QueueChanged += OnQueue; Host.Icons.Changed += refresh.Request;
         if (Host.Core is ScsKiller k) k.ScanProgressed += progress.Request;   // a D3DSCache fold's share (FoldLine)
         if (Host.Account is { } account) account.Changed += refresh.Request;
@@ -69,7 +70,12 @@ public sealed partial class DetailPage : UserControl, INavigable
 
     public void NavigatedTo(object? arg)
     {
-        Vm = new DetailVm((string)arg!);
+        try { Vm = new DetailVm((string)arg!); }
+        catch (GameGoneException)   // a scan dropped it between the click and here: back to the Library, not a crash
+        {
+            Host.Ui.TryEnqueue(App.Main.ShowLibrary);   // after this navigation has shown the page
+            return;
+        }
         Vm.ReadCaches();
         CrumbName.Text = Vm.Name;
         Vm.PropertyChanged += (_, _) => Shown();

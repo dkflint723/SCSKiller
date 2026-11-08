@@ -177,7 +177,7 @@ public sealed class Community
 
     /// <summary>The manifest: the local copy while it was checked less than <see cref="ManifestMaxAge"/> ago (its file's write
     /// time) and not <see cref="Expire"/>d, else brought up to date first (3 s per route). A failed check keeps the copy (null when there's none);
-    /// after a 429 or 503 none is made until its Retry-After (1 h without one, a day at most), offline for 5 minutes.
+    /// after a 429 or 503 none is made until its Retry-After (1 h without one, a day at most), after any other refusal or failure for 5 minutes.
     /// <paramref name="wanted"/> false right before a send (any route): the copy, with no request and no <see cref="Problem"/>.</summary>
     public async Task<CommunityManifest?> ManifestAsync(CancellationToken ct = default, Func<bool>? wanted = null)
     {
@@ -209,7 +209,9 @@ public sealed class Community
                 if (next == null)
                 {
                     Problem = Refused(r);
-                    if (r.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable) ManifestBackoff(RetryAt(r) - clock.GetUtcNow());
+                    // any refusal waits: a sync pass asks once per game, which a failing server would otherwise see per game
+                    ManifestBackoff(r.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable
+                        ? RetryAt(r) - clock.GetUtcNow() : TimeSpan.FromMinutes(5));
                 }
                 else
                 {
@@ -223,7 +225,7 @@ public sealed class Community
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 Problem = Plain(e);
-                if (e is HttpRequestException or OperationCanceledException) ManifestBackoff(TimeSpan.FromMinutes(5));   // offline: not at every scan
+                ManifestBackoff(TimeSpan.FromMinutes(5));   // offline or an unreadable body: not at every scan
             }
             return manifest;
         }
@@ -288,7 +290,13 @@ public sealed class Community
             var r = await GetObject(obj, bearer, wanted, ct);
             if (r.StatusCode == HttpStatusCode.Unauthorized && token != null)   // expired or revoked: once with a new one
             {
-                var fresh = Off() ? null : await token(true, ct);
+                string? fresh;
+                try { fresh = Off() ? null : await token(true, ct); }
+                catch
+                {
+                    r.Dispose();   // the refresh threw: the 401 isn't read any further
+                    throw;
+                }
                 if (Off())
                 {
                     r.Dispose();
