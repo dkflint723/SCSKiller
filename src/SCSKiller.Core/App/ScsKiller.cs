@@ -6094,7 +6094,7 @@ public sealed partial class ScsKiller : IScsKiller
     async Task Share(Sharing sharing, List<Game> games)
     {
         sharing.Waiting = null;
-        await SharePacks(sharing);
+        if (ForkPacksHeld() is { } held) await SharePacks(sharing, held);
         string? logged = null;   // a back-off's problem once per pass, not once per game
         foreach (var g in games)
             try
@@ -6162,7 +6162,60 @@ public sealed partial class ScsKiller : IScsKiller
         EngineInfo? engine;   // the scan's cache, as the upload's engine string; before the first scan, the one it saved
         lock (_scanLock) engine = (_scan ??= Store.LoadScan()).GetValueOrDefault(g.Id)?.Engine;
         // chained: a mod's d3d12.dll renamed behind the recorder, or the recorder installed as OptiScaler's plugin
-        return ForkBuild.UploadBlock(engine, new(rec.RecorderChained != null || rec.RecorderFiles.ContainsKey(DllOpti), ReShadeOf(g)));
+        return ForkBuild.UploadBlock(engine, new(rec.RecorderChained != null || rec.RecorderFiles.ContainsKey(DllOpti), ReShadeOf(g),
+            Marked(g.Id, ForkBuild.MinimalMarker), Marked(g.Id, ForkBuild.LayeredMarker)));
+    }
+
+    /// <summary>The game's folder holds a marker an earlier Kindling build wrote (this build writes none).</summary>
+    bool Marked(string gameId, string marker) => File.Exists(Path.Combine(Store.GameDir(gameId), marker));
+
+    /// <summary>The upscaler packs an earlier Kindling build held back, paths under the packs folder: the file's list, and every
+    /// pack a marked game's recording filled (<see cref="ForkBuild.HoldPacks"/>). Every game folder of the data folder counts,
+    /// also a game no longer listed. Null = none is shared this pass: the list can't be read or written. Empty, and nothing
+    /// written, for a PC no earlier Kindling build ran on.</summary>
+    HashSet<string>? ForkPacksHeld()
+    {
+        if ((_planner as Planner)?.Packs is not { } packs) return ForkBuild.NewPackSet();
+        try
+        {
+            var games = Path.Combine(Store.DataDir, "games");
+            // a folder's id may not be the game's ("steam_1" for "steam:1"): it names the same folder, which the sources are mapped to
+            var marked = (Directory.Exists(games) ? Directory.GetDirectories(games) : []).Where(ForkBuild.Marked).ToList();
+            var held = ForkBuild.HoldPacks(packs.Dir, Path.Combine(Store.DataDir, ForkBuild.PacksHeld), marked, SourceDir);
+            if (held.Count > 0)
+                ForkSkipped("upscaler packs", $"{string.Join(", ", held.Order(StringComparer.OrdinalIgnoreCase))}: filled from a recording an earlier Kindling build held back: never shared from this build");
+            return held;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ForkSkipped("upscaler packs", $"the list of the packs it holds back can't be read or written: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>The game folder of a pack header's source (a game id); null when it isn't a game's ("community").</summary>
+    string? SourceDir(string source)
+    {
+        try { return Store.GameDir(source); }
+        catch (ArgumentException) { return null; }
+    }
+
+    /// <summary>A cleared recording's markers go with it, once the packs it filled are held for good; when they can't be, the
+    /// markers stay, and the next clear tries again.</summary>
+    void ForkCleared(Game g)
+    {
+        var dir = Store.GameDir(g.Id);
+        if (!ForkBuild.Marked(dir)) return;
+        try
+        {
+            if ((_planner as Planner)?.Packs is { } packs)
+                ForkBuild.HoldPacks(packs.Dir, Path.Combine(Store.DataDir, ForkBuild.PacksHeld), [dir], SourceDir);
+            ForkBuild.ClearMarkers(dir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log?.Report($"{g.Name}: this build still doesn't share it ({e.Message}): clear the recording again");
+        }
     }
 
     readonly HashSet<string> _forkSkips = [];
@@ -6196,8 +6249,9 @@ public sealed partial class ScsKiller : IScsKiller
         return Has(exeDir) ? vk != null && Written(vk) > Written(exeDir) ? vk : exeDir : vk ?? OfflineSessionDir(Store, g.Id);
     }
 
-    /// <summary>This PC's packs of the shared vendors that gained records since they were last uploaded (<see cref="Sharing.SharePacksAsync"/>).</summary>
-    async Task SharePacks(Sharing sharing)
+    /// <summary>This PC's packs of the shared vendors that gained records since they were last uploaded (<see cref="Sharing.SharePacksAsync"/>),
+    /// but those an earlier Kindling build held back (<paramref name="held"/>, paths under the packs folder).</summary>
+    async Task SharePacks(Sharing sharing, IReadOnlySet<string> held)
     {
         if ((_planner as Planner)?.Packs is not { } packs || PackGpu(Vendor.Vendor) is not { } gpu) return;
         try
@@ -6205,7 +6259,8 @@ public sealed partial class ScsKiller : IScsKiller
             // every recording's, also one whose import hasn't run since (a crash between its merge and the packs' exclusion)
             try { packs.Exclude(Recordings.LayerMadeOnDisk(Store.DataDir)); }
             catch (Recordings.IncompleteLayerList e) { sharing.Waiting = e.Message; return; }
-            foreach (var (dll, n) in await sharing.SharePacksAsync(packs.Dir, gpu, AppVersion.Current.ToString(), LayerMadeNow))
+            foreach (var (dll, n) in await sharing.SharePacksAsync(packs.Dir, gpu, AppVersion.Current.ToString(), LayerMadeNow,
+                         held: path => held.Contains(Path.GetRelativePath(packs.Dir, path))))
                 Log?.Report($"{dll}: upscaler pack shared ({n:N0} pipelines)");
             if (sharing.Problem is { } why) Log?.Report($"sharing upscaler packs: {why}");
         }
@@ -7649,7 +7704,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (!GameFolderWrite(s.Game))
                 throw new InvalidOperationException($"{s.Game.Name} is running");
             var files = RecordingFiles(s.Game).Select(f => new FileInfo(f)).Where(f => f.Exists).ToList();
-            if (files.Count == 0) return false;
+            if (files.Count == 0) { ForkCleared(s.Game); return false; }   // an earlier Kindling build's markers have nothing left to hold
             AppCacheFiles.DeleteAll(files);   // all or none; throws "files in use by <process>"
             var rec = Store.LoadGame(gameId);
             // a changed recording: the next compile re-plans, and the scan's planner check runs again without it
@@ -7658,6 +7713,7 @@ public sealed partial class ScsKiller : IScsKiller
             WriteKeys(s.Game, rec);   // it named the deleted copy's blobs and records
             Store.SaveGame(gameId, rec);
             RecorderLog($"{s.Game.Name}: recording cleared ({string.Join(", ", files.Select(f => f.FullName))})");
+            ForkCleared(s.Game);   // its packs are held for good, then an earlier Kindling build's markers go (kept when they can't be)
             UpdateRecorderIni(s.Game, rec);
             Refresh(s.Game);
             return true;

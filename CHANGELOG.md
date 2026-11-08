@@ -19,6 +19,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   hashes are unchanged.
 - Even then, a game isn't shared while its engine isn't known, while its recorder runs alongside a mod's `d3d12.dll`, or
   while ReShade is loaded where Kindling can't reproduce it. The log says which, once per run.
+- What an earlier Kindling build held back stays held back: a game with its `.fork` markers isn't shared (nor rated or
+  reported) until you clear its recording, and the upscaler packs it listed in `packs-held.fork` or filled from such a game
+  are never uploaded. Nothing changes for a PC that never ran that build.
 - This build registers its own anonymous upload device (`upload-fork.dat`), never an official build's.
 - This build names itself to every server it talks to: `Kindling/<version> (unofficial fork of SCSKiller; Windows …)`,
   and its version is `0.0.0-dkfork.N` (a packaged build's `X.Y.Z-dkfork.N`), never an official one.

@@ -367,7 +367,10 @@ no active check. Every request through `RouteFailover` sends `Kindling/<version>
 (its recording, Vulkan recording and outcome report) only when an official build could have made it
 (`ForkBuild.UploadBlock`, read at each pass, logged once a run): its engine is known, its recorder isn't chained to a mod
 (`GameRecord.RecorderChained`, or installed as OptiScaler's plugin), and no ReShade a copy can't reproduce
-(`ReShadeInstall.Copyable` false) is loaded. The upload's contents are upstream's, unchanged.
+(`ReShadeInstall.Copyable` false) is loaded. An earlier Kindling build's markers are still honored though this one writes none:
+a game folder with `recorded-minimal.fork` or `recorded-layered.fork` is refused by the same block until its recording is cleared,
+and the upscaler packs in `packs-held.fork` or filled from such a game (`ForkBuild.HoldPacks`) are never uploaded (`ClearRecording`
+holds the packs, then removes the markers). The upload's contents are upstream's, unchanged.
 
 **Kindling: the name.** Only what a user reads says Kindling (`ForkBuild.Name`): the window and its title row, About,
 Settings and the pages' text, the welcome dialog's title and its first paragraph (the rest is SCSKiller's own text), the

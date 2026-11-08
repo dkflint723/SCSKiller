@@ -541,9 +541,10 @@ public sealed class Sharing
     /// that changed since its last upload, under its pack key for that vendor, when sharing is on. Stamped per pack file in
     /// packs-shared.json, so a pack goes again only once it gains records. Returns the DLL name and PSO count of each upload.</summary>
     /// <paramref name="layered"/>: the records a layer made (<see cref="MiddlewarePacks.LayerMade"/>), read again before each
-    /// pack's payload and never in an upload whatever a pack holds; one that can't be read ends the pass.
+    /// pack's payload and never in an upload whatever a pack holds; one that can't be read ends the pass. <paramref name="held"/>:
+    /// a pack file (its full path) never uploaded, nor stamped (this unofficial build's, <see cref="ForkBuild.PacksHeld"/>).
     public async Task<List<(string Dll, int Psos)>> SharePacksAsync(string packsDir, string gpu, string appVersion, Func<IReadOnlySet<string>>? layered = null,
-        CancellationToken ct = default)
+        Func<string, bool>? held = null, CancellationToken ct = default)
     {
         var done = new List<(string, int)>();
         if (!enabled() || clock.GetUtcNow() < backoffUntil) return done;
@@ -556,6 +557,7 @@ public sealed class Sharing
         {
             foreach (var path in files)
             {
+                if (held?.Invoke(path) == true) continue;
                 var fi = new FileInfo(path);
                 var stamp = $"{fi.Length}:{fi.LastWriteTimeUtc.Ticks}|{gpu}";
                 var name = Path.GetFileName(path);
