@@ -1,11 +1,11 @@
 name: Bug report
-description: Something doesn't work, or a game isn't detected or compiled as it should be.
+description: Something doesn't work in Kindling (this unofficial fork of SCSKiller), or a game isn't detected or compiled as it should be.
 labels: [bug]
 body:
   - type: input
     id: version
     attributes:
-      label: SCSKiller version
+      label: Kindling version
       description: The app's About page shows it.
     validations:
       required: true
@@ -47,12 +47,12 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Open SCSKiller
+        1. Open Kindling
         2. Press Compile on ...
         3. ...
   - type: textarea
     id: logs
     attributes:
       label: Output or error text
-      description: The error shown, or the output of `scskiller status "<game>"`. If SCSKiller closed on its own or didn't start, the end of `crash.log` in `%LOCALAPPDATA%\SCSKiller`. Remove anything personal (user names in paths).
+      description: The error shown, or the output of `scskiller status "<game>"`. If Kindling closed on its own or didn't start, the end of `crash.log` in `%LOCALAPPDATA%\SCSKiller`. Remove anything personal (user names in paths).
       render: text

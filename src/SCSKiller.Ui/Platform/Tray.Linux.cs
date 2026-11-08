@@ -30,12 +30,12 @@ sealed class Tray : IDisposable
 
     public Tray(string iconPath)
     {
-        var open = new NativeMenuItem("Open SCSKiller");
+        var open = new NativeMenuItem($"Open {ForkBuild.Name}");
         var menu = new NativeMenu();
         foreach (var item in new[] { open, _pause, _quit }) item.Click += Clicked;
         foreach (var item in new NativeMenuItemBase[] { open, _pause, new NativeMenuItemSeparator(), _quit }) menu.Items.Add(item);
         menu.NeedsUpdate += (_, _) => Refresh();
-        _icon = new TrayIcon { Icon = new WindowIcon(iconPath), ToolTipText = "SCSKiller", Menu = menu };
+        _icon = new TrayIcon { Icon = new WindowIcon(iconPath), ToolTipText = ForkBuild.Name, Menu = menu };
         _icon.Clicked += Clicked;
         // Avalonia makes the platform icon only for one in the Application's TrayIcon.Icons
         if (Host.Platform.Tray) TrayIcon.SetIcons(Application.Current!, new TrayIcons { _icon });

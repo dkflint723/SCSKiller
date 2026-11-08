@@ -116,7 +116,7 @@ static class AesKeyDialog
     }
 
     const string MultiKeyHint = "0x and 64 hex digits, one key per line";
-    const string AesIntro = "SCSKiller couldn't find this game's key in its exe (protected exes hide it).";
-    const string GameKeyIntro = "With this game's key, SCSKiller compiles it without a recording.";
+    const string AesIntro = "Kindling couldn't find this game's key in its exe (protected exes hide it).";
+    const string GameKeyIntro = "With this game's key, Kindling compiles it without a recording.";
     const string SavedPageHint = "If the forum asks for a browser check: open the list, save the page (Ctrl+S, 'Webpage, HTML only' is enough), then load it here.";
 }

@@ -254,7 +254,7 @@ public sealed partial class ScsKiller
         // the folders that hold the game items' files: their size is what the items list, never all of Steam's
         var all = items.Values.SelectMany(i => i.Files).ToList();
         CacheFolder Holding(string label, string dir) => Read(dir, out _) with { Label = label, Bytes = all.Where(f => GameFiles.Inside(dir, f.FullName)).Sum(f => f.Length) };
-        if (AppCache is NvidiaLinuxAppCache nl) shown.Add(Holding("Compiled by SCSKiller", nl.GamesDir));
+        if (AppCache is NvidiaLinuxAppCache nl) shown.Add(Holding($"Compiled by {ForkBuild.Name}", nl.GamesDir));
         var shadercache = $"{SteamSource.AppsPart}{Path.DirectorySeparatorChar}shadercache{Path.DirectorySeparatorChar}";
         foreach (var dir in all.Select(f => f.FullName.IndexOf(shadercache, GameFiles.Names) is var at and >= 0 ? f.FullName[..(at + shadercache.Length - 1)] : null)
             .OfType<string>().Distinct(StringComparer.FromComparison(GameFiles.Names)).Order(StringComparer.Ordinal))

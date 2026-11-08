@@ -31,7 +31,7 @@ static class GameFolderDialog
                 Spacing = 4, [!Layoutable.MaxWidthProperty] = new DynamicResourceExtension("TextFit.520"),
                 Children =
                 {
-                    new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Before it records, SCSKiller checks the whole game folder for anti-cheat. "
+                    new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Before it records, Kindling checks the whole game folder for anti-cheat. "
                         + "Pick the game's own folder, not one that holds other games." },
                     new TextBlock { TextWrapping = TextWrapping.Wrap, Text = Host.Platform.AddGamesNote ?? "", IsVisible = Host.Platform.AddGamesNote != null },
                     Label("Game"),

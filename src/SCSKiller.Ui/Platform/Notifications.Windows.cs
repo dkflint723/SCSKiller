@@ -28,7 +28,9 @@ static partial class Notifications
         try
         {
             AppNotificationManager.Default.NotificationInvoked += (_, a) => invoked(a.Arguments);
-            AppNotificationManager.Default.Register();
+            // the name notifications show: this build's own; the AUMID and its registration stay as they were
+            try { AppNotificationManager.Default.Register(ForkBuild.Name, new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))); }
+            catch (Exception) { AppNotificationManager.Default.Register(); }   // the name and icon didn't take: the exe's, as before
             RepairActivator();
             return Available = true;
         }

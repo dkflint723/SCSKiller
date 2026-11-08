@@ -84,12 +84,12 @@ public sealed class SettingsVm : Bindable
     public string NotConfigurableText => Mesa ? "Mesa keeps each game's shaders in one file with no size limit, so there is no size setting."
         : V.Vendor == GpuVendor.Amd
         ? $"The AMD driver's DirectX 12 shader cache is fixed at {Format.Bytes(AmdAppCache.DxcCacheCap)}, with no size setting. "
-          + "Past it, the driver removes the least recently used games' caches when a game starts" + (KeptOn ? ". Kept games are put back." : ", and SCSKiller shows those games as needing a compile again.")
+          + "Past it, the driver removes the least recently used games' caches when a game starts" + (KeptOn ? ". Kept games are put back." : ", and Kindling shows those games as needing a compile again.")
         : V.Vendor == GpuVendor.Intel
         ? $"The Intel driver keeps up to {Format.Bytes(IntelBackend.PerGameCap)} of shaders per game, with no size setting. "
-          + "Past it, the driver drops that game's older shaders, so SCSKiller compiles the most likely ones first."
-        : PerGameNvidia ? $"SCSKiller gives each game {Format.Bytes(NvidiaLinux.PlacedCacheSize)} of NVIDIA shader cache, with no size setting."
-        : $"SCSKiller can't change the cache size of {Fmt.Vendor(V.Vendor)} drivers yet, so it only shows what is used. "
+          + "Past it, the driver drops that game's older shaders, so Kindling compiles the most likely ones first."
+        : PerGameNvidia ? $"Kindling gives each game {Format.Bytes(NvidiaLinux.PlacedCacheSize)} of NVIDIA shader cache, with no size setting."
+        : $"Kindling can't change the cache size of {Fmt.Vendor(V.Vendor)} drivers yet, so it only shows what is used. "
           + "If games get evicted, raise the limit in your GPU vendor's control panel.";
 
     public string CurrentLimit => read == null ? Format.Dash : read.Value.Limit switch
@@ -250,14 +250,14 @@ public sealed class SettingsVm : Bindable
         }
         finally { Changed(nameof(StartWithWindows)); }
     }
-    public static string StartText { get; } = OperatingSystem.IsWindows() ? "Start SCSKiller when Windows starts" : "Start when you sign in";
+    public static string StartText { get; } = OperatingSystem.IsWindows() ? "Start Kindling when Windows starts" : "Start when you sign in";
     public static string RemoveRecordersNote { get; } = "Removes the recorder from every game and quits. Use it before deleting "
         + (OperatingSystem.IsWindows() ? "the portable folder." : "the AppImage.");
     public static string StartNote { get; } = OperatingSystem.IsWindows() ? "It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
         : "It waits in the background to offer a rebuild after a driver update.";
     // no sign-in task on Linux: the running app notifies
     public static string AskNote { get; } = OperatingSystem.IsWindows() ? "A notification offers Compile now, When idle, or Skip. Nothing starts on its own."
-        : "While SCSKiller runs, a notification offers Compile now, When idle, or Skip.";
+        : "While Kindling runs, a notification offers Compile now, When idle, or Skip.";
     // Linux has no input idle time: the background compile starts at once and pauses only for a game
     public static string WhenIdleNote { get; } = OperatingSystem.IsWindows() ? "Stops the moment you touch the mouse or keyboard and picks up where it left off."
         : "Rebuilds in the background and pauses while a game runs.";
@@ -306,7 +306,7 @@ public sealed class SettingsVm : Bindable
     /// "Skipped: …"), never by color alone.</summary>
     public static string ImportLine(Core.Unreal.KeyImportGame g) => $"{g.Name}: {g.Message}";
     public string CloseQuitsNote => Host.Tray.Shown
-        ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller in the tray. Right-click its icon to quit."
+        ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps Kindling in the tray. Right-click its icon to quit."
         : "No tray icon on this desktop, so closing the window quits.";
 
     /// <summary>While the page is shown: the close note follows the tray host as it comes and goes.</summary>
@@ -415,7 +415,7 @@ public sealed class SettingsVm : Bindable
     {
         var (label, limit) = Sizes[SizeIndex];
         if (!await confirm($"Set the shader cache limit to {label}?",
-                $"This is a global {Fmt.Vendor(V.Vendor)} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, " +
+                $"This is a global {Fmt.Vendor(V.Vendor)} driver setting: it applies to every game on this PC, not only the ones Kindling compiles, " +
                 "and stays until you change it. Windows will ask for administrator permission.\n\n" +
                 "Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " +
                 "You can switch back to the driver default here at any time.",

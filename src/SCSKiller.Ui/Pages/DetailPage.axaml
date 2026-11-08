@@ -78,11 +78,11 @@
 
             <Grid x:Name="Header" ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="16">
                 <WrapPanel x:Name="HeaderButtons" Grid.Column="2" ItemSpacing="8" LineSpacing="8" VerticalAlignment="Center">
-                    <Button Content="Rename…" Click="OnRename" IsVisible="{Binding IsManual}" ToolTip.Tip="The name SCSKiller shows for this game" />
+                    <Button Content="Rename…" Click="OnRename" IsVisible="{Binding IsManual}" ToolTip.Tip="The name Kindling shows for this game" />
                     <Button Content="Game folder…" Click="OnGameFolder" IsVisible="{Binding IsManual}"
-                            ToolTip.Tip="The folder SCSKiller checks for anti-cheat before it records this game" />
-                    <Button Content="Game exe…" Click="OnGameExe" IsVisible="{Binding CanChooseExe}" ToolTip.Tip="Choose the exe SCSKiller compiles and records for" />
-                    <Button Content="Auto exe" Click="OnAutoExe" IsVisible="{Binding ExeChosen}" ToolTip.Tip="Go back to the exe SCSKiller picks" />
+                            ToolTip.Tip="The folder Kindling checks for anti-cheat before it records this game" />
+                    <Button Content="Game exe…" Click="OnGameExe" IsVisible="{Binding CanChooseExe}" ToolTip.Tip="Choose the exe Kindling compiles and records for" />
+                    <Button Content="Auto exe" Click="OnAutoExe" IsVisible="{Binding ExeChosen}" ToolTip.Tip="Go back to the exe Kindling picks" />
                     <Button Content="Open folder" Click="OnOpenExeFolder" ToolTip.Tip="Open the folder of the game's exe" />
                     <Button Content="Remove from library" Click="OnRemoveGame" ToolTip.Tip="{Binding RemoveTip}" />
                     <Panel Background="Transparent" ToolTip.Tip="{Binding PlayTip}" IsVisible="{Binding ShowPlay}">

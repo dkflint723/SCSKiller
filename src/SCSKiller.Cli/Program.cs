@@ -9,10 +9,11 @@ using SCSKiller.Core.Unreal;
 using SCSKiller.Core.Vendors;
 
 const string Usage = """
+    Kindling, an unofficial fork of SCSKiller: its command line
     usage: scskiller <command>
       scan [--rescan]                             discover games and show their status (--rescan: redo engine detection)
       add <exe> [<install folder>]                add a game no store lists, by its exe (with its folder: the recorder may go there)
-      exe <game> <exe>|auto                       a store game's exe: one of its install, or auto for the one SCSKiller picks
+      exe <game> <exe>|auto                       a store game's exe: one of its install, or auto for the one Kindling picks
       status [game]                               all games, or one in detail
       compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast] [--rt-only]
                                                   --idle: background priority. --when-idle: also only while nobody uses the PC.
@@ -37,8 +38,8 @@ const string Usage = """
         (cache set / nvidia-auto-shader, as the app runs them elevated: --yes skips the question, --result <file>
          writes the outcome as a JSON line, --for-user <SID> refuses a different account's elevation)
       record install|uninstall <game>
-      record remove-all                           take the recorder out of every game, as SCSKiller's uninstall does
-      record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy, asks first)
+      record remove-all                           take the recorder out of every game, as Kindling's uninstall does
+      record clear <game>                         delete the game's recording (the recorder's data files and Kindling's copy, asks first)
       record alongside <game> on|off              let the recorder chain to a mod's d3d12.dll (renamed, put back on removal)
       record grant <game>                         Linux: let the game's Flatpak launcher read the recorder folder (asks first)
       shared <game> on|off|follow                 use the shared shader hashes for the game: off, nothing is downloaded for it and its plans leave them out, follow = Settings
@@ -211,7 +212,7 @@ IGpuVendorBackend RunningGpu()
     return long.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var luid)
         && GpuBackends.Adapters().FirstOrDefault(a => a.Gpu.AdapterLuid == luid) is { } running
         ? ScsKiller.DetectGpu(GpuBackends.ChoiceOf(running))
-        : throw new InvalidOperationException("the GPU SCSKiller runs on isn't listed any more (a driver reload): restart SCSKiller and try again");
+        : throw new InvalidOperationException($"the GPU {ForkBuild.Name} runs on isn't listed any more (a driver reload): restart {ForkBuild.Name} and try again");
 }
 
 string? Opt(string name)
@@ -283,7 +284,7 @@ async Task<int> Status(string? query)
           cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk{(Format.InUseShown(c, g.CacheInUse) ? $", {Format.Bytes(g.CacheInUse)} in use" : "")} (driver-cache files its warms or the game had open)" : "-")}{(g.WindowsCache is { } wc ? $", {Format.Bytes(wc)} in its D3DSCache folder" : "")}
           keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App} as the game does: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
           recorder   {(g.RecorderInstalled ? ScsKiller.Frames11(g.Engine, k.Vendor.Caps) ? "installed, frame times only" : "installed" : g.RecorderForeign ? ScsKiller.ForeignPlaced : "not installed")}{((!g.RecorderInstalled || g.RecorderFailure != null) && RecorderWhy(g) is { } off && off != ScsKiller.ForeignNote ? $" ({off})" : g is { RecorderInstalled: false, RecorderForeign: true, RecorderSkip: null, RecorderEffective: false } ? " (record install <game> takes it over)" : "")}{(g.RecorderRefused is { } why ? $". {(ScsKiller.NeverRecorded(g) ? ScsKiller.NothingRecordedTitle + ". " : "")}{why}" : "")}
-          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and SCSKiller's copy)" : "-")}{(g.RecordingBytes > 0 && (g.RecordedPipelines ?? (g.Plan is { } pl ? pl.Recorded - (pl.FromDownload ?? 0) - (pl.FromCommunity ?? 0) : null)) is { } rp ? $", {rp:N0} pipelines" : "")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $". {ScsKiller.PausedNote(k.Settings)}" : "")}
+          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and Kindling's copy)" : "-")}{(g.RecordingBytes > 0 && (g.RecordedPipelines ?? (g.Plan is { } pl ? pl.Recorded - (pl.FromDownload ?? 0) - (pl.FromCommunity ?? 0) : null)) is { } rp ? $", {rp:N0} pipelines" : "")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $". {ScsKiller.PausedNote(k.Settings)}" : "")}
           last play  {(g.LastSession is { } l ? $"{Hms(l.Duration)}, {l.Requests} pipelines: {l.FromGameLibrary} from the game's library, {l.CacheHits} cache hits, {l.Compiles} compiles (worst {l.WorstCompileMs:0.0} ms){(l.StartupCompiles > 0 ? $", {l.StartupCompiles} compiles while the game started or loaded" : "")}{(l.RayQueryRecompiles > 0 ? $", {l.RayQueryRecompiles} ray-traced pipelines the driver partly recompiles every launch" : "")}{(l.StateObjectsReady + l.StateObjectsCompiled + l.StateObjectsStartupCompiled > 0 ? $". Ray tracing state objects: {l.StateObjectsReady} ready, {l.StateObjectsCompiled} compiled{(l.StateObjectsStartupCompiled > 0 ? $", {l.StateObjectsStartupCompiled} compiled while the game started or loaded" : "")}" : "")}" : "-")}
           1st launch {(rec.FirstLaunch is { } fl ? $"{fl.At.LocalDateTime:yyyy-MM-dd HH:mm}, after the last compile: {fl.Hits} cache hits, {fl.Compiles} compiles ({fl.Compiled * 100:0.0}% compiled{(fl.ShaderSets is { } sets ? $", {sets}" : "")})" : "-")}
         """);
@@ -443,7 +444,7 @@ async Task<int> BeforeAfterCommand()
             Console.WriteLine($"still set aside for {game}: {folder}");
             foreach (var f in files) Console.WriteLine($"  {f}");
         }
-        Console.WriteLine("SCSKiller puts it back at its next start, once nothing uses it");
+        Console.WriteLine($"{ForkBuild.Name} puts it back at its next start, once nothing uses it");
         if (code == 0) code = 3;
     }
     await k.WhenQueueIdle();
@@ -541,7 +542,7 @@ async Task<int> CachePage()
 {
     var k = await Open();
     var inv = k.CacheInventory();
-    if (inv.Folders.Count == 0 && inv.Groups.Count == 0) Console.WriteLine("SCSKiller doesn't know where this GPU's driver keeps its cache.");
+    if (inv.Folders.Count == 0 && inv.Groups.Count == 0) Console.WriteLine($"{ForkBuild.Name} doesn't know where this GPU's driver keeps its cache.");
     foreach (var f in inv.Folders)
         Console.WriteLine($"folder: {f.Label}  {f.Path}  {Format.Bytes(f.Bytes)}{(f.Exists ? "" : "  not created yet")}{(f.Final is { } at ? $"  stored in {at}" : "")}");
     Console.WriteLine($"total: {Format.Bytes(inv.Groups.Sum(g => g.Bytes))}");
@@ -612,7 +613,7 @@ async Task<int> RewarmStale(bool ifDriverChanged)
             }
             Console.WriteLine($"{stale.Count} game(s) need a re-warm (driver {k.Vendor.Gpu.DriverVersion}):");
             foreach (var s in stale) Row(s);
-            Console.WriteLine("Run 'scskiller compile <game>' or open SCSKiller to re-warm them.");
+            Console.WriteLine($"Run 'scskiller compile <game>' or open {ForkBuild.Name} to re-warm them.");
             return 0;
         // the app compiles them at once (ScsKiller.RewarmRightAway); without one, this run waits for idle
         case DriverUpdateMode.WhenIdle when k.Settings.DriverRightAway && ifDriverChanged && ScsKiller.StartDriverUpdated() is { } handedTo:

@@ -45,7 +45,7 @@ static class Program
             if (Installation.ThisElsewhere == null) UpdateHooks.Hooks(VelopackApp.Build()).Run();
             if (AppStore.RefusesLiveData())
             {
-                if (OperatingSystem.IsWindows()) MessageBoxW(0, AppStore.DevBuildRefusal, "SCSKiller", 0x10 /* MB_ICONERROR */);
+                if (OperatingSystem.IsWindows()) MessageBoxW(0, AppStore.DevBuildRefusal, ForkBuild.Name, 0x10 /* MB_ICONERROR */);
                 else Console.Error.WriteLine(AppStore.DevBuildRefusal);
                 return 1;
             }
@@ -91,7 +91,7 @@ static class Program
         var logged = CrashLog.Write(AppStore.DefaultDir, e);
         if (OperatingSystem.IsWindows())
         {
-            MessageBoxW(0, $"SCSKiller couldn't start. Details are in {Path.Combine(AppStore.DefaultDir, CrashLog.FileName)}", "SCSKiller", 0x10 /* MB_ICONERROR */);
+            MessageBoxW(0, $"{ForkBuild.Name} couldn't start. Details are in {Path.Combine(AppStore.DefaultDir, CrashLog.FileName)}", ForkBuild.Name, 0x10 /* MB_ICONERROR */);
             return true;
         }
         var failure = StartFailure.Of(e, AppStore.DefaultDir, logged);

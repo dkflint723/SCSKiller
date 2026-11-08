@@ -106,7 +106,7 @@ public sealed class AboutVm : Bindable
     public bool UpdatedElsewhere => UpdatesFrom != null;
     public bool ShowsAutoInstall => ShowsCheck && (!Wired || Updater.Channel != UpdateChannels.Internal);
     public bool CanCheck => !Updater.Checking && !Updater.Restarting;
-    public string UpdateNote => Updater.Downloading is { } d ? $"Downloading SCSKiller {d}…"
+    public string UpdateNote => Updater.Downloading is { } d ? $"Downloading {ForkBuild.Name} {d}…"
         : Updater.Checking ? "Checking for updates…"
         : Wired && Updater.Ready is { } v ? AutoInstall.ReadyNote(v, Updater.InstallsAutomatically)
         : Updater.UpToDateOn is { } c ? UpdateChannels.UpToDate(c, Host.Core.Settings.UpdateChannel, AppVersion.Current.Channel) : "";

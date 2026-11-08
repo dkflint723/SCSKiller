@@ -4,6 +4,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### Name (Kindling, this unofficial build)
+
+- **This unofficial fork is called Kindling** (an unofficial fork of SCSKiller): the window, About, Settings, the welcome
+  dialog, the notification area, notifications, the sign-in page and the command line's usage say Kindling. Its files,
+  data folder, recorder files in game folders and the `scskiller` command keep their names, so it still works beside an
+  official build.
+
 ### Sharing (Kindling, this unofficial build)
 
 - **Nothing is shared from this build unless you tick "Share from this unofficial build too"** in Settings, under

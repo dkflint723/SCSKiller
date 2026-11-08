@@ -368,6 +368,18 @@ no active check. Every request through `RouteFailover` sends `Kindling/<version>
 (`GameRecord.RecorderChained`, or installed as OptiScaler's plugin), and no ReShade a copy can't reproduce
 (`ReShadeInstall.Copyable` false) is loaded. The upload's contents are upstream's, unchanged.
 
+**Kindling: the name.** Only what a user reads says Kindling (`ForkBuild.Name`): the window and its title row, About,
+Settings and the pages' text, the welcome dialog's title and its first paragraph (the rest is SCSKiller's own text), the
+notification area's tooltip and menu, the notifications' display name (Windows: `AppNotificationManager.Register(name,
+icon)`, the AUMID unchanged; Linux: the `Notify` app name), the sign-in page, the update notes, the CLI's usage, the
+Linux menu entry's Name and Comment, and the assemblies' Product (`Directory.Build.props`). Everything a build or another
+program finds by name keeps SCSKiller's, so this build and an official one keep working side by side: file and assembly
+names, namespaces, the data folder, the AUMID and toast activator, Velopack's packId, the desktop file's id and
+StartupWMClass, keyring and mutex names, the tray's window class, the recorder's markers and version resource, the CLI's
+`scskiller` command and `--version` output, and `UpdateFeeds`. Core's other messages (statuses, game notes, errors, the log)
+still say SCSKiller, to keep upstream merges clean; links to scskiller.com, SCSKiller's server, news, Patreon and
+official recordings are SCSKiller's and say so.
+
 **Kindling: AES key lookup and import.** `KeyCollection` looks an encrypted Unreal game's key up in the user's imported
 keys (`keys\imported.json`, from Settings' Import keys… or `scskiller key --import`), then in the community's key list
 (the first post of a cs.rin.ru forum topic: a plain HTTPS GET, 20 s, at most 4 MB, at most daily after scans with

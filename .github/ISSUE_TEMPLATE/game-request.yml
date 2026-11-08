@@ -1,5 +1,5 @@
 name: Game request
-description: Ask for a game that SCSKiller doesn't support yet, or supports badly.
+description: Ask for a game that Kindling (this unofficial fork of SCSKiller) doesn't support yet, or supports badly.
 labels: [game request]
 body:
   - type: input
@@ -32,7 +32,7 @@ body:
   - type: input
     id: status
     attributes:
-      label: What SCSKiller says about it
+      label: What Kindling says about it
       description: The status the app shows for the game, if it's detected at all.
   - type: textarea
     id: stutter

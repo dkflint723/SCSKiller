@@ -115,7 +115,7 @@ public static partial class UpdateChannels
     /// <summary>The note after a check of <paramref name="checkedChannel"/> found nothing newer: it names that channel when it
     /// isn't the wanted one.</summary>
     public static string UpToDate(string checkedChannel, string? chosen, string buildChannel) =>
-        checkedChannel == (chosen ?? buildChannel) ? "SCSKiller is up to date." : $"SCSKiller is up to date on the {checkedChannel} channel.";
+        checkedChannel == (chosen ?? buildChannel) ? $"{ForkBuild.Name} is up to date." : $"{ForkBuild.Name} is up to date on the {checkedChannel} channel.";
 
     /// <summary>A download from the <paramref name="staged"/> channel's feed still installs: it is the feed <see cref="Effective"/>
     /// picks. With the entitlements unknown (null: signed in, but no token read since the start, as at a logon without
@@ -303,8 +303,8 @@ public static class AutoInstall
         && (AppVersion.Parse(staged.Version) is { } v && v.CompareTo(current) > 0 || backToStable && staged.Channel == UpdateChannels.Stable);
 
     public static string ReadyNote(string version, bool auto) => auto
-        ? $"SCSKiller {version} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top."
-        : $"SCSKiller {version} is ready: use Restart to update at the top.";
+        ? $"{ForkBuild.Name} {version} is ready: it installs the next time {ForkBuild.Name} starts or quits, or use Restart to update at the top."
+        : $"{ForkBuild.Name} {version} is ready: use Restart to update at the top.";
 }
 
 /// <summary>Where updates and their source come from. <see cref="GhRepo"/> is compiled in: renaming the public repo
@@ -740,7 +740,7 @@ public static class Busy
     /// trusted (<see cref="NamedMutex.Held"/>): nothing waiting on it goes ahead.</summary>
     public static bool IsHeld(string? name = null) => NamedMutex.Held(name ?? Name);
 
-    public const string CompileStarted = "A compile started meanwhile. The update installs when SCSKiller quits after it has finished.";
+    public const string CompileStarted = $"A compile started meanwhile. The update installs when {ForkBuild.Name} quits after it has finished.";
 
     /// <summary>The updater's side of the handshake, the last step before it hands an update over: the marker, then
     /// <see cref="IsHeld"/>. A compile worker holds Busy first, then reads the marker (<see cref="TryHold"/>), so one of the

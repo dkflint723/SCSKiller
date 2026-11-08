@@ -115,7 +115,7 @@ public sealed class AccountVm : Bindable
     public bool ShowsUpdates => Entitled || OffersBackToStable || UpdatesFrom != null;
     public string ChannelNote => UpdatesFrom ?? (Updater.Checking ? "Checking for updates…"
         : Wired && Updater.Ready is { } v ? AutoInstall.ReadyNote(v, Updater.InstallsAutomatically)
-        : (InstallsAutomatically ? "Updates download in the background and install the next time SCSKiller starts or quits, never during a compile or a game."
+        : (InstallsAutomatically ? $"Updates download in the background and install the next time {ForkBuild.Name} starts or quits, never during a compile or a game."
             : "Updates download in the background, and Restart to update installs them.") + " Leaving an early channel keeps this build until Stable passes it.");
     // unwired, nothing is downloaded: the next download's channel is the chosen one, as Updater.Channel says then
     static bool InstallsAutomatically => Wired ? Updater.InstallsAutomatically : AutoInstall.On(Host.Core.Settings, Chosen);

@@ -162,7 +162,7 @@ public static class LinuxStartup
         Task<bool?> RequestAsync(bool autostart, IReadOnlyList<string> commandline, string reason);
     }
 
-    public const string PortalReason = "Start SCSKiller when you sign in";
+    public const string PortalReason = $"Start {ForkBuild.Name} when you sign in";
 
     /// <summary>A Flatpak's apply, which can't read the entry the portal writes: only the user's toggle asks for what it says,
     /// the start asks nothing (the portal keeps the entry, and a desktop's background-apps setting may have removed it).

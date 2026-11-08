@@ -21,7 +21,7 @@ sealed class GateWindow : Window
     public GateWindow(Account account, string dataDir, Action opened)
     {
         (this.account, this.dataDir, this.opened) = (account, dataDir, opened);
-        (Title, CanResize) = ("SCSKiller", false);
+        (Title, CanResize) = (ForkBuild.Name, false);
         Bind(WidthProperty, this.GetResourceObservable("TextFit.520"));
         Bind(HeightProperty, this.GetResourceObservable("TextFit.300"));
         Icon = new WindowIcon(AssetLoader.Open(App.Asset("app.ico")));

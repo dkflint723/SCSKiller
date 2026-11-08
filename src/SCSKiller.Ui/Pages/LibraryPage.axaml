@@ -35,7 +35,7 @@
                             <TextBlock Text="Add a game…" />
                         </StackPanel>
                     </Button>
-                    <DropDownButton x:Name="FoldersButton" AutomationProperties.Name="Game folders" ToolTip.Tip="Folders of games no store lists: SCSKiller looks in them at every scan"
+                    <DropDownButton x:Name="FoldersButton" AutomationProperties.Name="Game folders" ToolTip.Tip="Folders of games no store lists: Kindling looks in them at every scan"
                                     IsVisible="{Binding CanUseGameFolders, Mode=OneTime}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Folder}" FontSize="14" VerticalAlignment="Center" />

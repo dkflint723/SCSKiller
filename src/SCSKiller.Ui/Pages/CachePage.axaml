@@ -32,7 +32,7 @@
                     <TextBlock Text="Where the driver keeps its cache" Classes="Section" />
                     <TextBlock Text="{Binding CacheFolderNote}"
                                Classes="Caption" TextWrapping="Wrap" />
-                    <TextBlock Text="SCSKiller doesn't know where this GPU's driver keeps its cache." IsVisible="{Binding NoFolders}" TextWrapping="Wrap" />
+                    <TextBlock Text="Kindling doesn't know where this GPU's driver keeps its cache." IsVisible="{Binding NoFolders}" TextWrapping="Wrap" />
                     <ItemsControl ItemsSource="{Binding Folders}">
                         <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="12" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>

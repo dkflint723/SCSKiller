@@ -45,7 +45,7 @@ public static class Toasts
     public static Toast NewsMore(int n) => new("SCSKiller news", NewsState.MoreLine(n), [Arg("action", "news")], []);
 
     /// <summary>The close button hid the window to the notification area, the first time ever.</summary>
-    public static Toast TrayNotice { get; } = new("SCSKiller is still running", "It's in the notification area, right-click the icon to quit.",
+    public static Toast TrayNotice { get; } = new($"{ForkBuild.Name} is still running","It's in the notification area, right-click the icon to quit.",
         [Arg("action", "open")], []);
 
     /// <summary>A compile the user started finished or failed (<see cref="ScsKiller.EndedNotice"/>): a click opens its page.</summary>

@@ -365,7 +365,7 @@ public static class Updater
                     if (UpdateFeeds.PackageHold(Tries(), DateTimeOffset.Now, asked, AppVersion.Parse(info.TargetFullRelease.Version.ToString())?.Channel != UpdateChannels.Stable) is { } until)
                     {
                         Log($"The download of {info.TargetFullRelease.Version} waits until {until:g}");
-                        Problem = asked ? $"The update was downloaded too many times today. SCSKiller tries again at {until:g}." : null;   // a click skips only the backoff
+                        Problem = asked ? $"The update was downloaded too many times today. {ForkBuild.Name} tries again at {until:g}." : null;   // a click skips only the backoff
                         return;
                     }
                     Downloading = info.TargetFullRelease.Version.ToString();
@@ -401,14 +401,14 @@ public static class Updater
         catch (HttpRequestException e) when (e.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             Log("The update server asked SCSKiller to wait (429)");
-            Problem = asked ? "The update server asked SCSKiller to wait. It checks again by itself later." : null;
+            Problem = asked ? $"The update server asked {ForkBuild.Name} to wait. It checks again by itself later." : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
         {
             Log($"Couldn't check for updates: {e.GetType().Name}: {e.Message}");
             // offline or a hiccup: the next check retries; say so only once it has kept failing for a day
-            Problem = ++failures >= 24 ? "Couldn't reach the update server for a while. SCSKiller keeps trying."
-                : asked ? "Couldn't reach the update server. SCSKiller tries again within the hour." : null;
+            Problem = ++failures >= 24 ? $"Couldn't reach the update server for a while. {ForkBuild.Name} keeps trying."
+                : asked ? $"Couldn't reach the update server. {ForkBuild.Name} tries again within the hour." : null;
         }
         catch (Exception e)
         {
@@ -482,7 +482,7 @@ public static class Updater
             for (var i = 0; i < 20 && Busy.IsHeld(); i++) await Task.Delay(100);   // our worker lets go just after the item ends
             if (Busy.IsHeld())
             {
-                Problem = Busy.Untrusted() ?? "The background rebuild after a driver update is compiling. The update installs when SCSKiller quits after it has finished.";
+                Problem = Busy.Untrusted() ?? $"The background rebuild after a driver update is compiling. The update installs when {ForkBuild.Name} quits after it has finished.";
                 Log($"Restart to update: {Problem}");
                 return false;
             }

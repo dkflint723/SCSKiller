@@ -87,7 +87,7 @@ static class StartDialogs
     /// <summary>Primary: the Patreon page, Secondary: no, each never asked again. X or Esc: <see cref="ContentDialogResult.None"/>.</summary>
     public static ContentDialog SupportDialog() => new()
     {
-        Title = "Enjoying SCSKiller?", Content = "If it's been useful to you, you can support it on Patreon.",
+        Title = $"Enjoying {ForkBuild.Name}?", Content = $"{ForkBuild.Name} is an unofficial fork of SCSKiller. If it's been useful to you, you can support SCSKiller on Patreon.",
         PrimaryButtonText = "Okay, you earned it, take my money", SecondaryButtonText = "Stop bothering me, shader man",
         ShowsX = true, StackedButtons = true,
     };
@@ -101,14 +101,18 @@ static class StartDialogs
     /// <summary>The server's text or the bundled one, as plain text.</summary>
     public static (ContentDialog Dialog, Func<ContentDialogResult, WelcomeAnswer> Answer) Welcome(WelcomeContent c)
     {
+        const string ForkWelcome = $"{ForkBuild.Name} is an unofficial fork of SCSKiller, maintained by dkflint723. It is not affiliated with or endorsed by "
+            + "SCSKiller's author. The text below is SCSKiller's own, about its community database and Patreon; sharing from this build also needs "
+            + "Settings' \"Share from this unofficial build too\".";
         var panel = new StackPanel { Spacing = 12 };
+        panel.Children.Add(new TextBlock { Text = ForkWelcome, TextWrapping = TextWrapping.Wrap });   // the rest is SCSKiller's own text
         foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
         if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new(0) });
         var share = Box(c.Share);
         var diagnostics = Box("Share diagnostics to help fix problems");
-        var active = Box("Send an anonymous daily check", "Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier.");
+        var active = Box("Send an anonymous daily check", "Helps SCSKiller count active installs so it can size its servers. Once a day, the app's version and GPU vendor, no identifier.");
         panel.Children.AddRange([share, diagnostics, active]);
-        var dialog = new ContentDialog { Title = c.Title, Content = panel, PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary };
+        var dialog = new ContentDialog { Title = $"Welcome to {ForkBuild.Name}", Content = panel, PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary };
         return (dialog, result => new(share.IsChecked == true, diagnostics.IsChecked == true, active.IsChecked == true, result == ContentDialogResult.Primary));
     }
 
@@ -134,8 +138,8 @@ static class StartDialogs
             {
                 new TextBlock
                 {
-                    Text = "Once a day SCSKiller can tell our server that an install is active, with its version and GPU vendor and no identifier. "
-                        + "This helps us count active installs so we can size our servers. It's off until you turn it on.",
+                    Text = $"Once a day {ForkBuild.Name} can tell SCSKiller's server that an install is active, with its version and GPU vendor and no identifier. "
+                        + "This helps SCSKiller count active installs so it can size its servers. It's off until you turn it on.",
                     TextWrapping = TextWrapping.Wrap,
                 },
                 new TextBlock { Text = "Change it any time in Settings.", TextWrapping = TextWrapping.Wrap, Classes = { "Caption" } },

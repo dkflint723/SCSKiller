@@ -55,8 +55,8 @@ public static class Fmt
     /// waits for the compile (<paramref name="restarting"/>): then off, so a second click can't start another restart.</summary>
     public static (bool Visible, bool Enabled, string Label, string Tip) RestartToUpdate(string? ready, string? problem, bool installsAutomatically, bool restarting) =>
         (ready != null || restarting, !restarting, restarting ? "Finishing the compile…" : "Restart to update",
-            problem ?? $"SCSKiller {ready} is ready. Restarting stops a running compile safely (the driver saves its cache first) and continues it afterwards." +
-            (installsAutomatically ? " Otherwise it installs the next time SCSKiller starts or quits." : ""));
+            problem ?? $"{ForkBuild.Name} {ready} is ready. Restarting stops a running compile safely (the driver saves its cache first) and continues it afterwards." +
+            (installsAutomatically ? $" Otherwise it installs the next time {ForkBuild.Name} starts or quits." : ""));
     public static bool Active(QueueItem q) => q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped);
     public static void PauseOrResume(QueueItem? running)
     {

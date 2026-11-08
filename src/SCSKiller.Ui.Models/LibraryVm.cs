@@ -214,7 +214,7 @@ public sealed class LibraryVm : Bindable
     string filter = "";
     public string Filter { get => filter; set { if (value.Trim() != filter) { filter = value.Trim(); ApplyFilter(); Changed(); } } }
     LibraryShow show;
-    public static readonly string[] ShowLabels = ["All games", "Not supported", "Ready to compile", "Compiled", "Compiled by SCSKiller"];
+    public static readonly string[] ShowLabels = ["All games", "Not supported", "Ready to compile", "Compiled", $"Compiled by {ForkBuild.Name}"];
     public int ShowIndex { get => (int)show; set { if (value >= 0 && (LibraryShow)value != show) { show = (LibraryShow)value; ApplyFilter(); Changed(); } } }
     int shown, unsupportedHidden;   // unsupportedHidden: matching the search and the view, left out by Settings.HideUnsupported
     public bool Filtering => filter.Length > 0 || show != LibraryShow.All;

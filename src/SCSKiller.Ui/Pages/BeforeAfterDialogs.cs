@@ -29,13 +29,13 @@ static class BeforeAfterDialogs
         static TextBlock Line(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap };
         var (step1, step3) = (Line(""), Line(""));
         void Steps() => (step1.Text, step3.Text) = (
-            $"1. SCSKiller deletes this game's shader caches ({(Host.Platform.SystemShaderCache ? "the driver's, Windows' and" : "the driver's and")} the game's own) and starts the game. Load a save you can load again and play. The {minutes} minutes count from the game's first frame, loading and pauses included.",
+            $"1. Kindling deletes this game's shader caches ({(Host.Platform.SystemShaderCache ? "the driver's, Windows' and" : "the driver's and")} the game's own) and starts the game. Load a save you can load again and play. The {minutes} minutes count from the game's first frame, loading and pauses included.",
             $"3. Load the same save and play the same {minutes} minutes.");
         Steps();
         var steps = new StackPanel
         {
             Spacing = 8, IsVisible = full,
-            Children = { step1, Line("2. Close the game. SCSKiller deletes the caches again and compiles the game's shaders."), step3,
+            Children = { step1, Line("2. Close the game. Kindling deletes the caches again and compiles the game's shaders."), step3,
                 Line("4. You get a before and after report you can save and share.") },
         };
         var how = new HyperlinkButton { Content = "How it works", Padding = new(0), IsVisible = !full };
@@ -51,7 +51,7 @@ static class BeforeAfterDialogs
         };
         var sound = new CheckBox { Content = "Play a sound when the time is up", IsChecked = s.BeforeAfterSound };
         var overlay = new CheckBox { Content = "Show the countdown in the game", IsChecked = s.BeforeAfterOverlay };
-        ToolTip.SetTip(overlay, "A small panel at the top right of the game: the time left, your frame times and, on DirectX 12 and Vulkan, each shader compilation stutter. SCSKiller counts down here either way. It isn't shown with FSR or XeSS frame generation on.");
+        ToolTip.SetTip(overlay, "A small panel at the top right of the game: the time left, your frame times and, on DirectX 12 and Vulkan, each shader compilation stutter. Kindling counts down here either way. It isn't shown with FSR or XeSS frame generation on.");
         var maxRun = new CheckBox { Content = "Max compile for the after run", IsChecked = s.BeforeAfterMax, IsVisible = max };
         ToolTip.SetTip(maxRun, DetailVm.MaxCompileWhy);
         var checks = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Children = { sound, overlay, maxRun } };
@@ -114,7 +114,7 @@ static class BeforeAfterDialogs
         var dialog = new ContentDialog
         {
             Title = "Record the after run again?",
-            Content = "SCSKiller clears the caches and compiles again first, so the new run isn't helped by the last one. Then play the same save again.",
+            Content = "Kindling clears the caches and compiles again first, so the new run isn't helped by the last one. Then play the same save again.",
             PrimaryButtonText = "Record again", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
         };
         if (await App.ShowAsync(dialog, on) != ContentDialogResult.Primary) return null;

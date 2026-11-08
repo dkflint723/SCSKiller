@@ -160,7 +160,7 @@
                         <TextBlock Text="{Binding LastRebuilt}" Classes="Caption" IsVisible="{Binding HasLastRebuilt}" />
                         <Rectangle Classes="Divider" />
                         <TextBlock x:Name="NewShadersHeader" Text="When games have new shaders" Classes="Section" />
-                        <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. Never while you play."
+                        <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or a Kindling update. Never while you play."
                                    Classes="Secondary" TextWrapping="Wrap" />
                         <StackPanel Classes="Radios" AutomationProperties.Name="When games have new shaders">
                             <RadioButton GroupName="NewShaders" AutomationProperties.Name="Off"
@@ -234,7 +234,7 @@
                                 <c:InfoBar IsVisible="{Binding HasAutoMessage}" Message="{Binding AutoMessage}" Severity="{Binding AutoSeverity}" IsClosable="False" />
                             </StackPanel>
                             <c:InfoBar Severity="Informational" IsClosable="False" Title="We recommend enabling it"
-                                       Message="A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. SCSKiller adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here." />
+                                       Message="A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. Kindling adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here." />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -320,7 +320,7 @@
                                       AutomationProperties.Name="Share from this unofficial build too">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
-                                    <TextBlock Text="This is an unofficial build; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. A game isn't shared while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it. Compatibility reports from this build need this box too."
+                                    <TextBlock Text="Kindling is an unofficial fork of SCSKiller; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. A game isn't shared while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it. Compatibility reports from this build need this box too."
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -335,7 +335,7 @@
                                 <TextBlock Text="GPU to compile for" Classes="Header" />
                                 <ComboBox ItemsSource="{Binding GpuLabels, Mode=OneTime}" SelectedIndex="{Binding GpuIndex, Mode=TwoWay}"
                                           MinWidth="220" AutomationProperties.Name="GPU to compile for" />
-                                <TextBlock Text="Pick the GPU your games run on. SCSKiller switches to it after a restart."
+                                <TextBlock Text="Pick the GPU your games run on. Kindling switches to it after a restart."
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                             <CheckBox IsChecked="{Binding ExperimentalIntel, Mode=TwoWay}" IsVisible="{Binding HasIntelGpu, Mode=OneTime}"
@@ -390,9 +390,9 @@
                         </CheckBox>
                         <c:InfoBar IsVisible="{Binding HasStartMessage}" Message="{Binding StartMessage}" Severity="Informational" IsClosable="False" />
                         <CheckBox IsChecked="{Binding CloseQuits, Mode=TwoWay}" IsVisible="{Binding ShowsCloseQuits, Mode=OneTime}"
-                                  AutomationProperties.Name="Closing the window quits SCSKiller">
+                                  AutomationProperties.Name="Closing the window quits Kindling">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
+                                <TextBlock Text="Closing the window quits Kindling" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding CloseQuitsNote}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -403,9 +403,9 @@
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{Binding ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when SCSKiller starts">
+                        <CheckBox IsChecked="{Binding ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when Kindling starts">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Scan games when SCSKiller starts" TextWrapping="Wrap" />
+                                <TextBlock Text="Scan games when Kindling starts" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding ScanAtStartNote, Mode=OneTime}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -442,7 +442,7 @@
                         <CheckBox IsChecked="{Binding HideUnsupported, Mode=TwoWay}" AutomationProperties.Name="Hide unsupported games in the Library">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Hide unsupported games in the Library" TextWrapping="Wrap" />
-                                <TextBlock Text="Leaves out the games SCSKiller can't compile. They're still checked at every scan and show again once they can be compiled, for example when an encrypted game's key is found. Choosing Not supported in the Library still lists them."
+                                <TextBlock Text="Leaves out the games Kindling can't compile. They're still checked at every scan and show again once they can be compiled, for example when an encrypted game's key is found. Choosing Not supported in the Library still lists them."
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -484,7 +484,7 @@
                             <CheckBox IsChecked="{Binding RecordAntiCheatGames, Mode=TwoWay}" AutomationProperties.Name="Allow the recorder in games with anti-cheat (at your own risk)">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Allow the recorder in games with anti-cheat (at your own risk)" TextWrapping="Wrap" />
-                                    <TextBlock Text="Enabling the recorder in games with anti-cheat is at your own risk. SCSKiller isn't responsible for bans."
+                                    <TextBlock Text="Enabling the recorder in games with anti-cheat is at your own risk. Kindling isn't responsible for bans."
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -506,7 +506,7 @@
                             <ComboBox Grid.Column="1" ItemsSource="{x:Static m:SettingsVm.RecordingLimitLabels}" MinWidth="140"
                                       SelectedIndex="{Binding RecordingLimitIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{Binding #RecordingLimitLabel}" />
                         </Grid>
-                        <TextBlock Text="Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded."
+                        <TextBlock Text="Counts the recording in the game's folder and Kindling's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded."
                                    Classes="Caption" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding RecordingSpace}" TextWrapping="Wrap" />
                         <Expander Header="Space by game" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsVisible="{Binding HasRecordings}">

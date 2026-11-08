@@ -320,9 +320,9 @@ mkdir -p "$out/share/applications" "$out/share/icons/hicolor/256x256/apps" "$out
 cat >"$out/share/applications/$id.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=SCSKiller
+Name=Kindling
 GenericName=Shader cache compiler
-Comment=Compiles your games' shaders into your GPU driver's cache before you play
+Comment=An unofficial fork of SCSKiller: compiles your games' shaders into your GPU driver's cache before you play
 # the package fills in Exec: the AppImage's path, or the Flatpak's command
 Exec=@EXEC@
 Icon=$id

@@ -55,8 +55,8 @@ public sealed record AppPlatform
     {
         // the flags left off are features Linux doesn't have yet, each turned on once it does
         Name = "Linux", Stores = ["Steam", "Heroic", "Lutris", "Faugus"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
-        NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic, Lutris or Faugus, and the ones you added to Steam with Proton."
-            : "SCSKiller lists the Windows games of Steam, Heroic, Lutris and Faugus.",
+        NoGamesNote = () => steam() ? $"{SCSKiller.Core.App.ForkBuild.Name} lists the Windows games you installed with Steam, Heroic, Lutris or Faugus, and the ones you added to Steam with Proton."
+            : $"{SCSKiller.Core.App.ForkBuild.Name} lists the Windows games of Steam, Heroic, Lutris and Faugus.",
         // no input idle time: the background compile starts at once and pauses only for a game
         IdleRebuildNote = "Rebuilds in the background and pauses while a game runs",
         SteamCacheNote = true, RecordAntiCheatGames = true, AddGames = true,

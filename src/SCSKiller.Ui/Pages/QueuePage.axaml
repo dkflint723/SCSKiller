@@ -106,7 +106,7 @@
                     <TextBlock Text="Compile queue" Classes="Title" />
                     <TextBlock Text="{Binding Summary}" Classes="Secondary" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding PlanChecks}" IsVisible="{Binding HasPlanChecks}" Classes="Caption" TextWrapping="Wrap"
-                               ToolTip.Tip="After an update SCSKiller rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library." />
+                               ToolTip.Tip="After an update Kindling rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library." />
                     <HyperlinkButton Content="Check now" Click="OnCheckNow" Padding="0" IsVisible="{Binding HasPlanChecks}" IsEnabled="{Binding CanCheckNow}" />
                     <TextBlock Text="Compiles run outside the game, under the game's name. Keep the game closed while it runs."
                                Classes="Caption" TextWrapping="Wrap" />

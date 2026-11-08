@@ -11,7 +11,7 @@ sealed class DesktopNotifier : IDisposable
 {
     const string Fdo = "org.freedesktop.Notifications", FdoPath = "/org/freedesktop/Notifications";
     const string Portal = "org.freedesktop.portal.Desktop", PortalPath = "/org/freedesktop/portal/desktop", PortalNotification = "org.freedesktop.portal.Notification";
-    const string AppName = "SCSKiller", DefaultAction = "default", DefaultLabel = "Open SCSKiller";
+    const string AppName = SCSKiller.Core.App.ForkBuild.Name, DefaultAction = "default", DefaultLabel = "Open " + SCSKiller.Core.App.ForkBuild.Name;
     /// <summary>Notifications remembered for their clicks: the oldest beyond it is forgotten.</summary>
     internal const int MaxOpen = 64;
 

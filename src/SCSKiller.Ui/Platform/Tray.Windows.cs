@@ -16,7 +16,7 @@ sealed class Tray : IDisposable
     static readonly uint TaskbarCreated = RegisterWindowMessageW("TaskbarCreated");
 
     readonly nint _hwnd, _icon;
-    string _tip = "SCSKiller";
+    string _tip = SCSKiller.Core.App.ForkBuild.Name;
 
     /// <summary>Left click, and the menu's first item.</summary>
     public required Action Open { get; init; }
@@ -35,7 +35,7 @@ sealed class Tray : IDisposable
     {
         var wc = new WndClassEx { Size = Marshal.SizeOf<WndClassEx>(), WndProc = Marshal.GetFunctionPointerForDelegate(Proc), Instance = GetModuleHandleW(null), ClassName = "SCSKiller.Tray" };
         RegisterClassExW(ref wc);   // fails harmlessly if already registered
-        _hwnd = CreateWindowExW(0, "SCSKiller.Tray", "SCSKiller", 0, 0, 0, 0, 0, 0, 0, wc.Instance, 0);
+        _hwnd = CreateWindowExW(0, "SCSKiller.Tray", SCSKiller.Core.App.ForkBuild.Name, 0, 0, 0, 0, 0, 0, 0, wc.Instance, 0);
         ByWindow[_hwnd] = this;
         _icon = LoadImageW(0, iconPath, 1 /* IMAGE_ICON */, GetSystemMetrics(49 /* SM_CXSMICON */), GetSystemMetrics(50), 0x10 /* LR_LOADFROMFILE */);
         Add();
@@ -72,7 +72,7 @@ sealed class Tray : IDisposable
     void ShowMenu()
     {
         var menu = CreatePopupMenu();
-        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open SCSKiller");
+        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, $"Open {SCSKiller.Core.App.ForkBuild.Name}");
         var pause = PauseLabel();
         AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? "Pause compiling");
         AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
