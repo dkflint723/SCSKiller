@@ -140,9 +140,12 @@ public sealed class ExactLayouts
         }
         foreach (var s in shaders.Values) // the index's own (read masks + interpolation in the signatures)
             if (s.Stage == Stage.Pixel && !x.PartnerKeys.ContainsKey(s.Sha1) && PartnerKey(s) is { } key) x.PartnerKeys[s.Sha1] = key;
-        foreach (var (h, b) in blobs)
+        foreach (var h in blobs.Keys)   // only the blobs no shader is (root signatures) are read again, not every shader's bytes
             if (!shaders.ContainsKey(h))
+            {
+                var b = blobs[h];   // outside the try: a blob that can't be read fails the build, as it did when enumerated
                 try { x.rsKeys[h] = RsKeyOf(b, policy.FreeRsFlags); } catch (Exception) { }
+            }
         foreach (var r in records)
         {
             tick?.Invoke();
