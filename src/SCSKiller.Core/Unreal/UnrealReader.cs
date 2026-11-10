@@ -764,6 +764,8 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             try
             {
                 var arc = UnrealReader.Open(provider, file);
+                try { arc?.CheckMaps(file.Path); }
+                catch { arc!.Dispose(); throw; }
                 if (arc != null) opened++;
                 return arc;
             }
@@ -1090,6 +1092,13 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         SafeFileHandle? Pak = null) : IDisposable // the pak Codes read from (OpenLarge)
     {
         public void Dispose() => Pak?.Dispose();
+
+        /// <summary>InvalidDataException when a shader map's range, a shader index or a hash without an entry runs outside the library (the index loop would run past an array).</summary>
+        public void CheckMaps(string path)
+        {
+            if (Maps.Length < MapHashes.Length || Maps.Any(m => m.Off < 0 || m.Num < 0 || (long)m.Off + m.Num > Indices.Length) || Indices.Any(i => i >= Count))
+                throw new InvalidDataException($"{path}: a shader map points outside the library's shader indices or shaders");
+        }
     }
 
     /// <summary>The copies of a path the engine doesn't read when several containers hold it (a base pak and its _P patch, a
@@ -1278,7 +1287,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
                     Enumerable.Range(0, lib.ShaderEntries.Length).Select(i => (Func<IEnumerable<(int, byte[])>>)(() =>
                     {
                         var e = lib.ShaderEntries[i];
-                        var code = e.Size == e.UncompressedSize ? arc.ShaderCode[i] : Decompress(arc.ShaderCode[i], (int)e.UncompressedSize);
+                        var code = e.Size == e.UncompressedSize ? arc.ShaderCode[i] : Decompress(arc.ShaderCode[i], Unpacked(e.UncompressedSize));
                         arc.ShaderCode[i] = null!; // free as we go
                         return [(i, code)];
                     })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray());
@@ -1311,6 +1320,9 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     /// <summary>The largest shader group an IoStore library's entry may ask for (UE writes them up to a few MB).</summary>
     const long MaxShaderGroup = 256L << 20;
+
+    /// <summary>A pak-era or version-1 entry's stated uncompressed size, held to <see cref="MaxShaderGroup"/> before it sizes a buffer.</summary>
+    static int Unpacked(long size) => size is >= 0 and <= MaxShaderGroup ? (int)size : throw new InvalidDataException($"a shader stated as {size} bytes uncompressed, past {Format.Bytes(MaxShaderGroup)}");
 
     /// <summary>The most of a large library's start <see cref="OpenLarge"/> reads looking for the end of its header.</summary>
     const long LargeHeaderMax = 512L << 20;
@@ -1377,7 +1389,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
                     {
                         var e = entries[i];
                         var bytes = g.Length == 1 ? raw : raw.AsSpan((int)((long)e.Offset - from), (int)e.Size).ToArray();
-                        return (i, e.Size == e.UncompressedSize ? bytes : Decompress(bytes, (int)e.UncompressedSize));
+                        return (i, e.Size == e.UncompressedSize ? bytes : Decompress(bytes, Unpacked(e.UncompressedSize)));
                     }).ToList();
                 })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(), Pak: file);
 
@@ -1426,7 +1438,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             if (off < 0 || size <= 0 || usize < size || off > b.Length - code0 - size) return null;   // no sum: a huge off would wrap
             keys[i] = Convert.ToHexStringLower(b.AsSpan(o, 20));
             var (start, k) = ((int)(code0 + off), i);
-            codes[i] = () => [(k, size == usize ? b[start..(start + size)] : Decompress(b[start..(start + size)], usize))];
+            codes[i] = () => [(k, size == usize ? b[start..(start + size)] : Decompress(b[start..(start + size)], Unpacked(usize)))];
         }
         return new Archive([], [], [], n, codes, keys);
     }

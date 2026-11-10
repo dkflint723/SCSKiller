@@ -26,6 +26,7 @@ public sealed class DagorReader : IEngineReader
 
     const int HeaderSize = 64, MaxShader = 256 << 20, NoShader = 0xFFFF, MaxNullShader = 64 << 10;
     const long MaxExe = 2L << 30;
+    const int MaxExpansion = 1024;   // the main layout's entries are zstd frames already, so the layout compresses a few times at most; a body claiming more than this isn't read
     // ScriptedShadersBinDump fields of version 11.3: vprCount, fshCount, classes, uncompressed_shader_sizes, shaders_metadata, shaders, dictionary
     const int VprCount = 16, FshCount = 20, Classes = 140, Sizes = 172, Metadata = 180, Codes = 188, Dictionary = 196;
     // sizes of ShaderClass, ShaderCode (its passes at 20) and Pass (its ShRef pointer first: vprId, fshId)
@@ -229,7 +230,9 @@ public sealed class DagorReader : IEngineReader
     {
         if (dump.Length < HeaderSize + 12 || !dump.AsSpan().StartsWith("VSPSdump11.3"u8)) throw new InvalidDataException("not a version 11.3 shader dump");
         var (at, n) = List(dump, HeaderSize + 4, 1);
-        var main = new byte[U(dump, HeaderSize)];
+        var size = U(dump, HeaderSize);   // bounded by what n bytes can decode to before it sizes a buffer
+        if (size > Array.MaxLength || size > (long)n * MaxExpansion) throw new InvalidDataException($"the dump's body claims {size} bytes from {n} compressed");
+        var main = new byte[size];
         using var z = new Decompressor();
         if (Unwrap(z, dump.AsSpan(at, n), main) != main.Length) throw new InvalidDataException("the dump's body doesn't decode to its size");
         return main;
@@ -375,6 +378,7 @@ public sealed class DagorReader : IEngineReader
     static byte[] Read(string path)
     {
         using var f = Open(path);
+        if (f.Length > Array.MaxLength) throw new InvalidDataException($"{path}: a shader dump past what one array holds");
         var b = new byte[f.Length];
         f.ReadExactly(b);
         return b;

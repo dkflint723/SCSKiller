@@ -138,11 +138,16 @@ public static class UnityFiles
                 if (us < 0 || cs < 0) throw new InvalidDataException("UnityFS block over 2 GB");
                 if (c + cs > length) throw new InvalidDataException("UnityFS block past the end of the file");
                 if ((bf & 0x3F) is 2 or 3 && us > 256L * cs + 64) throw new InvalidDataException("UnityFS block larger than LZ4 can expand to");
+                if ((bf & 0x3F) == 1 && us > 8192L * cs + 64) throw new InvalidDataException("UnityFS block larger than LZMA can expand to");   // the encoder's best is 7033:1 (zeros)
                 blocks[i] = (u, us, c, cs, bf & 0x3F);
                 u += us; c += cs;
             }
             var nodes = new Node[bi.Count(1 << 20)];
-            for (var i = 0; i < nodes.Length; i++) nodes[i] = new Node(bi.I64(), bi.I64(), bi.U32(), bi.CString());
+            for (var i = 0; i < nodes.Length; i++)
+            {
+                nodes[i] = new Node(bi.I64(), bi.I64(), bi.U32(), bi.CString());
+                if (nodes[i] is { Offset: var o, Size: var s } && (o < 0 || s < 0 || o > u || s > u - o)) throw new InvalidDataException("UnityFS node outside the bundle's data");
+            }
             return new Bundle(f, unity, blocks, nodes);
         }
 
@@ -209,14 +214,19 @@ public static class UnityFiles
                 var dst = new byte[size];
                 return LZ4Codec.Decode(src, dst) == size ? dst : throw new InvalidDataException("bad LZ4 block");
             case 1:
+                if (src.Length < 5) throw new InvalidDataException("bad LZMA block");
                 var lzma = new SevenZip.Compression.LZMA.Decoder();
-                lzma.SetDecoderProperties(src[..5]);
-                using (var i = new MemoryStream(src, 5, src.Length - 5))
-                using (var o = new MemoryStream(size))
+                try   // the decoder's own exceptions (internal types derived from ApplicationException: a corrupt stream, bad properties), which the callers don't catch
                 {
-                    lzma.Code(i, o, src.Length - 5, size, null);
-                    return o.Length == size ? o.GetBuffer()[..size] : throw new InvalidDataException("bad LZMA block");
+                    lzma.SetDecoderProperties(src[..5]);
+                    using (var i = new MemoryStream(src, 5, src.Length - 5))
+                    using (var o = new MemoryStream(size))
+                    {
+                        lzma.Code(i, o, src.Length - 5, size, null);
+                        return o.Length == size ? o.GetBuffer()[..size] : throw new InvalidDataException("bad LZMA block");
+                    }
                 }
+                catch (ApplicationException e) { throw new InvalidDataException("bad LZMA block", e); }
             default: throw new InvalidDataException($"unknown UnityFS compression {comp}");
         }
     }
