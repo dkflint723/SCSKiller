@@ -600,7 +600,7 @@ public sealed partial class ScsKiller
                     if (item.Note == OldVersionsNote && oldVersionOf.TryGetValue(Path.GetFullPath(unit.Key.Dir), out var of)) DeletedOldVersion(of.Id, unit.Key.Dir);
                     else if (GameFiles.Inside(Path.Combine(LocalAppData, "D3DSCache"), unit.Key.Dir))
                         try { Directory.Delete(unit.Key.Dir); }
-                        catch (IOException) { }   // not empty: the runtime made a file meanwhile, left alone
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // not empty: the runtime made a file meanwhile, or a folder it can't remove: left alone
                 }
                 if (!deleted) continue;
                 foreach (var id in item.GameIds)

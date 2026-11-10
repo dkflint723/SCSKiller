@@ -4313,7 +4313,7 @@ public sealed partial class ScsKiller : IScsKiller
         foreach (var dir in parts.Where(p => p.Name == WindowsPart).SelectMany(p => p.Files).Select(Path.GetDirectoryName).Distinct()
                      .Where(d => !IsLink(d!) && !linked.Contains(GameFiles.FinalPath(d!) ?? d!)))
             try { Directory.Delete(dir!); }
-            catch (IOException) { }   // not empty: a file appeared meanwhile, left alone
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // not empty: a file appeared meanwhile, or a folder it can't remove: left alone
         ClearedSets(s.Game);
         if (steams.Count > 0) Log?.Report($"{s.Game.Name}: {steams.Count} files of Steam's shader cache deleted");
         if (!driver && !placed && shared.Count == 0 && steams.Count == 0 && rec.D3DSCacheSince == null) return true;   // a kept shared key: what went was still part of the compile
@@ -12204,7 +12204,11 @@ public sealed partial class ScsKiller : IScsKiller
                 index = null!;   // the warm needs only its hash (indexed): 650 MB for a 1.7M-pipeline Unreal game
                 ReleaseMemory();   // else the plan and materialize peak stays committed for the whole warm (10 GB measured)
                 // a staged folder outlives a compile killed before its fold: MergeD3DSCache finds it by this
-                while (!_foldGate.TryEnter(Poll)) ShowWait(QueueStage.Warming, FoldWaitNote);   // another game's fold may take minutes
+                while (!_foldGate.TryEnter(Poll))   // another game's fold may take minutes: a Stop or Remove ends the wait (not entered, nothing to exit)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    ShowWait(QueueStage.Warming, FoldWaitNote);
+                }
                 try
                 {
                     lock (_lock) _warming.Add(id);

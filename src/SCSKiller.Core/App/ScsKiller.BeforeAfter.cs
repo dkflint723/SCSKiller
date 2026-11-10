@@ -81,10 +81,11 @@ public sealed partial class ScsKiller
         var g = Find(gameId).Game;
         if (!Frames11(Find(gameId).Engine, Vendor.Caps)) BeforeAfterRecorderReady(gameId);   // refused before anything is cleared; the frames-only one goes in with the stage
         Remove(gameId);
-        if (Store.LoadGame(gameId).BeforeAfter is { } old) Unpin(gameId, old);
+        var old = Store.LoadGame(gameId).BeforeAfter;   // unpinned once the clear has succeeded: a throw from it leaves the record's pair pinned
         lock (_setAsideLock)   // a poll puts back files set aside for a run that isn't armed
         {
             var (survivors, gap) = ClearBeforeRun(gameId);
+            if (old != null) Unpin(gameId, old);
             var rec = Store.LoadGame(gameId);
             string? note = null;
             NotColdNote(gameId, ref note);

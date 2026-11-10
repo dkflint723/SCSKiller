@@ -383,7 +383,8 @@ sealed class SteamFirstRun : IWarmRun
             WarmResult? first = null;
             if (options.StartAt < steam)
             {
-                if (Directory.Exists(Path.Combine(workDir, FailedDir))) Directory.Delete(Path.Combine(workDir, FailedDir), true);   // an earlier compile's: this one replays them again
+                try { if (Directory.Exists(Path.Combine(workDir, FailedDir))) Directory.Delete(Path.Combine(workDir, FailedDir), true); }   // an earlier compile's: this one replays them again
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"couldn't delete the earlier Steam replay's list of failed pipelines, the compile goes on: {e.Message}"); }
                 try { first = await Phase(start(options with { Vulkan = true, StartAt = 0 }, progress == null ? null : new Relay(p => progress.Report(p with { Note = p.Note ?? Note })))); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or Win32Exception)
                 {
@@ -394,8 +395,12 @@ sealed class SteamFirstRun : IWarmRun
                 {
                     log($"Steam's pipelines of the game weren't compiled, the rest goes on: {first.Error}");
                     var dir = Path.Combine(workDir, FailedDir);
-                    Directory.CreateDirectory(dir);
-                    File.WriteAllBytes(Path.Combine(dir, App.Recordings.FailedFile), [.. names.SelectMany(n => Convert.FromHexString(Vulkan.VulkanPlan.Key(n)))]);
+                    try
+                    {
+                        Directory.CreateDirectory(dir);
+                        File.WriteAllBytes(Path.Combine(dir, App.Recordings.FailedFile), [.. names.SelectMany(n => Convert.FromHexString(Vulkan.VulkanPlan.Key(n)))]);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"couldn't save the list of Steam's failed pipelines, the next compile replays them again: {e.Message}"); }
                     first = first with { DriverSkipped = first.DriverSkipped + Math.Max(0, steam - first.Done) };
                 }
                 lock (_gate)
