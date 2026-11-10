@@ -102,7 +102,9 @@ static class BeforeAfterDialogs
     /// show, or null (also when cancelled).</summary>
     public static async Task<string?> StartAsync(string id, bool over = false, DialogLayer? on = null)
     {
-        var g = Host.Core.Games.First(x => x.Game.Id == id);
+        SCSKiller.Core.GameState g;
+        try { g = Host.Core.Games.First(x => x.Game.Id == id); }   // a scan may have dropped the game
+        catch (InvalidOperationException e) { return BeforeAfterUi.Describe(e); }
         bool frames11 = ScsKiller.Frames11(g.Engine, Host.Core.Vendor.Caps);
         bool max = ScsKiller.MaxCompileAdds(Host.Core.Vendor.Caps, g.Engine);
         if (await IntroAsync(g.Game.Name, over ? Intro.StartOver : Intro.Start, frames11, on, max) is not { } choice) return null;

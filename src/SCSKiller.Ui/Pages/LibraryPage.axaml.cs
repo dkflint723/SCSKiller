@@ -151,7 +151,12 @@ public sealed partial class LibraryPage : UserControl
             {
                 if (!await App.ConfirmAsync("Stop looking for games here?",
                         $"{folder}\n\nThe games Kindling found only in this folder leave the library. Nothing in the folder changes.", "Stop looking")) return;
-                if (Fmt.Added is { } added) await Task.Run(() => added.RemoveFolder(folder));
+                try { if (Fmt.Added is { } added) await Task.Run(() => added.RemoveFolder(folder)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    await Message("Couldn't stop looking here", ex.Message);
+                    return;
+                }
                 Vm.Rescan(force: false);
             };
             menu.Items.Add(item);
@@ -164,7 +169,12 @@ public sealed partial class LibraryPage : UserControl
             ToolTip.SetTip(item, "Look for games here again");
             item.Click += async (_, _) =>
             {
-                await Task.Run(() => Host.Core.ScanFolderAgain(folder));
+                try { await Task.Run(() => Host.Core.ScanFolderAgain(folder)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    await Message("Couldn't look here again", ex.Message);
+                    return;
+                }
                 Vm.Rescan(force: false);
             };
             menu.Items.Add(item);

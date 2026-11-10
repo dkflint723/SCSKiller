@@ -16,9 +16,10 @@ public static class BeforeAfterUi
 
     public static async Task<string?> LaunchAsync(string id)
     {
-        try { await Task.Run(() => Host.Core.BeforeAfterRecorderReady(id)); }
+        GameState g;
+        try { await Task.Run(() => Host.Core.BeforeAfterRecorderReady(id)); g = Game(id); }   // Game: a scan may have dropped it
         catch (Exception e) { return Describe(e); }
-        return Game(id) is var g && Launchable(g) ? Fmt.Play(g) : null;
+        return Launchable(g) ? Fmt.Play(g) : null;
     }
 
     /// <summary>The intro's choice taken: the before run armed (off the UI thread, it deletes files), then the game started
@@ -41,9 +42,10 @@ public static class BeforeAfterUi
     /// BeforeArmed with a clear that failed: clears again and, cleared, starts the game.</summary>
     public static async Task<string?> ContinueAsync(string id)
     {
-        try { await Task.Run(() => Host.Core.ContinueBeforeAfter(id)); }
+        GameState g;
+        try { await Task.Run(() => Host.Core.ContinueBeforeAfter(id)); g = Game(id); }
         catch (Exception e) { return Describe(e); }
-        return Game(id).BeforeAfter is { Stage: BeforeAfterStage.AfterArmed } or { Stage: BeforeAfterStage.BeforeArmed, ClearPending: false } ? await LaunchAsync(id) : null;
+        return g.BeforeAfter is { Stage: BeforeAfterStage.AfterArmed } or { Stage: BeforeAfterStage.BeforeArmed, ClearPending: false } ? await LaunchAsync(id) : null;
     }
 
     public static async Task<string?> RecordAfterAgainAsync(string id)

@@ -513,7 +513,7 @@ public sealed partial class DetailPage : UserControl, INavigable
         if (vm.OffersCareful)
             try { await Task.Run(() => Host.Core.SetCarefulCompile(id, true)); }
             catch (Exception ex) { vm.Error = ex.Message; vm.Refresh(); return; }
-        Host.Core.Compile(id);
+        try { Host.Core.Compile(id); } catch (InvalidOperationException ex) { vm.Error = ex.Message; }   // a before/after pair holds the cache
         vm.Refresh();
     }
 
@@ -525,7 +525,7 @@ public sealed partial class DetailPage : UserControl, INavigable
             if (!await App.ConfirmAsync($"Max compile {vm.Name}?", DetailVm.MaxCompileWhy, "Max compile")) return;
             Host.Core.Settings = Host.Core.Settings with { MaxCompileConfirmed = true };
         }
-        Host.Core.CompileMax(id);
+        try { Host.Core.CompileMax(id); } catch (InvalidOperationException ex) { vm.Error = ex.Message; }
         vm.Refresh();
     }
 

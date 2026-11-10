@@ -256,6 +256,7 @@ public sealed class LibraryVm : Bindable
     {
         try { await Task.Run(() => Host.Core.ShowGame(r.Id)); }
         catch (ArgumentException) { }   // shown again meanwhile
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Error = e.Message; }   // its record couldn't be saved
         Refresh();
     }
 
