@@ -2906,7 +2906,7 @@ public sealed partial class ScsKiller : IScsKiller
         return ev;
     }
 
-    // a scan's thread saves the cache once, when the scan ends (Scan); any other evaluation saves at once
+    // a scan's thread saves the cache at most every ScanSaveGapMs and once more when the scan ends (Scan); any other evaluation saves at once
     sealed class ScanHold { public volatile bool Active = true; }
     [ThreadStatic] static ScanHold? _scanHold;   // the scan's thread and the threads it reads games on (Capped)
     bool _scanUnsaved;   // under _scanLock
@@ -10950,6 +10950,7 @@ public sealed partial class ScsKiller : IScsKiller
 
     public void CompileMax(string gameId)
     {
+        if (PairHoldsCache(gameId, compiling: true) is { } why) throw new InvalidOperationException(why);   // before the mark: a refused click leaves none behind
         lock (_lock) _maxNext.Add(gameId);
         Compile(gameId);
     }
