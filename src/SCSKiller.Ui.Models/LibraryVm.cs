@@ -223,7 +223,8 @@ public sealed class LibraryVm : Bindable
     public string ShownText => string.Join(" · ", new[]
     {
         Filtering ? $"{shown} of {Games.Count} shown" : null,
-        unsupportedHidden > 0 ? $"{unsupportedHidden} unsupported hidden" : null,
+        // "not shown", not "hidden": the checkbox beside it, "Show hidden", is about games the user took out of the Library
+        unsupportedHidden > 0 ? $"{unsupportedHidden} unsupported not shown (a Settings option)" : null,
     }.OfType<string>());
     public bool NoMatch => Filtering && Games.Count > 0 && shown == 0 && unsupportedHidden == 0;
     public string NoMatchText => Searching ? $"No games match “{filter}”" : "No games with this status";
@@ -231,7 +232,7 @@ public sealed class LibraryVm : Bindable
     public bool AllHidden => shown == 0 && unsupportedHidden > 0;
     public string AllHiddenText => Searching ? $"No supported games match “{filter}”"
         : show != LibraryShow.All ? "No supported games with this status" : "No supported games to show";
-    public string AllHiddenNote => $"{unsupportedHidden} unsupported game{(unsupportedHidden == 1 ? " is" : "s are")} hidden. Show them to see why each can't be compiled, or to unlock an encrypted game with its key.";
+    public string AllHiddenNote => $"{unsupportedHidden} unsupported game{(unsupportedHidden == 1 ? " isn't" : "s aren't")} shown, because Settings > \"Hide unsupported games in the Library\" is on. Showing them turns that option off; each one says why it can't be compiled and what would fix it.";
     /// <summary>The empty list's "Show unsupported games": turns <see cref="Settings.HideUnsupported"/> off, as Settings does.</summary>
     public void ShowUnsupported()
     {

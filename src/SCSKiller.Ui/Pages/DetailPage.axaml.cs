@@ -171,12 +171,20 @@ public sealed partial class DetailPage : UserControl, INavigable
 
     /// <summary>Rate this compile's popup for this PC's earlier report of the build (<paramref name="sent"/>), or its thanks
     /// (<paramref name="thanks"/>); built apart so --screenshots renders each state without a click. Only its Send rating
-    /// button sends. What a report carries shows until one was sent from this install (<see cref="Settings.CompatReportSent"/>).</summary>
-    public ContentDialog ReportDialog(CompatSent? sent, bool thanks = false)
+    /// button sends. What a report carries shows until one was sent from this install (<see cref="Settings.CompatReportSent"/>).
+    /// <paramref name="refused"/>: why this unofficial build wouldn't send it (screenshots); otherwise asked of the app.</summary>
+    public ContentDialog ReportDialog(CompatSent? sent, bool thanks = false, string? refused = null)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
         var dialog = App.Confirm($"Rate this compile for {vm.Name}", null, "Send rating");
         if (thanks) return Thanked(dialog);
+        // said before the user rates, not after Send: the popup is then only the reason, with nothing to fill in
+        var inSettings = true;
+        try { refused ??= (Host.Core as ScsKiller)?.RatingRefusal(id, out inSettings); }
+        catch (Exception) { }   // the popup opens as ever, and Send answers
+        if (refused != null)
+            return NotSent(dialog, refused, inSettings ? "Tick them in Settings, then rate this compile again."
+                : "Settings can't change this. Rate this compile once that no longer applies.");
         var group = $"rating-{Guid.NewGuid():N}";
         // WinUI's RadioButtons: 32 px rows 8 apart, 4 px below its empty header (measured)
         var choices = new StackPanel { Spacing = 8, Margin = new(0, 4, 0, 0) };
@@ -234,6 +242,14 @@ public sealed partial class DetailPage : UserControl, INavigable
         }
     }
 
+    /// <summary>A report or rating popup this unofficial build wouldn't send from: only the reason and what to do, and Close.</summary>
+    static ContentDialog NotSent(ContentDialog d, string why, string next)
+    {
+        (d.PrimaryButtonText, d.CloseButtonText) = ("", "Close");
+        d.Content = new StackPanel { Spacing = 12, Children = { Text(why), Text(next) } };
+        return d;
+    }
+
     /// <summary>The privacy page's section on compatibility reports.</summary>
     public const string PrivacyReports = "https://scskiller.com/privacy#compatibility-reports";
 
@@ -242,8 +258,12 @@ public sealed partial class DetailPage : UserControl, INavigable
 
     /// <summary>"Report a problem": the user's words, then the whole report as it will be sent. Nothing is sent before Send.
     /// <paramref name="sentId"/>: the thanks with that report id (screenshots); <paramref name="message"/> fills the box.</summary>
-    public ContentDialog ProblemDialog(string? sentId = null, string? message = null)
+    public ContentDialog ProblemDialog(string? sentId = null, string? message = null, string? refused = null)
     {
+        // why this unofficial build wouldn't send it, said before the user writes: the popup is then only the reason
+        refused ??= (Host.Core as ScsKiller)?.ProblemRefusal;
+        if (refused != null && sentId == null)
+            return NotSent(App.Confirm($"Report a problem with {Vm.Name}", null, "Send"), refused, "Tick it in Settings, then report the problem again.");
         var (vm, id) = (Vm, Vm.Row.Id);
         var store = Fmt.StoreName(vm.Row.State.Game);
         var page = new (string, string)[]

@@ -51,6 +51,7 @@ public static class ProblemReport
     {
         var b = new System.Text.StringBuilder();
         b.AppendLine($"SCSKiller {appVersion}");
+        b.AppendLine($"Build: {ForkBuild.Name}, an {ForkBuild.Comment}");   // whoever reads it at SCSKiller sees at once it isn't their build
         b.AppendLine($"Game: {game} ({store})");
         b.AppendLine($"GPU: {gpu ?? "unknown"} ({vendor ?? "unknown vendor"}), driver {driver ?? "unknown"}");
         b.AppendLine(system);

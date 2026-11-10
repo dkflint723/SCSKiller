@@ -77,28 +77,28 @@
                 <SplitView.Pane>
                     <Grid RowDefinitions="*,Auto,Auto" Margin="0,4,0,0">
                         <StackPanel>
-                            <Button x:Name="LibraryItem" Classes="Nav" AutomationProperties.Name="Library" Click="OnNavClick">
+                            <Button x:Name="LibraryItem" Classes="Nav" AutomationProperties.Name="Library" ToolTip.Tip="Library" ToolTip.ServiceEnabled="{Binding !#Nav.IsPaneOpen}" Click="OnNavClick">
                                 <Panel>
                                     <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Library}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                     <TextBlock Text="Library" Margin="44,0,0,0" VerticalAlignment="Center" />
                                 </Panel>
                             </Button>
-                            <Button x:Name="QueueItem" Classes="Nav" AutomationProperties.Name="Compile queue" Click="OnNavClick">
+                            <Button x:Name="QueueItem" Classes="Nav" AutomationProperties.Name="Compile queue" ToolTip.Tip="Compile queue" ToolTip.ServiceEnabled="{Binding !#Nav.IsPaneOpen}" Click="OnNavClick">
                                 <Panel>
                                     <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.List}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                     <TextBlock Text="Compile queue" Margin="44,0,0,0" VerticalAlignment="Center" />
                                 </Panel>
                             </Button>
-                            <Button x:Name="CacheItem" Classes="Nav" AutomationProperties.Name="Cache" Click="OnNavClick">
+                            <Button x:Name="CacheItem" Classes="Nav" AutomationProperties.Name="Cache" ToolTip.Tip="Cache" ToolTip.ServiceEnabled="{Binding !#Nav.IsPaneOpen}" Click="OnNavClick">
                                 <Panel>
                                     <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Drive}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                     <TextBlock Text="Cache" Margin="44,0,0,0" VerticalAlignment="Center" />
                                 </Panel>
                             </Button>
-                            <Button x:Name="SettingsItem" Classes="Nav" AutomationProperties.Name="Settings" Click="OnNavClick">
+                            <Button x:Name="SettingsItem" Classes="Nav" AutomationProperties.Name="Settings" ToolTip.Tip="Settings" ToolTip.ServiceEnabled="{Binding !#Nav.IsPaneOpen}" Click="OnNavClick">
                                 <Panel>
                                     <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Settings}" Margin="12,0,0,0" VerticalAlignment="Center" />
@@ -113,7 +113,7 @@
                                 <TextBlock x:Name="GpuDriver" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
-                        <Button x:Name="AboutItem" Grid.Row="2" Classes="Nav" AutomationProperties.Name="About" Margin="4,2,4,6" Click="OnNavClick">
+                        <Button x:Name="AboutItem" Grid.Row="2" Classes="Nav" AutomationProperties.Name="About" Margin="4,2,4,6" ToolTip.Tip="About" ToolTip.ServiceEnabled="{Binding !#Nav.IsPaneOpen}" Click="OnNavClick">
                             <Panel>
                                 <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Info}" Margin="12,0,0,0" VerticalAlignment="Center" />

@@ -176,7 +176,14 @@ static partial class Screenshots
                 new("sample:2", "Sample Racer", KeyImportOutcome.NoWorkingKey, "No working key (2 tried).", Tried: 2),
                 new("sample:3", "Sample Puzzle", KeyImportOutcome.Skipped, "Skipped: its files aren't encrypted."),
             ]), rescanning: true), "keys-import-results");
-            if (aesOnly) return;
+            if (aesOnly)
+            {
+                // Kindling: the report and rating popups as this unofficial build opens them with its sharing off (the window is
+                // still on the first game's page here)
+                await Dialog(Detail().ProblemDialog(null, "The game still stutters in the first town after a full compile.", ScsKiller.ProblemNeedsOptIn), "problem-refused");
+                await Dialog(Detail().ReportDialog(null, refused: ScsKiller.RatingNeedsOptIns), "report-refused");
+                return;
+            }
         }
 
         // Anti-cheat games' Library rows and game pages, dark only. SCSKILLER_SHOTS=anticheat stops after these.

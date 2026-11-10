@@ -303,8 +303,9 @@ public sealed class SettingsVm : Bindable
           + (r.NotKept != null ? $" They weren't kept for later scans: {r.NotKept}." : "");
 
     /// <summary>A game's line in the import's results, its outcome in words ("Unlocked with …", "No working key (12 tried).",
-    /// "Skipped: …"), never by color alone.</summary>
-    public static string ImportLine(Core.Unreal.KeyImportGame g) => $"{g.Name}: {g.Message}";
+    /// "Skipped: …"), never by color alone. A game no key of the file opened gets its next step.</summary>
+    public static string ImportLine(Core.Unreal.KeyImportGame g) => $"{g.Name}: {g.Message}"
+        + (g.Outcome == Core.Unreal.KeyImportOutcome.NoWorkingKey ? " Next: in the Library, set the filter to \"Not supported\", click Why? on the game, then \"Look up key online\"." : "");
     public string CloseQuitsNote => Host.Tray.Shown
         ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps Kindling in the tray. Right-click its icon to quit."
         : "No tray icon on this desktop, so closing the window quits.";

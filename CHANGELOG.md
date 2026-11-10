@@ -4,6 +4,16 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### Clearer wording (Kindling, this unofficial build)
+
+- **Rate this compile and Report a problem say up front when this build won't send them**, and which Settings options
+  would let it, instead of refusing after you filled them in. A problem report's text names Kindling as the build.
+- Settings says which option each kind of sharing needs, and the Library's count of unsupported games left out no longer
+  reads like its "Show hidden" checkbox. The empty list's "Show unsupported games" says it turns the Settings option off.
+- The key lookup says what it downloads, and its manual fallback is two numbered steps. An import that found no working
+  key for a game says what to try next.
+- The navigation buttons have tooltips while the side bar shows icons only.
+
 ### Name (Kindling, this unofficial build)
 
 - **This unofficial fork is called Kindling** (an unofficial fork of SCSKiller): the window, About, Settings, the welcome

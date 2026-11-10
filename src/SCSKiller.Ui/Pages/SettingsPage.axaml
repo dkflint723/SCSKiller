@@ -307,7 +307,7 @@
                             <CheckBox IsChecked="{Binding ShareDiagnostics, Mode=TwoWay}" AutomationProperties.Name="Share diagnostics to help fix problems">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share diagnostics to help fix problems" TextWrapping="Wrap" />
-                                    <TextBlock Text="When a compile fails, send its error codes, once per compile." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="When a compile fails, send its error codes, once per compile. This unofficial build sends them only with &quot;Share from this unofficial build too&quot; below." Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
                             <CheckBox IsChecked="{Binding ShareRecordings, Mode=TwoWay}" AutomationProperties.Name="Share anonymous shader hashes">
@@ -320,7 +320,9 @@
                                       AutomationProperties.Name="Share from this unofficial build too">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share from this unofficial build too" TextWrapping="Wrap" />
-                                    <TextBlock Text="Kindling is an unofficial fork of SCSKiller; sharing sends recordings to the official SCSKiller community database. Both boxes must be ticked. A game isn't shared while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it. Compatibility reports need both boxes too; problem reports and diagnostics, which also go to SCSKiller's server, need this box."
+                                    <TextBlock Text="Kindling is an unofficial fork, so it sends nothing to SCSKiller's server unless this is ticked. Problem reports need only this box. Diagnostics also need &quot;Share diagnostics&quot;; shader hashes and compile ratings also need &quot;Share anonymous shader hashes&quot;."
+                                               Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="Even then, a game's hashes and rating aren't sent while its engine isn't known, while its recorder runs alongside a mod's d3d12.dll, or while ReShade is loaded where Kindling can't reproduce it."
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -449,7 +451,7 @@
                         <CheckBox IsChecked="{Binding LookUpKeysOnline, Mode=TwoWay}" AutomationProperties.Name="Look up keys online after scans">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Look up keys online after scans" TextWrapping="Wrap" />
-                                <TextBlock Text="When a scan finds an Unreal game whose files are encrypted and no key that opens them, Kindling checks the community's key list (a forum page on cs.rin.ru), fetched at most once a day. Nothing about you or your games is sent, and a listed key is kept only if it opens the game's files."
+                                <TextBlock Text="For games whose files are encrypted: downloads a public list of game keys (a forum page on cs.rin.ru) at most once a day. It's a plain download: nothing about you or your games is sent, and a key is kept only if it opens the game's files."
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -458,7 +460,7 @@
                                 <Button x:Name="ImportKeysButton" Content="Import keys…" Click="OnImportKeys" AutomationProperties.Name="Import encryption keys from a file" />
                                 <c:ProgressRing x:Name="ImportKeysRing" IsActive="False" IsVisible="False" Width="16" Height="16" />
                             </StackPanel>
-                            <TextBlock Text="Tries a file of keys you collected (lines of a game's name and its key, CSV, JSON or a saved page) on every encrypted Unreal game without a working key, now and after each scan, before the online list. The keys stay on this PC, and a key is kept only if it opens the game's files."
+                            <TextBlock Text="For games whose files are encrypted: tries the keys in a file you saved (text, CSV, JSON or a saved web page), now and after each scan. The keys stay on this PC, and a key is kept only if it opens the game's files."
                                        Classes="Caption" TextWrapping="Wrap" />
                             <TextBlock x:Name="ImportKeysStatus" IsVisible="False" TextWrapping="Wrap" />
                         </StackPanel>

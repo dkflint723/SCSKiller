@@ -14163,6 +14163,24 @@ public sealed partial class ScsKiller : IScsKiller
 
     public CompatSent? ReportSent(string gameId) => CompatSent.For(Store.GameDir(gameId), CompatReport.BuildKey(Find(gameId).Game));
 
+    /// <summary>Why this unofficial build wouldn't send a problem report now; null = it would. The dialog shows it before
+    /// the user writes one, and <see cref="SendProblemAsync"/> refuses with the same words.</summary>
+    public string? ProblemRefusal => ForkSettings.ShareRecordings ? null : ProblemNeedsOptIn;
+
+    public const string ProblemNeedsOptIn = "Problem reports go to SCSKiller's server. This unofficial build sends them only when \"Share from this unofficial build too\" is ticked in Settings.";
+    public const string RatingNeedsOptIns = "Ratings go to SCSKiller's server. This unofficial build sends them only when both \"Share anonymous shader hashes\" and \"Share from this unofficial build too\" are ticked in Settings.";
+
+    /// <summary>Why this unofficial build wouldn't send the game's compatibility rating now; null = it would: both opt-ins
+    /// (<see cref="SharesRecordings"/>), and only what an official build could have reported (<see cref="ForkUploadBlock"/>).
+    /// The dialog shows it before the user rates, and <see cref="SendReportAsync"/> refuses with the same words.
+    /// <paramref name="inSettings"/>: the two opt-ins are what's missing, so Settings can change it; false for a game's own block.</summary>
+    public string? RatingRefusal(string gameId, out bool inSettings)
+    {
+        inSettings = !SharesRecordings;
+        if (inSettings) return RatingNeedsOptIns;
+        return ForkUploadBlock(Find(gameId).Game, Store.LoadGame(gameId)) is { } why ? Format.Sentence(why) + "." : null;
+    }
+
     public async Task<string?> SendReportAsync(string gameId, CompatChoice choice, bool frameGen, bool upscaler, bool mods, CancellationToken ct = default)
     {
         var listed = Find(gameId).Game;
@@ -14174,8 +14192,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (CompatReport.WhyNot(s, vendor) is { } why) throw new InvalidOperationException(why);
         if (Sharing is not { } sharing) throw new InvalidOperationException("reports aren't sent from here");
         // this unofficial build: both opt-ins, and only what an official build could have reported
-        if (!SharesRecordings) return "Not sent. Reports go from this unofficial build only when both \"Share recordings\" and \"Share from this unofficial build too\" are ticked in Settings.";
-        if (ForkUploadBlock(s.Game, Store.LoadGame(gameId)) is { } forkWhy) return $"Not sent. {forkWhy}";
+        if (RatingRefusal(gameId, out _) is { } forkWhy) return $"Not sent. {forkWhy}";
         var key = CompatReport.BuildKey(s.Game);
         LinuxSystem? linux = null;
         LinuxOf(s.Game, ref linux);
@@ -14233,7 +14250,7 @@ public sealed partial class ScsKiller : IScsKiller
     public async Task<(string? Id, string? Problem)> SendProblemAsync(string gameId, string message, string report, CancellationToken ct = default)
     {
         // problem reports go to SCSKiller's own queue: from this unofficial build only with its own opt-in
-        if (!ForkSettings.ShareRecordings) return (null, "Not sent. Problem reports go to SCSKiller's server; from this unofficial build only when \"Share from this unofficial build too\" is ticked in Settings.");
+        if (ProblemRefusal is { } forkWhy) return (null, $"Not sent. {forkWhy}");
         var game = Games.FirstOrDefault(s => s.Game.Id == gameId)?.Game.Name ?? gameId;
         var sent = await App.ProblemReport.SendAsync(message, report, ct);
         if (sent.Id is { } id)

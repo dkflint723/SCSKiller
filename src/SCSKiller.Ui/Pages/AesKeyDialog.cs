@@ -54,13 +54,29 @@ static class AesKeyDialog
     static void AddKeyLookup(string id, StackPanel panel, TextBox box, ContentDialog dialog, Action? lookedUp)
     {
         var lookup = new Button { Content = "Look up key online" };
-        var open = new Button { Content = "Open list in browser" };
-        var saved = new Button { Content = "Load saved page…" };
+        // the fallback's two steps carry their order in their names, under the line that says when they're needed
+        var open = new Button { Content = "1. Open list in browser" };
+        var saved = new Button { Content = "2. Load saved page…" };
         var ring = new ProgressRing { IsActive = false, IsVisible = false, Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Center };
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
-        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { lookup, ring } });
-        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { open, saved } });
-        panel.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, Classes = { "Caption" }, Text = SavedPageHint });
+        panel.Children.Add(new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { lookup, ring } },
+                new TextBlock { TextWrapping = TextWrapping.Wrap, Classes = { "Caption" }, Text = LookupHint },
+            },
+        });
+        panel.Children.Add(new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                new TextBlock { TextWrapping = TextWrapping.Wrap, Classes = { "Caption" }, Text = SavedPageHint },
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { open, saved } },
+            },
+        });
         panel.Children.Add(status);
         void Say(string text) => (status.Text, status.IsVisible) = (text, true);
         async Task LookUp(string? page)
@@ -118,5 +134,6 @@ static class AesKeyDialog
     const string MultiKeyHint = "0x and 64 hex digits, one key per line";
     const string AesIntro = "Kindling couldn't find this game's key in its exe (protected exes hide it).";
     const string GameKeyIntro = "With this game's key, Kindling compiles it without a recording.";
-    const string SavedPageHint = "If the forum asks for a browser check: open the list, save the page (Ctrl+S, 'Webpage, HTML only' is enough), then load it here.";
+    const string LookupHint = "Downloads a public list of game keys. It's a plain download: nothing about you or your games is sent.";
+    const string SavedPageHint = "If the lookup says the forum asked for a browser check, do it by hand: open the list, save the page (Ctrl+S, \"Webpage, HTML only\" is enough), then load the saved file.";
 }
