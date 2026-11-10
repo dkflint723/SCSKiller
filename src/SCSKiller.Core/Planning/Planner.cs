@@ -833,20 +833,35 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// shader's inputs are all control-point data, system values included (Starfield's HS/DS pass SV_Position along).</summary>
     internal static bool Links(ShaderInfo src, ShaderInfo dst, bool exact = false)
     {
-        var outs = new Dictionary<(string, int), SigElement>();
-        foreach (var o in src.Outputs) outs[(o.Semantic.ToUpperInvariant(), o.Index)] = o;
-        var dxbc = dst.ShaderModel.Split('_') is [_, "4" or "5", ..];
-        if (src.ShaderModel.Split('_') is [_, ("4" or "5" or "6") and var major, ..] && dst.ShaderModel.Split('_') is [_, ("4" or "5" or "6") and var dmajor, ..]
-            && (major == "6") != (dmajor == "6")) return false;   // a PSO can't mix DXBC and DXIL stages (E_INVALIDARG)
+        var (s, d) = (LinkFacts.Of(src), LinkFacts.Of(dst));
+        var outs = s.Outs;
+        var dxbc = d.Major is "4" or "5";
+        if (s.Major != null && d.Major != null && (s.Major == "6") != (d.Major == "6")) return false;   // a PSO can't mix DXBC and DXIL stages (E_INVALIDARG)
         var controlPoints = dst.Stage is Stage.Hull or Stage.Domain;
-        foreach (var i in dst.Inputs)
+        for (var n = 0; n < dst.Inputs.Count; n++)
         {
-            if (dxbc && i.SysValue == 1 && outs.TryGetValue((i.Semantic.ToUpperInvariant(), i.Index), out var pos) && pos.Register != i.Register) return false;
+            var i = dst.Inputs[n];
+            if (dxbc && i.SysValue == 1 && outs.TryGetValue((d.Inputs[n], i.Index), out var pos) && pos.Register != i.Register) return false;
             if (i.SysValue != 0 && !FromPrevStage.Contains(i.SysValue) && !controlPoints) continue;
-            if (!outs.TryGetValue((i.Semantic.ToUpperInvariant(), i.Index), out var o) || (exact ? i.Mask != o.Mask : (i.Mask & ~o.Mask) != 0)) return false;
+            if (!outs.TryGetValue((d.Inputs[n], i.Index), out var o) || (exact ? i.Mask != o.Mask : (i.Mask & ~o.Mask) != 0)) return false;
             if (i.ReadMask != SigElement.UnknownReadMask && o.ReadMask != SigElement.UnknownReadMask && (i.ReadMask & ~o.ReadMask) != 0) return false;
         }
         return true;
+    }
+
+    /// <summary>What <see cref="Links"/> reads of a shader, once per shader rather than per pair: its outputs by (upper-cased
+    /// semantic, index), the last of a repeated one winning; each input's upper-cased semantic; its shader model's major
+    /// version when it is "4", "5" or "6" (the second '_' part), else null.</summary>
+    sealed record LinkFacts(Dictionary<(string, int), SigElement> Outs, string[] Inputs, string? Major)
+    {
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ShaderInfo, LinkFacts> known = new();
+
+        public static LinkFacts Of(ShaderInfo s) => known.GetValue(s, s =>
+        {
+            var outs = new Dictionary<(string, int), SigElement>();
+            foreach (var o in s.Outputs) outs[(o.Semantic.ToUpperInvariant(), o.Index)] = o;
+            return new(outs, [.. s.Inputs.Select(i => i.Semantic.ToUpperInvariant())], s.ShaderModel.Split('_') is [_, ("4" or "5" or "6") and var major, ..] ? major : null);
+        });
     }
 
     /// <summary>Each non-system input of <paramref name="dst"/> sits in the register <paramref name="src"/> writes it in, of the same type: a source
