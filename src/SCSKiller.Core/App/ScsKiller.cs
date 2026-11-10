@@ -694,16 +694,16 @@ public sealed partial class ScsKiller : IScsKiller
             finally
             {
                 (hold.Active, _scanHold) = (false, null);   // a check dropped for its time that ends later saves at once
-                lock (_scanLock)   // however the scan ended: done, cancelled or thrown
-                    if (_scanUnsaved)
-                    {
-                        _scanUnsaved = false;
-                        try { Store.SaveScan(_scan!); }
-                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _scanUnsaved = true; Log?.Report($"couldn't save the scan cache: {e.Message}"); }
-                    }
                 Interlocked.Decrement(ref _scanning);
                 if (update) Interlocked.Decrement(ref _updateScans);
                 Progress(null);
+                lock (_scanLock)   // however the scan ended: done, cancelled or thrown; after the counters, whatever the save does
+                    if (_scanUnsaved)
+                    {
+                        _scanUnsaved = false;
+                        try { Store.SaveScan(_scan!); _scanSavedAt = Environment.TickCount64; }
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _scanUnsaved = true; Log?.Report($"couldn't save the scan cache: {e.Message}"); }
+                    }
             }
         }, ct);
 
@@ -2910,12 +2910,16 @@ public sealed partial class ScsKiller : IScsKiller
     sealed class ScanHold { public volatile bool Active = true; }
     [ThreadStatic] static ScanHold? _scanHold;   // the scan's thread and the threads it reads games on (Capped)
     bool _scanUnsaved;   // under _scanLock
+    long _scanSavedAt;   // Environment.TickCount64 of the last save during a scan (under _scanLock)
+    internal static long ScanSaveGapMs = 5000;   // a quit mid-scan loses at most this much of the evaluations
 
-    /// <summary>Under <see cref="_scanLock"/>: saves the scan cache, or while this thread's scan runs notes that it must be.</summary>
+    /// <summary>Under <see cref="_scanLock"/>: saves the scan cache; while this thread's scan runs, at most once per
+    /// <see cref="ScanSaveGapMs"/> (the scan's end saves what is left).</summary>
     void SaveScanOrHold()
     {
-        if (_scanHold is { Active: true }) _scanUnsaved = true;
-        else Store.SaveScan(_scan!);
+        if (_scanHold is { Active: true } && Environment.TickCount64 - _scanSavedAt < ScanSaveGapMs) { _scanUnsaved = true; return; }
+        Store.SaveScan(_scan!);
+        (_scanUnsaved, _scanSavedAt) = (false, Environment.TickCount64);
     }
 
     /// <summary><paramref name="ev"/> with <see cref="GameFiles.StreamlineFirst"/> read again when a file it was read from
