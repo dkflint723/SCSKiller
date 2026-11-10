@@ -6162,9 +6162,13 @@ public sealed partial class ScsKiller : IScsKiller
         EngineInfo? engine;   // the scan's cache, as the upload's engine string; before the first scan, the one it saved
         lock (_scanLock) engine = (_scan ??= Store.LoadScan()).GetValueOrDefault(g.Id)?.Engine;
         // chained: a mod's d3d12.dll renamed behind the recorder, or the recorder installed as OptiScaler's plugin
-        return ForkBuild.UploadBlock(engine, new(rec.RecorderChained != null || rec.RecorderFiles.ContainsKey(DllOpti), ReShadeOf(g),
-            Marked(g.Id, ForkBuild.MinimalMarker), Marked(g.Id, ForkBuild.LayeredMarker)));
+        var (minimal, layered) = ForkBuild.MarkedFor(g.Id, Collections.RecordedBy, Marked);   // a collection's other game: also its first game's markers
+        return ForkBuild.UploadBlock(engine, new(rec.RecorderChained != null || rec.RecorderFiles.ContainsKey(DllOpti), ReShadeOf(g), minimal, layered));
     }
+
+    /// <summary>The folders in <paramref name="dirs"/> and, of a marked first game's collection, its other games' (<see cref="ForkBuild.WithMembers"/>).</summary>
+    List<string> WithCollectionMembers(IReadOnlyCollection<string> dirs) =>
+        ForkBuild.WithMembers(dirs, Collections.Current.Select(c => (IReadOnlyList<string>)[.. c.Select(e => e.Id)]), Store.GameDir);
 
     /// <summary>The game's folder holds a marker an earlier Kindling build wrote (this build writes none).</summary>
     bool Marked(string gameId, string marker) => File.Exists(Path.Combine(Store.GameDir(gameId), marker));
@@ -6181,7 +6185,7 @@ public sealed partial class ScsKiller : IScsKiller
         {
             var games = Path.Combine(Store.DataDir, "games");
             // a folder's id may not be the game's ("steam_1" for "steam:1"): it names the same folder, which the sources are mapped to
-            var marked = (Directory.Exists(games) ? Directory.GetDirectories(games) : []).Where(ForkBuild.Marked).ToList();
+            var marked = WithCollectionMembers([.. (Directory.Exists(games) ? Directory.GetDirectories(games) : []).Where(ForkBuild.Marked)]);   // a marked first game's collection shares its recording
             var held = ForkBuild.HoldPacks(packs.Dir, Path.Combine(Store.DataDir, ForkBuild.PacksHeld), marked, SourceDir);
             if (held.Count > 0)
                 ForkSkipped("upscaler packs", $"{string.Join(", ", held.Order(StringComparer.OrdinalIgnoreCase))}: filled from a recording an earlier Kindling build held back: never shared from this build");
@@ -6218,8 +6222,16 @@ public sealed partial class ScsKiller : IScsKiller
                 Log?.Report($"{g.Name}: this build still doesn't share it: the game folder keeps a recording this clear doesn't delete (another copy's recorder made it, or the game shares its recording folder). Turn recording on for the game here to take its recorder over, or clear the recording of the game it records with, then clear this recording again");
                 return;
             }
+            // a collection's first game: SplitCollection handed its records on to the other games, whose recordings this clear
+            // leaves; they stay held by its markers until those are cleared too
+            if (Collections.Member(g.Id) is { } m && m.All[0].Id == g.Id
+                && m.All.Skip(1).Any(o => File.Exists(RecordingPath(o.Id)) || File.Exists(FozPath(o.Id))))
+            {
+                Log?.Report($"{g.Name}: this build still doesn't share the recordings of the games it records with: they keep records it handed on to them. Clear their recordings, then clear this recording again");
+                return;
+            }
             if ((_planner as Planner)?.Packs is { } packs)
-                ForkBuild.HoldPacks(packs.Dir, Path.Combine(Store.DataDir, ForkBuild.PacksHeld), [dir], SourceDir);
+                ForkBuild.HoldPacks(packs.Dir, Path.Combine(Store.DataDir, ForkBuild.PacksHeld), WithCollectionMembers([dir]), SourceDir);
             ForkBuild.ClearMarkers(dir);
         }
         catch (Exception e) when (e is not OperationCanceledException)   // whatever fails, the markers stay and the clear itself goes on

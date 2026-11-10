@@ -30,6 +30,24 @@ public static class ForkBuild
     /// <summary>The game folder holds a marker of an earlier Kindling build (<see cref="MinimalMarker"/>, <see cref="LayeredMarker"/>).</summary>
     public static bool Marked(string gameDir) => File.Exists(Path.Combine(gameDir, MinimalMarker)) || File.Exists(Path.Combine(gameDir, LayeredMarker));
 
+    /// <summary>Which markers hold the game's recording back: its own and, for a collection's other game, its first game's
+    /// (<paramref name="recordedBy"/>): an earlier Kindling build marked only the first game's folder, whose records are handed
+    /// on to the others. <paramref name="marked"/> tells whether a game's folder holds a marker (game id, marker file).</summary>
+    public static (bool Minimal, bool Layered) MarkedFor(string gameId, Func<string, string?> recordedBy, Func<string, string, bool> marked) =>
+        (marked(gameId, MinimalMarker) || recordedBy(gameId) is { } by && marked(by, MinimalMarker),
+         marked(gameId, LayeredMarker) || recordedBy(gameId) is { } by2 && marked(by2, LayeredMarker));
+
+    /// <summary><paramref name="markedDirs"/> with the game folders of the other games of each collection (game ids, the first
+    /// first) whose first game's folder is among them: those games hold the first's records too (<see cref="MarkedFor"/>).</summary>
+    public static List<string> WithMembers(IReadOnlyCollection<string> markedDirs, IEnumerable<IReadOnlyList<string>> collections, Func<string, string> gameDir)
+    {
+        var dirs = MarkedSet(markedDirs);
+        var all = new List<string>(markedDirs);
+        foreach (var c in collections)
+            if (c.Count > 0 && dirs.Contains(gameDir(c[0]))) all.AddRange(c.Skip(1).Select(gameDir));
+        return all;
+    }
+
     /// <summary>Removes the game folder's markers (a clear of its recording, once its packs are held).</summary>
     public static void ClearMarkers(string gameDir)
     {
