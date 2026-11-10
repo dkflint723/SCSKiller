@@ -56,6 +56,7 @@ own=$(SCSKILLER_DATA_DIR=$tmp/data "$dir/scskiller" --version)
 label=${BASH_REMATCH[2]}
 [[ -z $version || ${version#v} == "$own" ]] || die "the package is version $own, not ${version#v}"
 channel=${label:-stable}
+[[ $channel != dkfork ]] || channel=internal   # this fork's label: the app takes an unknown label as the internal channel
 [[ $channel =~ ^(stable|beta|alpha|internal)$ ]] || die "pre-release label '$label' isn't a channel (beta, alpha, internal)"
 pkg=SCSKiller.App-$own-$channel-linux-full.nupkg
 feed=releases.$channel-linux.json

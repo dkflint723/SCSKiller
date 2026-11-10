@@ -89,6 +89,10 @@ if (args[0] != "fetch-codecs" && args is not ["record", "remove-all", ..] and no
     Console.Error.WriteLine(AlphaGate.Cli);
     return 1;
 }
+// Run elevated by the app (Elevated.Run): runas can't redirect stdout, so the outcome goes to a file. A missing value is refused before the command runs.
+string? resultFile;
+try { resultFile = Opt(Elevated.ResultArg); }
+catch (ArgumentException e) { return Fail(e.Message); }
 int code;
 try
 {
@@ -124,11 +128,12 @@ catch (Exception e)
 {
     code = Fail(e is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException ? e.Message : e.ToString());
 }
-// Run elevated by the app (Elevated.Run): runas can't redirect stdout, so the outcome goes to a file.
-string? resultFile = null;
-try { resultFile = Opt(Elevated.ResultArg); }
-catch (ArgumentException e) { code = Fail(e.Message); }
-if (resultFile != null) Elevated.WriteResult(resultFile, code == 0, Outcome.Message ?? "");
+// the work is done: a result file that can't be written keeps the exit code, which Elevated.Run reads when the file is missing
+if (resultFile != null)
+{
+    try { Elevated.WriteResult(resultFile, code == 0, Outcome.Message ?? ""); }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { Console.Error.WriteLine($"warning: couldn't write the result file: {e.Message}"); }
+}
 return code;
 
 static int Fail(string message)
@@ -193,6 +198,7 @@ static string MiddlewareLine(IReadOnlyList<MiddlewareTag> tags, bool dlls) => st
 
 static GameState Match(IReadOnlyList<GameState> games, string query)
 {
+    if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("no game given: the game name or id is empty (an unset variable?)");   // "" is part of every name
     var hit = games.FirstOrDefault(s => s.Game.Id.Equals(query, StringComparison.OrdinalIgnoreCase))
               ?? games.FirstOrDefault(s => s.Game.Name.Equals(query, StringComparison.OrdinalIgnoreCase));
     if (hit != null) return hit;
@@ -360,6 +366,7 @@ static void StopOnSignals(Action stop)
 async Task<int> BeforeAfterCommand()
 {
     if (args.Length < 2 || args[1].StartsWith("--")) return Fail("before-after <game> [--minutes N] [--no-overlay] [--max]");
+    Only("--minutes", "--no-overlay", "--max");
     int minutes = Opt("--minutes") is { } m ? int.TryParse(m, out var n) && n > 0 ? n : throw new ArgumentException("--minutes takes a number of minutes") : 5;
     var k = await Open();
     k.ManageRecorders = true;   // as the app: the run's recorder goes in, the before run's caches are set aside

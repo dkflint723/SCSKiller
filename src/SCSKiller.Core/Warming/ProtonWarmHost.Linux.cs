@@ -551,7 +551,14 @@ sealed class ProtonWarmHost : IWarmHost
                 if (_tools.SystemdRun is { } run)
                     _scopes = new FlatpakScopes(Path.Combine(Path.GetDirectoryName(run)!, "systemctl"), _tools.SystemdVersion, priority, sandbox, Job.Log, _flatpakApp);
             }
-            var proc = new ProtonProcess(this, p, outFile, errFile, logFrom, errorLine, x, _sandbox, EnvLines(psi.Environment));
+            ProtonProcess proc;
+            try { proc = new ProtonProcess(this, p, outFile, errFile, logFrom, errorLine, x, _sandbox, EnvLines(psi.Environment)); }
+            catch
+            {
+                // started, and nothing owns it yet: it would run on with no one to stop it
+                try { p.Kill(entireProcessTree: true); } catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+                throw;
+            }
             if (x != null)
                 lock (_stopGate)
                 {

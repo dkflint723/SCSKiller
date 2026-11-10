@@ -48,7 +48,9 @@ static string? Opt(string[] o, string name) => Array.IndexOf(o, name) is var i a
 static int Keygen(string file, bool rules)
 {
     var (seed, pub) = FeedTrust.NewKey();
-    using (var f = new FileStream(OutsideGit(file), FileMode.CreateNew, FileAccess.Write)) f.Write(Encoding.ASCII.GetBytes(seed + "\n"));   // never overwrites
+    var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+    if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;   // the seed: owner only (Windows throws on a mode)
+    using (var f = new FileStream(OutsideGit(file), options)) f.Write(Encoding.ASCII.GetBytes(seed + "\n"));   // never overwrites
     Console.WriteLine($"wrote {Path.GetFullPath(file)}: the private key, keep it offline");
     Console.WriteLine($"public key: {pub}");
     Console.WriteLine(rules

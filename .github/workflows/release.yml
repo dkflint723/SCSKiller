@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   build:
-    if: github.event.repository.private == contains(github.ref_name, '-')
+    if: contains(github.ref_name, '-dkfork')
     uses: ./.github/workflows/build.yml
 
   draft:

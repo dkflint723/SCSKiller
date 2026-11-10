@@ -123,15 +123,24 @@ static class FlatpakGrant
 
     /// <summary>The app's sandbox sees <paramref name="folder"/>, by its permissions with the overrides; false when they
     /// can't be read (a Flatpak SCSKiller, no flatpak command).</summary>
-    public static bool Visible(string app, string folder) => Sees.GetOrAdd(app + "\n" + folder, _ =>
-        Run(["info", "--show-permissions", app]) is (0, var output) && Filesystems(output) is { } list
-        && Covers(list, Path.GetFullPath(folder), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), DataHome()));
+    public static bool Visible(string app, string folder) => Seen(app + "\n" + folder, () =>
+        Run(["info", "--show-permissions", app]) is (0, var output) ? Filesystems(output) is { } list
+        && Covers(list, Path.GetFullPath(folder), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), DataHome()) : null);
+
+    /// <summary>The answer <paramref name="read"/> gives, kept until the next <c>Sees.Clear()</c>; null (flatpak couldn't be read: a
+    /// timeout, none) is false now and read again at the next ask.</summary>
+    static bool Seen(string key, Func<bool?> read)
+    {
+        if (Sees.TryGetValue(key, out var kept)) return kept;
+        if (read() is not { } now) return false;
+        return Sees[key] = now;
+    }
 
     /// <summary>The app's sandbox may write in <paramref name="folder"/>: the deepest of its filesystems over it (flatpak mounts
     /// a deeper one over the folder above it) isn't read-only. False when they can't be read.</summary>
-    public static bool Writable(string app, string folder) => Sees.GetOrAdd("w\n" + app + "\n" + folder, _ =>
-        Run(["info", "--show-permissions", app]) is (0, var output) && Filesystems(output) is { } list
-        && Mode(list, Path.GetFullPath(folder), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), DataHome()) == true);
+    public static bool Writable(string app, string folder) => Seen("w\n" + app + "\n" + folder, () =>
+        Run(["info", "--show-permissions", app]) is (0, var output) ? Filesystems(output) is { } list
+        && Mode(list, Path.GetFullPath(folder), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), DataHome()) == true : null);
 
     /// <summary>Why the override can't be made here, null when it can: SCSKiller runs as a Flatpak (no flatpak command of the
     /// host's), there's none, or the folder's path has what --filesystem or the override file reads as a separator.</summary>

@@ -94,12 +94,12 @@ jobs:
       # No Oodle DLL in anything that leaves the build (THIRD-PARTY-NOTICES.md); the app downloads it on first use.
       # Nothing is signed here: the release step signs these exact bytes after checking them against the sums.
       # A tag build is stamped with the tag's version (publish.ps1 drops the v; a bad tag fails it), the nightly and a
-      # dispatch with 0.0.1-internal.<run> (vpk packs no version below 0.0.1), a PR with the dev default.
+      # dispatch with 0.0.1-dkfork.<run> (vpk packs no version below 0.0.1), a PR with the dev default.
       # Private-repo PRs publish native\ alone (the Linux package's input), the nightly still proves the whole packaging.
       - name: Publish
         shell: powershell
         env:
-          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('0.0.1-internal.{0}', github.run_number) || '' }}
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('0.0.1-dkfork.{0}', github.run_number) || '' }}
           NATIVE_ONLY: ${{ github.event.repository.private && github.event_name == 'pull_request' && 'yes' || '' }}
         run: |
           if ($env:VERSION) { ./build/publish.ps1 -NoOodle -Version $env:VERSION } elseif ($env:NATIVE_ONLY) { ./build/publish.ps1 -NoOodle -NativeOnly } else { ./build/publish.ps1 -NoOodle }
@@ -149,7 +149,7 @@ jobs:
         if: github.event.repository.private
         shell: powershell
         env:
-          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('0.0.1-internal.{0}', github.run_number) || '' }}
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('0.0.1-dkfork.{0}', github.run_number) || '' }}
           RELEASE: ${{ github.ref_type == 'tag' && 'yes' || '' }}
         run: |
           $a = @(); if ($env:VERSION) { $a += '--version', $env:VERSION, '--pack' }
