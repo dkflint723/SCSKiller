@@ -185,6 +185,7 @@ public sealed class WarmPasses
                 yield return ('B', null);
                 continue;
             }
+            if (f.Position + len > f.Length) yield break;
             var body = new byte[len];
             if (f.ReadAtLeast(body, body.Length, false) < body.Length) yield break;
             yield return ((char)head[0], body);

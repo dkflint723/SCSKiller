@@ -14821,7 +14821,7 @@ public sealed partial class ScsKiller : IScsKiller
             bool listed;
             try { listed = Directory.EnumerateFileSystemEntries(dir, LedgerStamp).Any(); }
             catch (DirectoryNotFoundException) { return false; }   // no folder: nothing of anyone's there
-            if (listed) return !OwnLedger(File.ReadAllText(stamp).Trim());
+            if (listed) return new FileInfo(stamp).Length > 1 << 17 || !OwnLedger(File.ReadAllText(stamp).Trim());   // longer than any ledger of ours: another's, unread
             return !DefaultCopy && (RecorderOwnFiles.Any(f => f is not (Dll12 or Dll11 or Dll9 or DllOpti) && File.Exists(Path.Combine(dir, f))) || OurProxyIn(dir)
                 // an earlier build's AGS rename cut off before its wrapper went in
                 || File.Exists(Path.Combine(dir, AgsRealName)) && !File.Exists(Path.Combine(dir, AgsName)) || OurPreloadIn(dir));

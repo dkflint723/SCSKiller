@@ -380,8 +380,8 @@ public sealed class KeyCollection
     // NonBacktracking: the page is untrusted, and a backtracking lazy match is quadratic on many unclosed <script tags
     static readonly Regex Scripts = new(@"<script\b.*?</script\s*>|<style\b.*?</style\s*>",
         RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
-    static readonly Regex Breaks = new(@"<(?:br|hr|/?(?:li|div|p|ol|ul|dl|dd|dt|tr|td|th|table|pre|blockquote|h[1-6]))\b[^>]*>", RegexOptions.IgnoreCase);
-    static readonly Regex Tags = new("<[^>]*>");
+    static readonly Regex Breaks = new(@"<(?:br|hr|/?(?:li|div|p|ol|ul|dl|dd|dt|tr|td|th|table|pre|blockquote|h[1-6]))\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
+    static readonly Regex Tags = new("<[^>]*>", RegexOptions.NonBacktracking);   // as Scripts: many unclosed '<' make a backtracking scan quadratic
     // "Wardogs (playtest)&nbsp; 0x9846...": the key ends the line; any 64-digit run inside the name rejects it below
     static readonly Regex Line = new(@"^(?<name>.{1,120}?)[\s:=\-–—]*(?:0x)?(?<![0-9A-Fa-f])(?<key>[0-9A-Fa-f]{64})$");
     static readonly Regex LongHex = new("[0-9A-Fa-f]{32}");

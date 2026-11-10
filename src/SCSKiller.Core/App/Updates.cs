@@ -534,7 +534,8 @@ public sealed class PackageTries
 /// only the host that sent it: a request to it fails at once with 429 until then.</summary>
 public sealed class FeedClient(HttpMessageHandler handler, FeedTrust trust, Func<Task<string?>> token, Action<string>? log = null)
 {
-    readonly HttpClient http = new(handler, disposeHandler: false) { Timeout = Timeout.InfiniteTimeSpan };
+    // MaxResponseContentBufferSize: a feed or signature is a few KB, and GetAsync buffers it whole; packages stream (ResponseHeadersRead)
+    readonly HttpClient http = new(handler, disposeHandler: false) { Timeout = Timeout.InfiniteTimeSpan, MaxResponseContentBufferSize = 4 << 20 };
     // keyed by the host as written: GitHub (stable), the edge's feeds and the package host each have their own limits
     readonly ConcurrentDictionary<string, long> retryAt = new();
 
@@ -671,8 +672,8 @@ public sealed class FeedTrust(AppStore store, IReadOnlyDictionary<string, string
             var j = JsonDocument.Parse(sig).RootElement;
             if (j.GetProperty("v").GetInt32() != 1) throw new FeedRejectedException("unknown signature version");
             if (j.GetProperty("channel").GetString() != channel) throw new FeedRejectedException("the signature is for another channel");
-            (signedAt, sha, kid) = (j.GetProperty("signed_at").GetString()!, j.GetProperty("feed_sha256").GetString()!, j.GetProperty("kid").GetString()!);
-            signature = Convert.FromBase64String(j.GetProperty("sig").GetString()!);
+            (signedAt, sha, kid) = (j.GetProperty("signed_at").GetString()!, j.GetProperty("feed_sha256").GetString()!, j.GetProperty("kid").GetString() ?? throw new FormatException());   // a JSON null kid or sig: malformed
+            signature = Convert.FromBase64String(j.GetProperty("sig").GetString() ?? throw new FormatException());
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or NullReferenceException)
         {

@@ -160,7 +160,7 @@ public sealed class Community
     {
         dir = Path.Combine(dataDir, "community");
         this.routes = routes ?? RouteFailover.Default;
-        http = new HttpClient(this.routes, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(60) };
+        http = new HttpClient(this.routes, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(60), MaxResponseContentBufferSize = 64 << 20 };   // the manifest is buffered whole; downloads stream
         this.clock = clock ?? TimeProvider.System;
         this.dbToken = dbToken;
     }
@@ -596,12 +596,17 @@ public sealed class Community
     }
 
     // Retry-After as seconds or as a date; an hour without one
-    DateTimeOffset RetryAt(HttpResponseMessage r) => r.Headers.RetryAfter switch
+    DateTimeOffset RetryAt(HttpResponseMessage r)
     {
-        { Delta: { } d } => clock.GetUtcNow() + d,
-        { Date: { } at } => at,
-        _ => clock.GetUtcNow() + TimeSpan.FromHours(1),
-    };
+        var wait = r.Headers.RetryAfter switch
+        {
+            { Delta: { } d } => d,
+            { Date: { } at } => at - clock.GetUtcNow(),
+            _ => TimeSpan.FromHours(1),
+        };
+        // the edge's longest window is a day: a larger or negative value is not believed
+        return clock.GetUtcNow() + (wait < TimeSpan.Zero ? TimeSpan.Zero : wait > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : wait);
+    }
 
     static string Refused(HttpResponseMessage r) => r.StatusCode switch
     {

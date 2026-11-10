@@ -1035,7 +1035,9 @@ public static class PlanFile
         var head = new byte[16];
         f.ReadExactly(head);
         if (!head.AsSpan(0, 8).SequenceEqual(magic) || BitConverter.ToInt32(head, 8) != version) throw new InvalidDataException(mismatch);
-        var json = new byte[BitConverter.ToInt32(head, 12)];
+        var length = BitConverter.ToInt32(head, 12);
+        if (length < 0 || length > f.Length - 16) throw new InvalidDataException(mismatch);   // a header longer than its file: not allocated
+        var json = new byte[length];
         f.ReadExactly(json);
         return JsonSerializer.Deserialize<T>(json)!;
     }

@@ -637,7 +637,10 @@ public sealed class Sharing
     public async Task<bool> ReportAsync(string gameDir, string warm, Func<OutcomeReport?> report, CancellationToken ct = default)
     {
         var stamp = Path.Combine(gameDir, ReportedFile);
-        if (!enabled() || clock.GetUtcNow() < reportBackoffUntil || File.Exists(stamp) && File.ReadAllText(stamp) == warm || report() is not { } r) return false;
+        if (!enabled() || clock.GetUtcNow() < reportBackoffUntil) return false;
+        try { if (File.Exists(stamp) && File.ReadAllText(stamp) == warm) return false; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }   // can't tell whether it went, nor record that it does: not sent now
+        if (report() is not { } r) return false;
         async Task<HttpResponseMessage> Post(OutcomeReport sent)
         {
             var request = new HttpRequestMessage(HttpMethod.Post, new Uri(routes.Primary, "v1/report")) { Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(sent, Json)) };
@@ -823,17 +826,22 @@ public sealed class Sharing
     void BackOff(HttpResponseMessage r) => backoffUntil = clock.GetUtcNow() + Delay(r);
 
     // 429/503: as long as Retry-After says (1 h without one); 501 (not enabled on this server): a day; others: 5 minutes
-    TimeSpan Delay(HttpResponseMessage r) => r.StatusCode switch
+    TimeSpan Delay(HttpResponseMessage r)
     {
-        HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable => r.Headers.RetryAfter switch
+        var wait = r.StatusCode switch
         {
-            { Delta: { } d } => d,
-            { Date: { } at } => at - clock.GetUtcNow(),
-            _ => TimeSpan.FromHours(1),
-        },
-        HttpStatusCode.NotImplemented => TimeSpan.FromDays(1),
-        _ => TimeSpan.FromMinutes(5),
-    };
+            HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable => r.Headers.RetryAfter switch
+            {
+                { Delta: { } d } => d,
+                { Date: { } at } => at - clock.GetUtcNow(),
+                _ => TimeSpan.FromHours(1),
+            },
+            HttpStatusCode.NotImplemented => TimeSpan.FromDays(1),
+            _ => TimeSpan.FromMinutes(5),
+        };
+        // the edge's longest window is a day: a larger or negative value is not believed
+        return wait < TimeSpan.Zero ? TimeSpan.Zero : wait > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : wait;
+    }
 
     // upload-fork.dat (ForkBuild.UploadDevice): {"Token":"sd1_...","Id":"..."} (TokenFile), like auth.dat but its own file: never the Patreon device
     sealed record Device(string Token, string Id);

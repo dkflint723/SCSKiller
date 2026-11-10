@@ -340,7 +340,7 @@ public static class Updater
         {
             // reads the entitlements; stable's feed is on GitHub and needs no token, so a backend that's down mustn't stop it
             try { await Host.Account.GetAccessTokenAsync(); }
-            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or AccountException) { }
+            catch (Exception e) when (e is not OperationCanceledException || e is TaskCanceledException) { }   // optional here: a malformed answer (Json, KeyNotFound, InvalidOperation, Format, NotSupported) too
             var channel = backToStable ? UpdateChannels.Stable : Chosen();
             if (ready != null && Usable(ready) is null) Stage(null);   // another channel's download, even if this check fails
             var m = Manager(channel, backToStable);
