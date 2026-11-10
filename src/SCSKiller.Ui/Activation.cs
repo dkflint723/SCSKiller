@@ -74,10 +74,11 @@ static class Activation
 
     /// <summary>A notification for each unread news item not shown yet (<see cref="NewsState.ToastDue"/>), once the window and
     /// the notification area exist.</summary>
-    public static void ToastNews()
+    public static void ToastNews((IReadOnlyList<NewsItem> Shown, IReadOnlySet<string> Unread)? news = null)
     {
         if (!newsReady || !Notifications.Available) return;
-        var (shown, _) = MainWindow.Notifications();
+        var (shown, unread) = news ?? MainWindow.Notifications();   // the caller's read when it has one
+        if (unread.Count == 0) return;   // ToastDue only ever shows unread items: skip its own read of the file
         var (show, more) = NewsState.ToastDue(Host.Store, shown, MainWindow.Feed(), DateOnly.FromDateTime(DateTime.Now));
         foreach (var item in show) Notifications.Show(Toasts.News(item));
         if (more > 0) Notifications.Show(Toasts.NewsMore(more));

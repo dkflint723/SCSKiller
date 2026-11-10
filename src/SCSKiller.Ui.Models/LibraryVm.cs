@@ -199,7 +199,7 @@ public sealed class LibraryVm : Bindable
     readonly BackgroundRead<(CacheUsage Usage, CacheLimit? Limit, long? Capped, long OldDriver, long? Fullest)> cache;
 
     public LibraryVm() => cache = new("Library cache", () => (Host.Core.Vendor.GetCacheUsage(), Host.Core.Vendor.GetCacheLimit(), (Host.Core.Vendor as AmdBackend)?.AppCache.DxcBytes(),
-        Host.Core.OldDriverBytes(), Fullest()), ShowCache);
+        Host.Core.OldDriverBytes(), Fullest()), ShowCache, TimeSpan.FromSeconds(5));   // Refresh runs per GameChanged in a scan: one read per 5 s
 
     /// <summary>A Linux driver's limit and Intel's are each game's own: the fullest game's cache; null for the other drivers.</summary>
     internal static long? Fullest() => Host.Core.Vendor.AppCache switch

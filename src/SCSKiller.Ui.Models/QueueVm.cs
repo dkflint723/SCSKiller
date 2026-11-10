@@ -34,7 +34,7 @@ public sealed class QueueVm : Bindable
     readonly BackgroundRead<(CacheUsage, CacheLimit?, long?)> cache;
 
     public QueueVm() => cache = new("Queue cache", () => (Host.Core.Vendor.GetCacheUsage(), Host.Core.Vendor.GetCacheLimit(), (Host.Core.Vendor as AmdBackend)?.AppCache.DxcBytes()),
-        c => { driver = c; ShowCache(); Changed(); });
+        c => { driver = c; ShowCache(); Changed(); }, TimeSpan.FromSeconds(5));   // Refresh runs per GameChanged in a scan: one read per 5 s
     static Settings S { get => Host.Core.Settings; set => Host.Core.Settings = value; }
 
     public ObservableCollection<QueueRow> Waiting { get; } = [];

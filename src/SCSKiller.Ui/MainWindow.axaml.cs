@@ -44,7 +44,7 @@ public sealed partial class MainWindow : Window
         ((Panel)LibraryItem.Content!).Children.OfType<TextBlock>().Last().PropertyChanged += (_, e) => { if (e.Property == TextBlock.FontSizeProperty) FitPane(); };
         FitPane();
         ShowGpu();
-        var bell = new Coalesced(Host.Ui, () => { ShowBell(); Activation.ToastNews(); });   // targeting reads the games, the account and the news
+        var bell = new Coalesced(Host.Ui, () => { var news = Notifications(); ShowBell(news); Activation.ToastNews(news); });   // targeting reads the games, the account and the news: once for both
         Host.Core.GameChanged += _ => bell.Request();
         App.Account.Changed += bell.Request;
         if (Host.Core is ScsKiller k) k.NewsChanged += bell.Request;
@@ -216,9 +216,9 @@ public sealed partial class MainWindow : Window
 
     internal static HashSet<string> Feed() => App.News.Items.Select(i => i.Id).ToHashSet();
 
-    void ShowBell()
+    void ShowBell((IReadOnlyList<NewsItem> Shown, IReadOnlySet<string> Unread)? news = null)
     {
-        var unread = Notifications().Unread.Count;
+        var unread = (news ?? Notifications()).Unread.Count;
         BellCount.Text = unread.ToString();
         BellBadge.IsVisible = unread > 0;
         AutomationProperties.SetName(BellButton, unread > 0 ? $"Notifications, {unread} unread" : "Notifications");

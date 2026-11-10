@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 
 namespace SCSKiller.Ui.Models;
 
@@ -27,10 +28,13 @@ public sealed class Coalesced(IUiThread ui, Action run)
 /// driver's profile database: ~130 ms measured; the usage walks the cache folder). <paramref name="read"/> runs on a
 /// background thread, <paramref name="apply"/> on the UI thread. One read at a time: requests meanwhile fold into one more
 /// read, so results apply in order. A read that throws changes nothing and is logged once until it reads again: thrown
-/// from this async void, it would end the app. Request on the UI thread.</summary>
-public sealed class BackgroundRead<T>(string name, Func<T> read, Action<T> apply)
+/// from this async void, it would end the app. Request on the UI thread.
+/// <paramref name="minGap"/>: a read that would start sooner than this after the last one's start waits, and requests meanwhile
+/// fold into that one trailing read: a scan's burst of refreshes reads once per gap, and the last state still shows.</summary>
+public sealed class BackgroundRead<T>(string name, Func<T> read, Action<T> apply, TimeSpan minGap = default)
 {
     bool busy, again;
+    long? started;
     string? failed;
 
     public async void Request()
@@ -41,7 +45,9 @@ public sealed class BackgroundRead<T>(string name, Func<T> read, Action<T> apply
         {
             do
             {
-                again = false;
+                if (started is { } at && Stopwatch.GetElapsedTime(at) is var since && since < minGap) await Task.Delay(minGap - since);
+                again = false;   // after the wait: a request made meanwhile is covered by the read that follows
+                started = Stopwatch.GetTimestamp();
                 T value;
                 try { value = await Task.Run(read); }
                 catch (OperationCanceledException) { continue; }
