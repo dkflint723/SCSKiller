@@ -1158,7 +1158,7 @@ sealed class PlanBuilder
         }
         var fed = new HashSet<string>();
         var unfed = new List<ShaderInfo>();
-        var pairedOtherwise = new HashSet<string>();   // PSs a shipped pipeline, a DS of their map or a global GS chain pairs
+        var pairedOtherwise = new HashSet<string>();   // PSs a shipped pipeline, a DS of their map, a global GS chain or the orphan pairing pairs
         // by PS: its maps' stage sets through a source writing more than it reads, each with its map's root signature. DXBC
         // only: no DXIL game's such pairs have been created on a GPU yet
         var supersets = new Dictionary<string, List<(string? Rs, SortedDictionary<int, string> Stages)>>();
@@ -1370,7 +1370,7 @@ sealed class PlanBuilder
                 if (vss[Planner.Sig(p.Inputs)].FirstOrDefault(v => Planner.Links(v, p) && Planner.SameRs(v, p)) is { } v)
                 {
                     Count("orphan_ps_paired");
-                    unpairedPs.Remove(p);
+                    pairedOtherwise.Add(p.Sha1);
                     sink(new() { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Pixel] = p.Sha1 }, Planner.Shape(Stage.Vertex, Stage.Pixel), Planner.Sig(p.Outputs, false));
                 }
         }
