@@ -551,7 +551,13 @@ public sealed partial class ScsKiller : IScsKiller
                         {
                             if (riskOff) RiskOff();
                             if (keptOff) DropStaleKept();
-                            foreach (var g in Games) Refresh(g.Game);
+                            _listHeld = true;   // the list is saved once after the loop, not by each game's Refresh
+                            try { foreach (var g in Games) Refresh(g.Game); }
+                            finally
+                            {
+                                _listHeld = false;
+                                if (_listAsked) KeepList();
+                            }
                         }
                         catch (Exception e) { Log?.Report($"re-evaluating games for the new settings failed: {e.Message}"); }
                 });
@@ -683,9 +689,18 @@ public sealed partial class ScsKiller : IScsKiller
             var update = Store.LoadList() is { } kept && kept.Build != CoreBuild;
             if (update) Interlocked.Increment(ref _updateScans);
             Interlocked.Increment(ref _scanning);   // never waits for the recorder lock: a reconcile holding it may wait on this scan
+            var hold = _scanHold = new ScanHold();
             try { return userRequested ? Scanned(force, userRequested, ct) : LowIo(() => Scanned(force, userRequested, ct)); }
             finally
             {
+                (hold.Active, _scanHold) = (false, null);   // a check dropped for its time that ends later saves at once
+                lock (_scanLock)   // however the scan ended: done, cancelled or thrown
+                    if (_scanUnsaved)
+                    {
+                        _scanUnsaved = false;
+                        try { Store.SaveScan(_scan!); }
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _scanUnsaved = true; Log?.Report($"couldn't save the scan cache: {e.Message}"); }
+                    }
                 Interlocked.Decrement(ref _scanning);
                 if (update) Interlocked.Decrement(ref _updateScans);
                 Progress(null);
@@ -918,12 +933,15 @@ public sealed partial class ScsKiller : IScsKiller
     void KeepList()
     {
         if (Only != null) return;   // its other games are unchecked
+        if (_listHeld) { _listAsked = true; return; }
+        _listAsked = false;
         lock (_keepLock)
             try { Store.SaveList(new KeptList(CoreBuild, DriverId, Games.ToList())); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"couldn't save the list of games: {e.Message}"); }
     }
     // the snapshot and its write together: an older list never replaces a newer one
     readonly object _keepLock = new();
+    [ThreadStatic] static bool _listHeld, _listAsked;   // this thread's loop saves the list once at its end: KeepList only notes it was asked
 
     /// <summary>The games the sources list (<paramref name="list"/>), each with the exe it runs (<see cref="Following"/>;
     /// <paramref name="unresolved"/>: why it couldn't be checked, by game id; Failed: a source's discovery threw).
@@ -1369,13 +1387,14 @@ public sealed partial class ScsKiller : IScsKiller
         fresh = false;
         var cap = EvaluateCap(g);
         var abandon = new CancellationTokenSource();
-        var low = _lowIo;
+        var (low, hold) = (_lowIo, _scanHold);
         GameState? s = null;
         (bool Fresh, bool Stale) outs = default;
         System.Runtime.ExceptionServices.ExceptionDispatchInfo? error = null;
         var clock = Stopwatch.StartNew();
         var thread = new Thread(() =>
         {
+            _scanHold = hold;
             try
             {
                 GameState Run() => Read(g, force, out outs.Fresh, out outs.Stale, abandon.Token, abandon.Token);
@@ -2821,7 +2840,7 @@ public sealed partial class ScsKiller : IScsKiller
                 lock (_scanLock)
                 {
                     if (_scan.TryGetValue(g.Id, out var cached) && ReferenceEquals(cached, hit)) _scan[g.Id] = now;
-                    Store.SaveScan(_scan);
+                    SaveScanOrHold();
                 }
             return now;
         }
@@ -2881,10 +2900,22 @@ public sealed partial class ScsKiller : IScsKiller
                     _unknown.TryRemove(g.Id, out _);
                     _scanStarted[g.Id] = started;
                     _scan[g.Id] = ev with { Clean = RemovalGen(g.Id) == gen ? folders : null };   // a finding meanwhile: walked again
-                    Store.SaveScan(_scan);
+                    SaveScanOrHold();
                 }
         }
         return ev;
+    }
+
+    // a scan's thread saves the cache once, when the scan ends (Scan); any other evaluation saves at once
+    sealed class ScanHold { public volatile bool Active = true; }
+    [ThreadStatic] static ScanHold? _scanHold;   // the scan's thread and the threads it reads games on (Capped)
+    bool _scanUnsaved;   // under _scanLock
+
+    /// <summary>Under <see cref="_scanLock"/>: saves the scan cache, or while this thread's scan runs notes that it must be.</summary>
+    void SaveScanOrHold()
+    {
+        if (_scanHold is { Active: true }) _scanUnsaved = true;
+        else Store.SaveScan(_scan!);
     }
 
     /// <summary><paramref name="ev"/> with <see cref="GameFiles.StreamlineFirst"/> read again when a file it was read from
@@ -6427,13 +6458,15 @@ public sealed partial class ScsKiller : IScsKiller
             if (!File.Exists(store)) return;
             var own = Shipped(first, Store.LoadGame(first.Id));
             var moved = new HashSet<string>();
+            List<PsoDb.Rec>? records = null;   // the store, read once (held under its lock: members' merges go to their own files)
             // from the install, not the list: an import during the first scan runs before the list is published
             foreach (var g in Collections.Expand(first).Skip(1))
             {
                 if (Legacy(g.Id) || Shipped(g, Store.LoadGame(g.Id)) is not { } theirs) continue;
-                var take = PsoDb.Read(store).Where(r => r.Tag is 'G' or 'C' or 'S' && Shaders(r) is { } s && s.All(theirs.Contains)).ToList();
+                records ??= PsoDb.Read(store).ToList();
+                var take = records.Where(r => r.Tag is 'G' or 'C' or 'S' && Shaders(r) is { } s && s.All(theirs.Contains)).ToList();
                 // the NVAPI states and layer pairs of any record go too (keyed by pipeline: extra ones name none of its)
-                var meta = PsoDb.Read(store).Where(r => r.Tag is 'N' or 'W').ToList();
+                var meta = records.Where(r => r.Tag is 'N' or 'W').ToList();
                 if (take.Count + meta.Count == 0) continue;
                 var named = Rehydrate.References(take);
                 var inbox = Path.Combine(Store.GameDir(first.Id), $"split-{Environment.ProcessId}.tmp");
@@ -6441,7 +6474,7 @@ public sealed partial class ScsKiller : IScsKiller
                 bool nvAdded;
                 try
                 {
-                    PsoDb.WriteCompact(inbox, PsoDb.Read(store).Where(r => r.Tag == 'B' && named.Contains(PsoDb.Hex(r.Payload.AsSpan(0, 20)))).Concat(meta).Concat(take));
+                    PsoDb.WriteCompact(inbox, records.Where(r => r.Tag == 'B' && named.Contains(PsoDb.Hex(r.Payload.AsSpan(0, 20)))).Concat(meta).Concat(take));
                     using (Recordings.Lock(RecordingPath(g.Id)))
                     {
                         Directory.CreateDirectory(Store.GameDir(g.Id));

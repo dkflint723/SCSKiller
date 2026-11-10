@@ -332,10 +332,15 @@ public sealed class MiddlewarePack
 
     public static string FileName(string dll, string contentHash) => $"{dll.ToLowerInvariant()}-{contentHash}.pack";
 
+    HashSet<string>? _keys;   // the keys of Entries (Rec.Key hashes the payload on every access); rebuilt when Entries was changed from outside
+    int _keyed;
+
     public bool Add(Rec r, string source)
     {
-        if (Entries.Any(e => e.Key == r.Key)) return false;
+        if (_keys == null || _keyed != Entries.Count) { _keys = [.. Entries.Select(e => e.Key)]; _keyed = Entries.Count; }
+        if (!_keys.Add(r.Key)) return false;
         Entries.Add(r);
+        _keyed++;
         if (!Header.Sources.Contains(source)) Header.Sources.Add(source);
         return true;
     }

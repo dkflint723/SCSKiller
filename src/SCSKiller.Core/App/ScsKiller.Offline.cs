@@ -1202,13 +1202,15 @@ public sealed partial class ScsKiller
         // its start time while it is still this helper's parent: once it exits, the helper is another's child
         var appStarted = starting is { } b && !OperatingSystem.IsWindows() && ProcessTree.Created(b) is { } t && StartingAppPid() == b ? t : (long?)null;
         bool SettingUp() => app != null ? WaitForSingleObject(app, 0) == WaitTimeout : appStarted != null && ProcessTree.Created(starting!.Value) == appStarted;
+        var entry = false;
         for (var clock = Stopwatch.StartNew(); ; Thread.Sleep(SettingUp() ? 200 : 5000))
         {
             try
             {
                 if (store.LoadGame(gameId).OfflineSession is not { } s) return 0;
-                if (exe != null) RunOnce(gameId, exe);
-                if (s.Pid == 0 && SettingUp()) continue;
+                var waiting = s.Pid == 0 && SettingUp();
+                if (exe != null && !(waiting && entry)) { RunOnce(gameId, exe); entry = true; }   // while it waits for the launch: written once, not at every pass
+                if (waiting) continue;
                 if (s.Pid != 0 && !OperatingSystem.IsWindows())
                 {
                     // bound to its start time and running (BindRisk): waited for until it exits
