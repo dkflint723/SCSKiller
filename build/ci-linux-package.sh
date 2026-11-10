@@ -3,8 +3,9 @@
 # checkout's Windows publish (dist/SCSKiller/native, dist/SHA256SUMS-unsigned.txt) and Linux layer (proxy/build-linux),
 # then build/check-linux-package.sh, and with --pack build/pack-linux.sh as a release packs it. All in a clone of HEAD
 # on Linux's own filesystem: a Windows folder keeps no file modes, which the package's executables need. A versioned
-# package builds its own layer (build/linux-layer.sh with SCSK_VERSION): the tests' build keeps the replayer's test
-# hooks.
+# package builds its own layer (build/linux-layer.sh with SCSK_VERSION). In this unofficial fork the tests' build (--layer)
+# is stamped 0.0.0-dkfork.0 like the unversioned package it goes into, so it has no replayer test hooks: a selftest that
+# needs them builds its layer with SCSK_VERSION=0.0.0-internal.0, which no package takes.
 # The runners share one WSL VM: one build at a time (a lock, waited for at most an hour), make on 16 jobs.
 # Usage: build/ci-linux-package.sh --layer | [--version X.Y.Z[-pre]] [--pack | --release <dir>]
 #   --layer    the Linux layer into proxy/build-linux (build/linux-layer.sh), then `selftest_linux vkrec`

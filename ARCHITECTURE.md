@@ -370,7 +370,10 @@ no active check. Every request through `RouteFailover` sends `Kindling/<version>
 (`ReShadeInstall.Copyable` false) is loaded. An earlier Kindling build's markers are still honored though this one writes none:
 a game folder with `recorded-minimal.fork` or `recorded-layered.fork` is refused by the same block until its recording is cleared,
 and the upscaler packs in `packs-held.fork` or filled from such a game (`ForkBuild.HoldPacks`) are never uploaded (`ClearRecording`
-holds the packs, then removes the markers). The upload's contents are upstream's, unchanged.
+holds the packs, then removes the markers; they stay while the game folder still holds a recording the clear doesn't delete,
+another copy's or a shared folder's). Each pack is judged again right before its upload (`ForkBuild.FilledByMarked`), and
+one that can't be judged (unreadable header, no or null sources) is held, never an error that ends the pass. The upload's
+contents are upstream's, unchanged.
 
 **Kindling: the name.** Only what a user reads says Kindling (`ForkBuild.Name`): the window and its title row, About,
 Settings and the pages' text, the welcome dialog's title and its first paragraph (the rest is SCSKiller's own text), the

@@ -50,6 +50,24 @@ public static class ForkBuild
 
     static readonly object PacksLock = new();
 
+    /// <summary>Marked game folders as <see cref="FilledByMarked"/> compares them.</summary>
+    public static HashSet<string> MarkedSet(IEnumerable<string> markedDirs) => markedDirs.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The pack at <paramref name="path"/> is one a marked game may have filled: with <paramref name="markedDirs"/> not
+    /// empty, its header names a source in one of them (<paramref name="sourceDir"/>: a source's game folder, null = not a
+    /// game's), or it can't be judged: no readable header, no source list, a null source, or any failure reading it. A pack
+    /// that can't be judged is held, never an exception: one bad file doesn't end a sharing pass. False when nothing is marked.</summary>
+    public static bool FilledByMarked(string path, IReadOnlySet<string> markedDirs, Func<string, string?> sourceDir)
+    {
+        if (markedDirs.Count == 0) return false;
+        try
+        {
+            if (MiddlewarePack.ReadHeader(path) is not { Sources: { } sources }) return true;
+            return sources.Any(s => s is null || sourceDir(s) is { } d && markedDirs.Contains(d));
+        }
+        catch (Exception e) when (e is not OperationCanceledException) { return true; }
+    }
+
     /// <summary>The packs in <paramref name="packsDir"/> held back for good (<see cref="PacksHeld"/> in <paramref name="listFile"/>'s
     /// place): those the file lists that are still there, and, when <paramref name="markedDirs"/> (game folders) is not empty,
     /// every pack whose header names a source in one of them (<paramref name="sourceDir"/> maps a source to its game folder, null =
@@ -59,8 +77,7 @@ public static class ForkBuild
     public static HashSet<string> HoldPacks(string packsDir, string listFile, IReadOnlyCollection<string> markedDirs, Func<string, string?> sourceDir)
     {
         var held = NewPackSet();
-        var dirs = markedDirs.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        bool Filled(string source) => sourceDir(source) is { } d && dirs.Contains(d);
+        var dirs = MarkedSet(markedDirs);
         lock (PacksLock)
         {
             var listed = NewPackSet();
@@ -69,7 +86,7 @@ public static class ForkBuild
             foreach (var path in Directory.Exists(packsDir) ? Directory.EnumerateFiles(packsDir, "*.pack", SearchOption.AllDirectories) : [])
             {
                 var name = Path.GetRelativePath(packsDir, path);
-                if (listed.Contains(name) || dirs.Count > 0 && MiddlewarePack.ReadHeader(path)?.Sources?.Any(Filled) != false) held.Add(name);   // no header or no sources: held
+                if (listed.Contains(name) || FilledByMarked(path, dirs, sourceDir)) held.Add(name);
             }
             if (held.SetEquals(listed)) return held;
             if (held.Count == 0) File.Delete(listFile);   // what it listed is gone: a pack written there again is a new one
