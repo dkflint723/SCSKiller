@@ -1274,7 +1274,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         return fail(L"workdir not found or exe is not a file name");
 
     std::wstring flat;  // this run's own new staging folder: nothing in it was there before
-    for (int n = 1; n < 100 && flat.empty(); ++n) {
+    for (int n = 1; n < 10000 && flat.empty(); ++n) {  // restarts can reuse the pid (Wine): stage-<pid>-1 to -9999
         std::wstring d = work + L"stage-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(n) + L"\\";
         if (CreateDirectoryW(d.c_str(), nullptr)) flat = d;
         else if (GetLastError() != ERROR_ALREADY_EXISTS) break;

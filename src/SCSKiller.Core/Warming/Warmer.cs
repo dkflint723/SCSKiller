@@ -323,7 +323,7 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
 
     const int MaxPath = 260;
     const string LongestStagedName = "scskiller_warm_times.csv";
-    const string LongestStageDir = "stage-4294967295-99";   // scskiller_warm's staging folder: stage-<pid>-<n>
+    const string LongestStageDir = "stage-4294967295-9999";   // scskiller_warm's staging folder: stage-<pid>-<n>
 
     /// <summary>scskiller_warm's --stage-path: the install folder's name, the exe's folder inside the install, the exe's
     /// file name (AMD app profiles such as Hogwarts Legacy's match the launched path's tail, e.g.

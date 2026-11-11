@@ -585,7 +585,7 @@ static int run(int argc, char** argv, bool vulkan) {
         return fail("workdir not found or exe is not a file name");
     std::string flat;  // this run's own new staging folder: nothing in it was there before
     int err = 0;
-    for (int n = 1; n < 100 && flat.empty(); ++n) {
+    for (int n = 1; n < 10000 && flat.empty(); ++n) {  // restarts can reuse the pid: stage-<pid>-1 to -9999, as warm.cpp
         std::string d = work + "stage-" + std::to_string(getpid()) + "-" + std::to_string(n) + "/";
         if (mkdir(d.c_str(), 0755) == 0) flat = d;
         else if ((err = errno) != EEXIST) break;
