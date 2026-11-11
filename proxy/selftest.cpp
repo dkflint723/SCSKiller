@@ -1777,6 +1777,13 @@ static int admission_rules() {
         CHECK(!vdf_root(inner, "appstate", top));                                                  // a NUL inside a string
         CHECK(!vdf_root(ok + std::string(1, '\0') + "x", "appstate", top));                       // text after the padding
         CHECK(!vdf_root("\xEF\xBB\xBF\xEF\xBB\xBF" + ok, "appstate", top));                       // one BOM, not two
+        CHECK(!vdf_root("\xEF\xBB\xBF" + std::string(8, '\0'), "appstate", top));                // a BOM and padding: still nothing
+        std::string between = ok;
+        between.insert(between.find("\"10\""), 1, '\0');
+        CHECK(!vdf_root(between, "appstate", top));                                                // a NUL between tokens
+        const std::string libs = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Steam\"\n\t}\n}\n";
+        CHECK(vdf_root("\xEF\xBB\xBF" + libs + std::string(2, '\0'), "libraryfolders", top) && top.kids.size() == 1);
+        CHECK(!vdf_root("\xEF\xBB\xBF" + libs, "appstate", top));                                 // still its own root only
     }
     printf("admission OK\n");
     return 0;
