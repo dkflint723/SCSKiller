@@ -1760,6 +1760,24 @@ static int admission_rules() {
     CHECK(!strcmp(decide(true, false, {"?"}, beside, none, nullptr, seen), beside));  // a folder couldn't be listed
     CHECK(!strcmp(decide(true, false, none, nullptr, none, "VAC: Steam's files couldn't be checked", seen), "VAC: Steam's files couldn't be checked"));
     CHECK(seen.empty());
+    // a Steam manifest as Steam reads it: a leading UTF-8 BOM and NUL padding at the end are accepted, nothing else is
+    {
+        const std::string ok = "\"AppState\"\n{\n\t\"appid\"\t\t\"10\"\n\t\"installdir\"\t\t\"Game\"\n}\n";
+        Vdf top;
+        std::string v;
+        CHECK(vdf_root(ok, "appstate", top) && vdf_one(top, "installdir", v) && v == "Game");
+        CHECK(vdf_root("\xEF\xBB\xBF" + ok, "appstate", top) && vdf_one(top, "appid", v) && v == "10");
+        CHECK(vdf_root(ok + std::string(3, '\0'), "appstate", top) && vdf_one(top, "appid", v) && v == "10");
+        CHECK(vdf_root("\xEF\xBB\xBF" + ok + std::string(1, '\0'), "appstate", top));
+        CHECK(!vdf_root(std::string(64, '\0'), "appstate", top));                                 // all NUL: names no game
+        CHECK(!vdf_root("\xEF\xBB\xBF", "appstate", top) && !vdf_root("", "appstate", top));
+        CHECK(!vdf_root(std::string(1, '\0') + ok, "appstate", top));                             // NULs only at the end
+        std::string inner = ok;
+        inner[inner.find("Game")] = '\0';
+        CHECK(!vdf_root(inner, "appstate", top));                                                  // a NUL inside a string
+        CHECK(!vdf_root(ok + std::string(1, '\0') + "x", "appstate", top));                       // text after the padding
+        CHECK(!vdf_root("\xEF\xBB\xBF\xEF\xBB\xBF" + ok, "appstate", top));                       // one BOM, not two
+    }
     printf("admission OK\n");
     return 0;
 }

@@ -267,8 +267,11 @@ static bool vdf_pairs(const std::string& t, size_t& i, std::vector<Vdf>& out, in
     }
 }
 
-// The file's one top-level object, named root (any case of A-Z): false when the text isn't that.
-static bool vdf_root(const std::string& t, const char* root, Vdf& top) {
+// The file's one top-level object, named root (any case of A-Z): false when the text isn't that. Read as Steam reads it:
+// one leading UTF-8 BOM and NUL padding at the end are left out (a NUL anywhere else still fails).
+static bool vdf_root(const std::string& text, const char* root, Vdf& top) {
+    std::string t = text.compare(0, 3, "\xEF\xBB\xBF") ? text : text.substr(3);
+    t.erase(t.find_last_not_of('\0') + 1);   // npos + 1 == 0: all NUL leaves nothing, which names no root
     std::vector<Vdf> all;
     size_t i = 0;
     if (!vdf_pairs(t, i, all, 0) || all.size() != 1 || !all[0].object || lower_az(all[0].key) != root) return false;
